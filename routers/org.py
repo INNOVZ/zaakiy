@@ -9,13 +9,18 @@ router = APIRouter()
 @router.get("/info")
 async def get_org_info(user=Depends(verify_jwt_token)):
     user_data = await get_user_with_org(user["user_id"])
+
+    organization = user_data.get("organization")
+    if not organization:
+        organization = {"name": "No Organization", "plan_id": None}
+
     return {
         "user": {
             "email": user_data["email"]
         },
         "organization": {
-            "name": user_data["org"]["name"],
-            "plan_id": user_data["org"]["plan_id"]
+            "name": organization.get("name", "No Organization"),
+            "plan_id": organization.get("plan_id", None)
         }
     }
 

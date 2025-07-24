@@ -14,10 +14,8 @@ async def verify_jwt_token(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid token format")
 
-    token = authorization.split(" ")[1]
-
     try:
-        scheme, token = authorization.split()
+        scheme, token = authorization.split(" ", 1)
         if scheme.lower() != "bearer":
             raise ValueError("Invalid scheme")
 
@@ -31,7 +29,6 @@ async def verify_jwt_token(authorization: str = Header(...)):
         user_id = payload["sub"]
         email = payload.get("email")
 
-        
         if not user_id or not email:
             raise ValueError("Invalid token payload")
 
@@ -42,7 +39,6 @@ async def verify_jwt_token(authorization: str = Header(...)):
             "user_id": user_id,
             "email": email
         }
-
 
     except ExpiredSignatureError as exc:
         raise HTTPException(status_code=401, detail="Token expired") from exc

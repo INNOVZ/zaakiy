@@ -1,136 +1,213 @@
 import os
+import asyncio
 import io
+import json
 import requests
-import httpx
 import openai
+from dotenv import load_dotenv
 from pinecone import Pinecone
 from PyPDF2 import PdfReader
+from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from services.supabase_client import client
+from supabase import create_client
 from services.web_scraper import scrape_url_text
 
-# Initialize OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Load environment variables
+load_dotenv()
 
-# Initialize Pinecone client (v3)
+# Initialize clients
+openai.api_key = os.getenv("OPENAI_API_KEY")
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-# Index name like 'chatbot-index'
 index = pc.Index(os.getenv("PINECONE_INDEX"))
 
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase = create_client(supabase_url, supabase_key)
 
-# Extract text from PDF URL
+
+def get_supabase_storage_url(file_path: str) -> str:
+    """Convert Supabase storage path to full URL"""
+    return f"{supabase_url}/storage/v1/object/public/uploads/{file_path}"
+
+
 def extract_text_from_pdf_url(url: str) -> str:
     try:
-        response = requests.get(url, timeout=10)
+        # Convert Supabase path to full URL if needed
+        if not url.startswith('http'):
+            url = get_supabase_storage_url(url)
+
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
 
         pdf_reader = PdfReader(io.BytesIO(response.content))
         text = ""
         for page in pdf_reader.pages:
-            text += page.extract_text() or ""
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+
         return text.strip()
 
-    except requests.RequestException as e:
-        print(
-            f"[Error] HTTP error while extracting text from PDF URL {url}: {e}")
-        return ""
-
-    except (OSError, IOError) as e:
-        print(
-            f"[Error] File error while extracting text from PDF URL {url}: {e}")
+    except Exception as e:
+        print(f"[Error] Failed to extract text from PDF {url}: {e}")
         return ""
 
 
-# Extract text from JSON URL
-def extract_text_from_json(url: str) -> str:
+def extract_text_from_json_url(url: str) -> str:
     try:
-        response = requests.get(url, timeout=10)
+        # Convert Supabase path to full URL if needed
+        if not url.startswith('http'):
+            url = get_supabase_storage_url(url)
+
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
 
-        data = response.json()  # Assuming JSON contains a text key
-        text = data.get('content', '')  # Adjust based on your JSON structure
-        return text.strip()
+        data = response.json()
 
-    except requests.RequestException as e:
-        print(
-            f"[Error] HTTP error while extracting text from JSON URL {url}: {e}")
+        # Extract text from various possible JSON structures
+        if isinstance(data, dict):
+            if 'content' in data:
+                return str(data['content'])
+            elif 'text' in data:
+                return str(data['text'])
+            elif 'body' in data:
+                return str(data['body'])
+            else:
+                # Convert entire dict to text
+                return json.dumps(data, indent=2)
+        elif isinstance(data, list):
+            # Join list items
+            return '\n'.join(str(item) for item in data)
+        else:
+            return str(data)
+
+    except Exception as e:
+        print(f"[Error] Failed to extract text from JSON {url}: {e}")
         return ""
-    except ValueError as e:
-        print(
-            f"[Error] JSON decoding error while extracting text from JSON URL {url}: {e}")
-        return ""
 
 
-# Split text into chunks
 def split_into_chunks(text: str) -> list:
-    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    if not text.strip():
+        return []
+
+    splitter = CharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        separator="\n"
+    )
     chunks = splitter.split_text(text)
-    return chunks
+    return [chunk for chunk in chunks if chunk.strip()]
 
 
-# Get embeddings for text chunks
 def get_embeddings_for_chunks(chunks: list) -> list:
+    if not chunks:
+        return []
+
     embedder = OpenAIEmbeddings()
     vectors = embedder.embed_documents(chunks)
     return vectors
 
 
-# Upload vectors to Pinecone
-def upload_to_pinecone(chunks: list, vectors: list, namespace: str):
+def upload_to_pinecone(chunks: list, vectors: list, namespace: str, upload_id: str):
+    if not chunks or not vectors:
+        print(f"[Warning] No chunks or vectors to upload for {upload_id}")
+        return
+
     to_upsert = [
-        (f"{namespace}-{i}", vec, {"chunk": chunk})
+        (f"{upload_id}-{i}", vec, {"chunk": chunk, "upload_id": upload_id})
         for i, (chunk, vec) in enumerate(zip(chunks, vectors))
     ]
-    index.upsert(vectors=to_upsert, namespace=namespace)
+
+    print(
+        f"[Info] Uploading {len(to_upsert)} vectors to Pinecone namespace '{namespace}'")
+    try:
+        result = index.upsert(vectors=to_upsert, namespace=namespace)
+        print(f"[Info] Pinecone upsert result: {result}")
+    except Exception as e:
+        print(f"[Error] Pinecone upload failed: {e}")
+        raise
 
 
-# Main ingestion worker that processes pending uploads
 async def process_pending_uploads():
-    res = await client.get("/uploads", params={"status": "eq.pending"})
-    uploads = res.json()
+    """Main function to process all pending uploads"""
+    try:
+        # Get pending uploads from Supabase
+        result = supabase.table("uploads").select(
+            "*").eq("status", "pending").execute()
 
-    for upload in uploads:
-        try:
-            org_ns = upload["pinecone_namespace"]
-            upload_id = upload["id"]
-            source = upload["source"]
-            doc_type = upload["type"]
+        uploads = result.data
+        print(f"[Info] Found {len(uploads)} pending uploads")
 
-            # Handle different document types (PDF, URL, JSON)
-            if doc_type == "pdf":
-                text = extract_text_from_pdf_url(source)
+        for upload in uploads:
+            try:
+                upload_id = upload["id"]
+                org_id = upload["org_id"]
+                source = upload["source"]
+                doc_type = upload["type"]
+                namespace = upload["pinecone_namespace"]
 
-            elif doc_type == "url":
-                text = scrape_url_text(source)
+                print(
+                    f"[Info] Processing upload {upload_id} of type {doc_type}")
 
-            elif doc_type == "json":
-                text = extract_text_from_json(source)
+                # Extract text based on document type
+                if doc_type == "pdf":
+                    text = extract_text_from_pdf_url(source)
+                elif doc_type == "url":
+                    text = scrape_url_text(source)
+                elif doc_type == "json":
+                    text = extract_text_from_json_url(source)
+                else:
+                    raise ValueError(f"Unsupported document type: {doc_type}")
 
-            else:
-                raise ValueError("Unsupported type")
+                # Validate extracted text
+                if not text or len(text.strip()) < 10:
+                    raise ValueError("No meaningful text content extracted")
 
-            # If no text is extracted, fail the upload
-            if not text:
-                class NoTextExtractedError(ValueError):
-                    pass
-                raise NoTextExtractedError("No text extracted")
+                print(
+                    f"[Info] Extracted {len(text)} characters from {doc_type}")
 
-            # Process the extracted text (split into chunks, generate embeddings)
-            chunks = split_into_chunks(text)
-            embeddings = get_embeddings_for_chunks(chunks)
+                # Process text into chunks and embeddings
+                chunks = split_into_chunks(text)
+                if not chunks:
+                    raise ValueError("No text chunks generated")
 
-            # Upload embeddings to Pinecone
-            upload_to_pinecone(chunks, embeddings, org_ns)
+                embeddings = get_embeddings_for_chunks(chunks)
+                if not embeddings:
+                    raise ValueError("No embeddings generated")
 
-            # Update the status of the upload to 'completed'
-            await client.patch(f"/uploads?id=eq.{upload_id}", json={
-                "status": "completed"
-            })
+                print(
+                    f"[Info] Generated {len(chunks)} chunks and {len(embeddings)} embeddings")
 
-        except (ValueError, RuntimeError, httpx.HTTPError, requests.RequestException) as e:
-            print(f"[!] Ingestion failed: {e}")
-            await client.patch(f"/uploads?id=eq.{upload['id']}", json={
-                "status": "failed",
-                "error_message": str(e)
-            })
+                # Upload to Pinecone
+                upload_to_pinecone(chunks, embeddings, namespace, upload_id)
+
+                # Update status to completed
+                update_result = supabase.table("uploads").update({
+                    "status": "completed",
+                    "error_message": None
+                }).eq("id", upload_id).execute()
+
+                print(f"[Success] Completed processing upload {upload_id}")
+
+            except Exception as e:
+                error_msg = str(e)
+                print(
+                    f"[Error] Processing failed for upload {upload.get('id', 'unknown')}: {error_msg}")
+
+                # Update status to failed
+                try:
+                    update_result = supabase.table("uploads").update({
+                        "status": "failed",
+                        "error_message": error_msg
+                    }).eq("id", upload["id"]).execute()
+                except Exception as update_error:
+                    print(
+                        f"[Error] Failed to update error status: {update_error}")
+
+    except Exception as e:
+        print(f"[Error] Failed to process pending uploads: {e}")
+
+# For testing purposes
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(process_pending_uploads())
