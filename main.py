@@ -6,6 +6,7 @@ from routers import org
 from routers import users
 from routers import uploads
 from routers import auth
+from routers import chat
 from services.worker_scheduler import start_background_worker, stop_background_worker
 import logging
 
@@ -45,6 +46,7 @@ app.include_router(org.router, prefix="/api/org")
 app.include_router(users.router, prefix="/api/users")
 # app.include_router(org.router, prefix="/api/console")
 app.include_router(uploads.router, prefix="/api/uploads")
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 
 @app.get("/")

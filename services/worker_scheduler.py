@@ -1,11 +1,13 @@
-import os
-import asyncio
+"# services/worker_scheduler.py\n\n"
+# This module manages the background worker for processing uploads using APScheduler.   
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from services.ingestion_worker import process_pending_uploads
 
 
 class IngestionWorkerScheduler:
+    """Scheduler to manage background worker for processing uploads"""
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self.is_running = False

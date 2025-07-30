@@ -1,3 +1,5 @@
+"services/web_scraper.py\n\n"
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -16,6 +18,6 @@ def scrape_url_text(url: str) -> str:
         text = soup.get_text(separator='\n')
         return text.strip()
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"[Error] Failed to fetch URL {url}: {e}")
         return ""

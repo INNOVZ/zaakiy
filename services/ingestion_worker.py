@@ -1,3 +1,5 @@
+"# services/ingestion_worker.py\n\n"
+
 import os
 import asyncio
 import io
@@ -26,41 +28,107 @@ supabase = create_client(supabase_url, supabase_key)
 
 
 def get_supabase_storage_url(file_path: str) -> str:
-    """Convert Supabase storage path to full URL"""
-    return f"{supabase_url}/storage/v1/object/public/uploads/{file_path}"
+    """Convert Supabase storage path to authenticated URL"""
+    # For private buckets, we'll use the authenticated storage endpoint
+    return f"{supabase_url}/storage/v1/object/uploads/{file_path}"
+
+
+def get_authenticated_headers() -> dict:
+    """Get headers for authenticated Supabase requests"""
+    return {
+        'Authorization': f'Bearer {supabase_key}',
+        'apikey': supabase_key,
+        'Content-Type': 'application/json'
+    }
 
 
 def extract_text_from_pdf_url(url: str) -> str:
+    """Extract text from PDF with authenticated access"""
     try:
-        # Convert Supabase path to full URL if needed
+        # Convert Supabase path to authenticated URL if needed
         if not url.startswith('http'):
             url = get_supabase_storage_url(url)
 
-        response = requests.get(url, timeout=30)
+        print(f"[Info] Attempting to fetch PDF from: {url}")
+
+        # Use authenticated request for private buckets
+        headers = get_authenticated_headers()
+
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
 
+        print(
+            f"[Info] Successfully fetched PDF, size: {len(response.content)} bytes")
+
+        if len(response.content) == 0:
+            raise ValueError("Downloaded file is empty")
+
+        # Check if response is actually a PDF
+        if not response.content.startswith(b'%PDF'):
+            print(
+                f"[Warning] File doesn't appear to be a PDF. Content type: {response.headers.get('content-type')}")
+            print(f"[Warning] First 100 bytes: {response.content[:100]}")
+            raise ValueError("File is not a valid PDF")
+
         pdf_reader = PdfReader(io.BytesIO(response.content))
+        print(f"[Info] PDF has {len(pdf_reader.pages)} pages")
+
         text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+        pages_with_text = 0
+
+        for i, page in enumerate(pdf_reader.pages):
+            try:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    text += page_text + "\n"
+                    pages_with_text += 1
+                    print(
+                        f"[Info] Extracted text from page {i+1}: {len(page_text)} chars")
+                else:
+                    print(f"[Warning] No text found on page {i+1}")
+            except Exception as page_error:
+                print(
+                    f"[Warning] Error extracting text from page {i+1}: {page_error}")
+                continue
+
+        print(
+            f"[Info] Total text extracted: {len(text)} characters from {pages_with_text} pages")
+
+        if len(text.strip()) < 10:
+            raise ValueError(
+                f"PDF contains insufficient text content. Only {len(text)} characters extracted from {pages_with_text} pages out of {len(pdf_reader.pages)} total pages. This might be a scanned/image-based PDF.")
 
         return text.strip()
 
+    except requests.RequestException as e:
+        print(f"[Error] HTTP error while fetching PDF {url}: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"[Error] Response status: {e.response.status_code}")
+            print(f"[Error] Response headers: {e.response.headers}")
+            print(f"[Error] Response content: {e.response.text[:500]}")
+        raise ValueError(f"Failed to download PDF: {str(e)}") from e
     except Exception as e:
-        print(f"[Error] Failed to extract text from PDF {url}: {e}")
-        return ""
+        print(f"[Error] PDF processing error: {e}")
+        raise ValueError(f"PDF processing failed: {str(e)}") from e
 
 
 def extract_text_from_json_url(url: str) -> str:
+    """Extract text from JSON with authenticated access"""
     try:
-        # Convert Supabase path to full URL if needed
+        # Convert Supabase path to authenticated URL if needed
         if not url.startswith('http'):
             url = get_supabase_storage_url(url)
 
-        response = requests.get(url, timeout=30)
+        print(f"[Info] Attempting to fetch JSON from: {url}")
+
+        # Use authenticated request for private buckets
+        headers = get_authenticated_headers()
+
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
+
+        print(
+            f"[Info] Successfully fetched JSON, size: {len(response.content)} bytes")
 
         data = response.json()
 
@@ -81,9 +149,19 @@ def extract_text_from_json_url(url: str) -> str:
         else:
             return str(data)
 
+    except requests.RequestException as e:
+        print(f"[Error] HTTP error while extracting text from JSON {url}: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"[Error] Response status: {e.response.status_code}")
+            print(f"[Error] Response content: {e.response.text[:200]}")
+        raise ValueError(f"Failed to download JSON: {str(e)}") from e
+    except json.JSONDecodeError as e:
+        print(
+            f"[Error] JSON decode error while extracting text from JSON {url}: {e}")
+        raise ValueError(f"Invalid JSON format: {str(e)}") from e
     except Exception as e:
-        print(f"[Error] Failed to extract text from JSON {url}: {e}")
-        return ""
+        print(f"[Error] JSON processing error: {e}")
+        raise ValueError(f"JSON processing failed: {str(e)}") from e
 
 
 def split_into_chunks(text: str) -> list:
@@ -129,7 +207,7 @@ def upload_to_pinecone(chunks: list, vectors: list, namespace: str, upload_id: s
 
 
 async def process_pending_uploads():
-    """Main function to process all pending uploads"""
+    """Main function to process all pending uploads with authenticated storage access"""
     try:
         # Get pending uploads from Supabase
         result = supabase.table("uploads").select(
@@ -153,7 +231,7 @@ async def process_pending_uploads():
                 if doc_type == "pdf":
                     text = extract_text_from_pdf_url(source)
                 elif doc_type == "url":
-                    text = scrape_url_text(source)
+                    text = scrape_url_text(source)  # URLs don't need auth
                 elif doc_type == "json":
                     text = extract_text_from_json_url(source)
                 else:
@@ -182,32 +260,31 @@ async def process_pending_uploads():
                 upload_to_pinecone(chunks, embeddings, namespace, upload_id)
 
                 # Update status to completed
-                update_result = supabase.table("uploads").update({
+                supabase.table("uploads").update({
                     "status": "completed",
                     "error_message": None
                 }).eq("id", upload_id).execute()
 
                 print(f"[Success] Completed processing upload {upload_id}")
 
-            except Exception as e:
+            except (ValueError, TypeError, requests.RequestException) as e:
                 error_msg = str(e)
                 print(
                     f"[Error] Processing failed for upload {upload.get('id', 'unknown')}: {error_msg}")
 
                 # Update status to failed
                 try:
-                    update_result = supabase.table("uploads").update({
+                    supabase.table("uploads").update({
                         "status": "failed",
                         "error_message": error_msg
                     }).eq("id", upload["id"]).execute()
-                except Exception as update_error:
+                except (requests.RequestException, ValueError) as update_error:
                     print(
                         f"[Error] Failed to update error status: {update_error}")
 
-    except Exception as e:
+    except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as e:
         print(f"[Error] Failed to process pending uploads: {e}")
 
-# For testing purposes
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(process_pending_uploads())
+    # For testing purposes
+    if __name__ == "__main__":
+        asyncio.run(process_pending_uploads())
