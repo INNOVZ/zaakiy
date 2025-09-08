@@ -436,6 +436,13 @@ INSTRUCTIONS:
 - If context doesn't contain relevant info, say so politely
 - Reference specific information from context when applicable
 - Keep responses focused and concise
+- Avoid unnecessary repetition
+- Maintain a logical flow of information
+- Use clear and concise language
+- Avoid unnecessary jargon
+- Be mindful of the user's perspective
+- Encourage user engagement and questions
+- Answer questions clearly and concisely in less than 100 words
 - Confidence threshold for responses: {self.context_config.confidence_threshold}
 """
 

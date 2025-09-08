@@ -46,20 +46,20 @@ class ContextAnalytics:
         try:
             metrics_data = {
                 "org_id": metrics.org_id,
-                "conversation_id": metrics.conversation_id,
                 "message_id": metrics.message_id,
                 "query_original": metrics.query_original,
                 "query_enhanced": metrics.query_enhanced,
                 "documents_retrieved": metrics.documents_retrieved,
-                "context_length": metrics.context_length,
-                "context_quality_score": metrics.context_quality_score,
-                "retrieval_time_ms": metrics.retrieval_time_ms,
-                "response_time_ms": metrics.response_time_ms,
-                "model_used": metrics.model_used,
-                "sources_count": metrics.sources_count,
-                "user_satisfaction": metrics.user_satisfaction,
-                "feedback_text": metrics.feedback_text,
-                "created_at": metrics.timestamp.isoformat()
+                "context_used": "",  # New field
+                "retrieval_stats": {
+                    "time_ms": metrics.retrieval_time_ms,
+                    "sources_count": metrics.sources_count
+                },
+                "context_quality": {
+                    "score": metrics.context_quality_score,
+                    "length": metrics.context_length
+                },
+                "model_used": metrics.model_used
             }
 
             response = self.supabase.table(
@@ -67,7 +67,7 @@ class ContextAnalytics:
             return bool(response.data)
 
         except Exception as e:
-            logging.error(f"Failed to log context metrics: {e}")
+            logging.error("Failed to log context metrics: %s", e)
             return False
 
     async def get_performance_dashboard(self, org_id: str, days: int = 7) -> Dict[str, Any]:

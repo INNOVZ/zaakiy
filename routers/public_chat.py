@@ -70,7 +70,8 @@ async def public_chat(request: PublicChatRequest):
         raise
     except Exception as e:
         print(f"[Error] Public chat failed: {e}")
-        raise HTTPException(status_code=500, detail="Chat service unavailable") from e
+        raise HTTPException(
+            status_code=500, detail="Chat service unavailable") from e
 
 
 @router.get("/chatbot/{chatbot_id}/config")

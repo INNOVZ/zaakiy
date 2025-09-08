@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 import os
@@ -119,14 +119,19 @@ class ContextConfigManager:
         self.supabase: Client = create_client(supabase_url, supabase_key)
 
         # Default configurations for different business types
-        self.default_configs = {
+        self.default_configs = self.default_configs = {
             "saas": ContextEngineeringConfig(
                 org_id="default",
                 config_name="saas_optimized",
                 retrieval_strategy=RetrievalStrategy.HYBRID,
                 model_tier=ModelTier.BALANCED,
                 final_context_chunks=5,
-                business_context="SaaS platform with technical documentation and user guides"
+                business_context="SaaS platform with technical documentation and user guides",
+                confidence_threshold=0.7,
+                enable_semantic_rerank=True,
+                enable_hallucination_check=True,
+                enable_source_verification=True,
+                max_response_time_ms=5000
             ),
             "ecommerce": ContextEngineeringConfig(
                 org_id="default",
@@ -134,7 +139,10 @@ class ContextConfigManager:
                 retrieval_strategy=RetrievalStrategy.SEMANTIC_ONLY,
                 model_tier=ModelTier.FAST,
                 final_context_chunks=3,
-                business_context="E-commerce platform with product information and customer support"
+                business_context="E-commerce platform with product information and customer support",
+                confidence_threshold=0.6,
+                enable_semantic_rerank=True,
+                max_response_time_ms=3000
             ),
             "healthcare": ContextEngineeringConfig(
                 org_id="default",
@@ -144,7 +152,9 @@ class ContextConfigManager:
                 final_context_chunks=7,
                 confidence_threshold=0.85,
                 enable_hallucination_check=True,
-                business_context="Healthcare organization with medical information and patient support"
+                enable_source_verification=True,
+                business_context="Healthcare organization with medical information and patient support",
+                max_response_time_ms=8000
             ),
             "finance": ContextEngineeringConfig(
                 org_id="default",
@@ -153,7 +163,10 @@ class ContextConfigManager:
                 model_tier=ModelTier.PREMIUM,
                 final_context_chunks=6,
                 confidence_threshold=0.8,
-                business_context="Financial services with regulatory information and customer support"
+                enable_hallucination_check=True,
+                enable_source_verification=True,
+                business_context="Financial services with regulatory information and customer support",
+                max_response_time_ms=6000
             )
         }
 
@@ -176,23 +189,23 @@ class ContextConfigManager:
             if org_response.data and len(org_response.data) > 0:
                 org_type = org_response.data[0].get("type", "saas").lower()
                 if org_type in self.default_configs:
-                    config = self.default_configs[org_type].copy(
+                    config = self.default_configs[org_type].model_copy(
                         update={"org_id": org_id})
                     # Save default config to database
                     await self.save_config(config)
                     return config
 
             # Ultimate fallback - SaaS default
-            config = self.default_configs["saas"].copy(
+            config = self.default_configs["saas"].model_copy(
                 update={"org_id": org_id})
             await self.save_config(config)
             return config
 
         except Exception as e:
             logging.error(
-                f"Error getting context config for org {org_id}: {e}")
+                "Error getting context config for org %s: %s", org_id, e)
             # Return SaaS default as emergency fallback
-            return self.default_configs["saas"].copy(update={"org_id": org_id})
+            return self.default_configs["saas"].model_copy(update={"org_id": org_id})
 
     async def save_config(self, config: ContextEngineeringConfig) -> bool:
         """Save context engineering configuration"""
@@ -202,7 +215,7 @@ class ContextConfigManager:
             config_data = {
                 "org_id": config.org_id,
                 "config_name": config.config_name,
-                "config_data": config.dict(),
+                "config_data": config.model_dump(),
                 "updated_at": config.updated_at.isoformat()
             }
 
@@ -215,7 +228,7 @@ class ContextConfigManager:
             return bool(response.data)
 
         except Exception as e:
-            logging.error(f"Error saving context config: {e}")
+            logging.error("Error saving context config: %s", e)
             return False
 
     async def update_config(
@@ -229,6 +242,15 @@ class ContextConfigManager:
             # Get current config
             current_config = await self.get_config(org_id, config_name)
 
+            # Validate updates
+            valid_fields = ContextEngineeringConfig.model_fields.keys()
+            invalid_fields = [
+                k for k in updates.keys() if k not in valid_fields]
+            if invalid_fields:
+                logging.error("Invalid fields in updates: %s", invalid_fields)
+                raise ValueError(
+                    f"Invalid configuration fields: {invalid_fields}")
+
             # Apply updates
             for key, value in updates.items():
                 if hasattr(current_config, key):
@@ -238,7 +260,8 @@ class ContextConfigManager:
             return await self.save_config(current_config)
 
         except Exception as e:
-            logging.error(f"Error updating context config: {e}")
+            logging.info("🔧 Incoming updates for %s: %s", org_id, updates)
+            logging.error("Error updating context config: %s", e)
             return False
 
     async def create_custom_config(
@@ -253,7 +276,7 @@ class ContextConfigManager:
             # Start with base template
             base_config = self.default_configs.get(
                 base_template, self.default_configs["saas"])
-            config = base_config.copy(update={
+            config = base_config.model_copy(update={
                 "org_id": org_id,
                 "config_name": config_name
             })
@@ -269,7 +292,7 @@ class ContextConfigManager:
             return config
 
         except Exception as e:
-            logging.error(f"Error creating custom config: {e}")
+            logging.error("Error creating custom config: %s", e)
             raise
 
     def get_model_config(self, tier: ModelTier) -> Dict[str, Any]:
@@ -379,7 +402,7 @@ class ContextConfigManager:
             }
 
         except Exception as e:
-            logging.error(f"Error getting performance recommendations: {e}")
+            logging.error("Error getting performance recommendations: %s", e)
             return {"recommendations": [], "confidence": 0}
 
 
