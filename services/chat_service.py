@@ -1,8 +1,8 @@
 import os
-import uuid
+# import uuid
 import logging
-from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from typing import Dict, List, Any
+from datetime import datetime
 import openai
 from pinecone import Pinecone
 from supabase import create_client, Client
@@ -30,6 +30,14 @@ class ChatService:
 
         # Context engineering config will be loaded per request
         self.context_config = None
+        
+        # Initialize retrieval config with defaults (will be updated per request)
+        self.retrieval_config = {
+            "initial": 10,
+            "rerank": 5,
+            "final": 3
+        }
+        self.max_context_length = 4000
 
     # ==========================================
     # MAIN CHAT INTERFACE
@@ -120,8 +128,8 @@ class ChatService:
                 "config_used": self.context_config.config_name
             }
 
-        except Exception as e:
-            logging.error(f"Chat error: {e}")
+        except (openai.OpenAIError, ValueError, KeyError, ConnectionError) as e:
+            logging.error("Chat error: %s", e)
             return await self._fallback_response(message, session_id)
 
     # ==========================================
@@ -164,8 +172,8 @@ class ChatService:
                 conversation_data).execute()
             return new_conv.data[0]
 
-        except Exception as e:
-            logging.error(f"Error managing conversation: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error managing conversation: %s", e)
             raise
 
     async def _add_message(
@@ -191,8 +199,8 @@ class ChatService:
                 "messages").insert(message_data).execute()
             return response.data[0]
 
-        except Exception as e:
-            logging.error(f"Error adding message: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error adding message: %s", e)
             raise
 
     async def _get_conversation_history(
@@ -210,8 +218,8 @@ class ChatService:
 
             return response.data or []
 
-        except Exception as e:
-            logging.error(f"Error getting conversation history: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error getting conversation history: %s", e)
             return []
 
     # ==========================================
@@ -272,8 +280,8 @@ class ChatService:
                 ]
             }
 
-        except Exception as e:
-            logging.error(f"Enhanced response generation error: {e}")
+        except (openai.OpenAIError, ValueError, KeyError, ConnectionError) as e:
+            logging.error("Enhanced response generation error: %s", e)
             return {
                 "response": "I apologize, but I'm having trouble processing your request right now. Please try again.",
                 "sources": [],
@@ -319,8 +327,8 @@ Enhanced query (maintain intent, add relevant context, make it more specific):
             # Limit to max query variants
             return enhanced[:self.context_config.max_query_variants]
 
-        except Exception as e:
-            logging.warning(f"Query enhancement failed: {e}")
+        except (openai.OpenAIError, ValueError, KeyError) as e:
+            logging.warning("Query enhancement failed: %s", e)
             return enhanced
 
     async def _retrieve_documents(self, queries: List[str]) -> List[Dict]:
@@ -350,8 +358,8 @@ Enhanced query (maintain intent, add relevant context, make it more specific):
                             "query_variant": query
                         }
 
-            except Exception as e:
-                logging.warning(f"Retrieval failed for query '{query}': {e}")
+            except (ValueError, KeyError, ConnectionError) as e:
+                logging.warning("Retrieval failed for query '%s': %s", query, e)
 
         # Return top documents sorted by score
         sorted_docs = sorted(
@@ -467,8 +475,8 @@ INSTRUCTIONS:
 
             return generated_response
 
-        except Exception as e:
-            logging.error(f"Response generation failed: {e}")
+        except (openai.OpenAIError, ValueError, KeyError) as e:
+            logging.error("Response generation failed: %s", e)
             return self.chatbot_config.get(
                 'fallback_message',
                 "I apologize, but I'm having trouble generating a response right now."
@@ -514,8 +522,8 @@ Respond with just the number (1-5):
 
             return response
 
-        except Exception as e:
-            logging.warning(f"Response quality check failed: {e}")
+        except (openai.OpenAIError, ValueError, KeyError) as e:
+            logging.warning("Response quality check failed: %s", e)
             return response
 
     # ==========================================
@@ -569,8 +577,8 @@ Respond with just the number (1-5):
 
             self.supabase.table("context_logs").insert(context_data).execute()
 
-        except Exception as e:
-            logging.warning(f"Analytics logging failed: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.warning("Analytics logging failed: %s", e)
 
     # ==========================================
     # UTILITY METHODS
@@ -584,8 +592,8 @@ Respond with just the number (1-5):
                 input=text
             )
             return response.data[0].embedding
-        except Exception as e:
-            logging.error(f"Embedding generation failed: {e}")
+        except (openai.OpenAIError, ValueError, KeyError) as e:
+            logging.error("Embedding generation failed: %s", e)
             raise
 
     def _assess_context_quality(self, context: str, query: str) -> Dict:
@@ -635,8 +643,8 @@ Respond with just the number (1-5):
 
             return response.data or []
 
-        except Exception as e:
-            logging.error(f"Error getting conversations: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error getting conversations: %s", e)
             return []
 
     async def add_feedback(
@@ -676,14 +684,14 @@ Respond with just the number (1-5):
                         "user_satisfaction": satisfaction_score,
                         "feedback_text": feedback_text
                     }).eq("message_id", message_id).execute()
-                except Exception as e:
+                except (ValueError, KeyError, ConnectionError) as e:
                     logging.warning(
-                        f"Failed to update analytics with feedback: {e}")
+                        "Failed to update analytics with feedback: %s", e)
 
             return bool(response.data)
 
-        except Exception as e:
-            logging.error(f"Error adding feedback: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error adding feedback: %s", e)
             return False
 
     async def get_performance_insights(self) -> Dict[str, Any]:
@@ -691,14 +699,14 @@ Respond with just the number (1-5):
         try:
             dashboard = await context_analytics.get_performance_dashboard(self.org_id, days=7)
             return dashboard
-        except Exception as e:
-            logging.error(f"Error getting performance insights: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error getting performance insights: %s", e)
             return {}
 
     async def update_context_config(self, updates: Dict[str, Any]) -> bool:
         """Update context engineering configuration"""
         try:
             return await context_config_manager.update_config(self.org_id, updates)
-        except Exception as e:
-            logging.error(f"Error updating context config: {e}")
+        except (ValueError, KeyError, ConnectionError) as e:
+            logging.error("Error updating context config: %s", e)
             return False

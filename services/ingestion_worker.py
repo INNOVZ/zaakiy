@@ -86,7 +86,7 @@ def extract_text_from_pdf_url(url: str) -> str:
                         f"[Info] Extracted text from page {i+1}: {len(page_text)} chars")
                 else:
                     print(f"[Warning] No text found on page {i+1}")
-            except Exception as page_error:
+            except (AttributeError, ValueError, TypeError) as page_error:
                 print(
                     f"[Warning] Error extracting text from page {i+1}: {page_error}")
                 continue

@@ -1,11 +1,12 @@
-from typing import Dict, Any
-from pydantic import BaseModel, Field
-from enum import Enum
+
 import os
-import json
-from datetime import datetime, timedelta
-from supabase import create_client, Client
+from typing import Dict, Any
+from enum import Enum
 import logging
+from datetime import datetime, timedelta
+from pydantic import BaseModel, Field
+# import json
+from supabase import create_client, Client
 
 
 class RetrievalStrategy(str, Enum):
@@ -201,7 +202,7 @@ class ContextConfigManager:
             await self.save_config(config)
             return config
 
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             logging.error(
                 "Error getting context config for org %s: %s", org_id, e)
             # Return SaaS default as emergency fallback
@@ -227,7 +228,7 @@ class ContextConfigManager:
 
             return bool(response.data)
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError) as e:
             logging.error("Error saving context config: %s", e)
             return False
 
@@ -259,7 +260,7 @@ class ContextConfigManager:
             # Save updated config
             return await self.save_config(current_config)
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, AttributeError) as e:
             logging.info("🔧 Incoming updates for %s: %s", org_id, updates)
             logging.error("Error updating context config: %s", e)
             return False
@@ -401,7 +402,7 @@ class ContextConfigManager:
                 }
             }
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, AttributeError) as e:
             logging.error("Error getting performance recommendations: %s", e)
             return {"recommendations": [], "confidence": 0}
 

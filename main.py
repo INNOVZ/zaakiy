@@ -1,17 +1,17 @@
 import os
 import logging
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
+from routers import search
 from routers import org
 from routers import users
 from routers import uploads
 from routers import auth
 from routers import chat
-from services.worker_scheduler import start_background_worker, stop_background_worker
-from routers import search
 from routers import public_chat
+from services.worker_scheduler import start_background_worker, stop_background_worker
 
 load_dotenv()  # Load .env variables
 

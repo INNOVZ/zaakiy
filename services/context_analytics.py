@@ -1,13 +1,12 @@
 import os
 import logging
+import statistics
 from typing import Dict, List, Optional, Any
+from collections import defaultdict, Counter
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from supabase import create_client, Client
-import json
-import statistics
-from collections import defaultdict, Counter
-
+# import json
 
 @dataclass
 class ContextMetrics:
@@ -66,7 +65,7 @@ class ContextAnalytics:
                 "context_analytics").insert(metrics_data).execute()
             return bool(response.data)
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError, KeyError) as e:
             logging.error("Failed to log context metrics: %s", e)
             return False
 
@@ -90,8 +89,8 @@ class ContextAnalytics:
 
             return dashboard
 
-        except Exception as e:
-            logging.error(f"Failed to get performance dashboard: {e}")
+        except (ConnectionError, TimeoutError, ValueError, KeyError) as e:
+            logging.error("Failed to get performance dashboard: %s", e)
             return self._empty_dashboard()
 
     async def _calculate_dashboard_metrics(self, data: List[Dict], days: int) -> Dict[str, Any]:
@@ -220,8 +219,8 @@ class ContextAnalytics:
                 "volume_change": self._calculate_percentage_change(len(prev_data), len(current_data))
             }
 
-        except Exception as e:
-            logging.error(f"Error calculating trends: {e}")
+        except (ConnectionError, TimeoutError, ValueError, KeyError) as e:
+            logging.error("Error calculating trends: %s", e)
             return {"trends_available": False}
 
     def _analyze_quality_patterns(self, data: List[Dict]) -> Dict[str, Any]:
@@ -250,6 +249,8 @@ class ContextAnalytics:
             "peak_quality_hours": sorted(quality_by_time.items(),
                                          key=lambda x: statistics.mean(x[1]) if x[1] else 0, reverse=True)[:3]
         }
+
+
 
     def _generate_performance_insights(self, data: List[Dict]) -> List[Dict[str, Any]]:
         """Generate actionable performance insights"""
@@ -365,6 +366,7 @@ class ContextAnalytics:
             "generated_at": datetime.utcnow().isoformat()
         }
 
+
     async def get_query_analysis(self, org_id: str, query: str, days: int = 30) -> Dict[str, Any]:
         """Analyze similar queries and their performance"""
         try:
@@ -407,8 +409,8 @@ class ContextAnalytics:
                 }
             }
 
-        except Exception as e:
-            logging.error(f"Error in query analysis: {e}")
+        except (ConnectionError, TimeoutError, ValueError, KeyError) as e:
+            logging.error("Error in query analysis: %s", e)
             return {"similar_queries_found": 0, "analysis": None}
 
     async def export_analytics_data(
@@ -416,7 +418,7 @@ class ContextAnalytics:
         org_id: str,
         start_date: datetime,
         end_date: datetime,
-        format: str = "json"
+        export_format: str = "json"
     ) -> Dict[str, Any]:
         """Export analytics data for external analysis"""
         try:
@@ -430,7 +432,7 @@ class ContextAnalytics:
 
             data = response.data or []
 
-            if format == "csv":
+            if export_format == "csv":
                 # Convert to CSV format (simplified)
                 csv_data = []
                 for record in data:
@@ -448,9 +450,9 @@ class ContextAnalytics:
 
             return {"format": "json", "data": data, "count": len(data)}
 
-        except Exception as e:
-            logging.error(f"Error exporting analytics data: {e}")
-            return {"format": format, "data": [], "count": 0, "error": str(e)}
+        except (ConnectionError, TimeoutError, ValueError, KeyError) as e:
+            logging.error("Error exporting analytics data: %s", e)
+            return {"format": export_format, "data": [], "count": 0, "error": str(e)}
 
 
 # Global instance

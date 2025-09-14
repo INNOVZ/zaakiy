@@ -70,7 +70,7 @@ def _can_fetch_robots(start_url: str, user_agent: str, target_url: str) -> bool:
         rp.set_url(urljoin(root, "/robots.txt"))
         rp.read()
         return rp.can_fetch(user_agent, target_url)
-    except Exception:
+    except (requests.RequestException, OSError, ValueError):
         # If robots.txt can't be fetched or parsed, allow by default
         return True
 
@@ -206,7 +206,7 @@ def crawl_site(
             print(f"[Error] Failed to fetch {url}: {e}")
             visited.add(url)  # Mark as visited to avoid retrying
 
-        except Exception as e:
+        except (ValueError, AttributeError, TypeError) as e:
             print(f"[Error] Unexpected error processing {url}: {e}")
             visited.add(url)
 
