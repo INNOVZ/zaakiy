@@ -1,6 +1,5 @@
 from services.supabase_auth import verify_jwt_token, debug_verify_jwt_token
 from fastapi import APIRouter, Depends
-from services.supabase_auth import verify_jwt_token
 # from services.user_service import get_user_with_org
 
 router = APIRouter()

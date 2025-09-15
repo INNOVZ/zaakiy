@@ -1,5 +1,6 @@
 import os
 import uuid
+import traceback
 from datetime import datetime
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -229,7 +230,6 @@ FALLBACK: {request.fallback_message}
         raise
     except Exception as e:
         print(f"[ERROR] Create chatbot failed: {e}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
@@ -473,7 +473,7 @@ async def chat_conversation(
         error_time = int(
             (datetime.utcnow() - start_time).total_seconds() * 1000)
         print(f"[ERROR] Chat conversation failed after {error_time}ms: {e}")
-        import traceback
+      
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}") from e
 
@@ -672,7 +672,7 @@ async def get_context_analytics(
             }
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.post("/analytics/query-optimization")
 async def analyze_query_optimization(
@@ -697,7 +697,7 @@ async def analyze_query_optimization(
             "estimated_response_time": 2000
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     
 # ==========================================
 # HEALTH CHECK

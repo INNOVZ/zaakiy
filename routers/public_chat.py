@@ -2,9 +2,9 @@ import os
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from services.chat_service import ChatService
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from services.chat_service import ChatService
 
 load_dotenv()
 
@@ -45,15 +45,18 @@ async def public_chat(request: PublicChatRequest):
 
         chatbot = response.data[0]
 
-        # Initialize chat service
-        chat_service = ChatService()
-
-        # Generate response using organization-specific context
-        result = await chat_service.generate_public_response(
-            message=request.message,
+        # Initialize chat service with required parameters
+        chat_service = ChatService(
             org_id=chatbot["org_id"],
-            chatbot_config=chatbot,
-            session_id=request.session_id
+            chatbot_config=chatbot
+        )
+
+        # Generate response using the existing chat method
+        result = await chat_service.chat(
+            message=request.message,
+            session_id=request.session_id or "anonymous",
+            chatbot_id=request.chatbot_id,
+            channel="public"
         )
 
         return {
@@ -122,7 +125,14 @@ async def get_chatbot_widget_code(chatbot_id: str):
 
         chatbot = response.data[0]
 
-        # Generate widget HTML/JS code
+        # Get environment variables
+        api_base_url = os.getenv("API_BASE_URL", "http://localhost:8001")
+        chatbot_name = chatbot["name"]
+        chatbot_color = chatbot["color_hex"]
+        greeting_msg = chatbot.get(
+            "greeting_message", "Hello! How can I help you today!")
+
+        # Generate widget HTML/JS code - Fixed f-string interpolation
         widget_code = f"""
 <!-- ZaaKy AI Chatbot Widget -->
 <div id="zaaky-chatbot-{chatbot_id}"></div>
@@ -130,16 +140,18 @@ async def get_chatbot_widget_code(chatbot_id: str):
   (function() {{
     var chatbotConfig = {{
       chatbotId: '{chatbot_id}',
-      apiUrl: '{os.getenv("API_BASE_URL", "http://localhost:8001")}/api/public',
-      name: '{chatbot["name"]}',
-      color: '{chatbot["color_hex"]}',
-      greeting: '{chatbot.get("greeting_message", "Hello! How can I help you today?")}'
+      apiUrl: '{api_base_url}/api/public',
+      name: '{chatbot_name}',
+      color: '{chatbot_color}',
+      greeting: '{greeting_msg}'
     }};
     
     var script = document.createElement('script');
-    script.src = chatbotConfig.apiUrl + '/widget.js';
+    script.src = chatbotConfig.apiUrl + '/chatbot/{chatbot_id}/widget.js';
     script.onload = function() {{
-      ZaakyWidget.init(chatbotConfig);
+      if (window.ZaakyWidget) {{
+        ZaakyWidget.init(chatbotConfig);
+      }}
     }};
     document.head.appendChild(script);
   }})();
@@ -149,7 +161,7 @@ async def get_chatbot_widget_code(chatbot_id: str):
         return {
             "chatbot_id": chatbot_id,
             "widget_code": widget_code,
-            "integration_url": f"{os.getenv('API_BASE_URL', 'http://localhost:8001')}/api/public/chatbot/{chatbot_id}/widget.js"
+            "integration_url": f"{api_base_url}/api/public/chatbot/{chatbot_id}/widget.js"
         }
 
     except HTTPException:
@@ -173,26 +185,214 @@ async def get_chatbot_widget_js(chatbot_id: str):
         if not response.data or len(response.data) == 0:
             raise HTTPException(status_code=404, detail="Chatbot not found")
 
-        # Return JavaScript widget code
+        # chatbot = response.data[0]
+
+        # Enhanced JavaScript widget code - Fixed template string interpolation
         js_code = """
-// ZaaKy AI Chatbot Widget v1.0
+// ZaaKy AI Chatbot Widget v2.0
 (function() {
   'use strict';
   
   window.ZaakyWidget = {
+    config: null,
+    isInitialized: false,
+    
     init: function(config) {
-      this.config = config;
+      if (this.isInitialized) {
+        console.warn('ZaaKy Widget already initialized');
+        return;
+      }
+      
+      this.config = this.sanitizeConfig(config);
       this.createWidget();
       this.bindEvents();
+      this.isInitialized = true;
+      
+      console.log('ZaaKy Widget v2.0 initialized for chatbot:', this.config.chatbotId);
+    },
+    
+    sanitizeConfig: function(config) {
+      return {
+        chatbotId: this.escapeHtml(config.chatbotId || ''),
+        apiUrl: this.escapeHtml(config.apiUrl || ''),
+        name: this.escapeHtml(config.name || 'AI Assistant'),
+        color: this.escapeHtml(config.color || '#6a8fff'),
+        greeting: this.escapeHtml(config.greeting || 'Hello! How can I help you today?')
+      };
+    },
+    
+    escapeHtml: function(str) {
+      if (!str) return '';
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
     },
     
     createWidget: function() {
-      // Widget creation logic here
-      console.log('ZaaKy Widget initialized for chatbot:', this.config.chatbotId);
+      var container = document.getElementById('zaaky-chatbot-' + this.config.chatbotId);
+      if (!container) {
+        console.error('ZaaKy Widget container not found');
+        return;
+      }
+      
+      // Create widget UI
+      container.innerHTML = `
+        <div class="zaaky-widget" style="
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          width: 350px;
+          max-height: 500px;
+          border-radius: 12px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+          background: white;
+          border: 1px solid #e1e5e9;
+          z-index: 10000;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        ">
+          <div class="zaaky-header" style="
+            background: ${this.config.color};
+            color: white;
+            padding: 16px;
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+          ">
+            <h3 style="margin: 0; font-size: 16px;">${this.config.name}</h3>
+            <button class="zaaky-close" style="
+              background: none;
+              border: none;
+              color: white;
+              font-size: 18px;
+              cursor: pointer;
+            ">×</button>
+          </div>
+          <div class="zaaky-messages" style="
+            height: 300px;
+            overflow-y: auto;
+            padding: 16px;
+          ">
+            <div class="zaaky-message bot" style="
+              background: #f8f9fa;
+              padding: 12px;
+              border-radius: 8px;
+              margin-bottom: 12px;
+            ">${this.config.greeting}</div>
+          </div>
+          <div class="zaaky-input-area" style="
+            padding: 16px;
+            border-top: 1px solid #e1e5e9;
+          ">
+            <div style="display: flex; gap: 8px;">
+              <input type="text" class="zaaky-input" placeholder="Type your message..." style="
+                flex: 1;
+                padding: 12px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                outline: none;
+              ">
+              <button class="zaaky-send" style="
+                background: ${this.config.color};
+                color: white;
+                border: none;
+                padding: 12px 16px;
+                border-radius: 6px;
+                cursor: pointer;
+              ">Send</button>
+            </div>
+          </div>
+        </div>
+      `;
     },
     
     bindEvents: function() {
-      // Event binding logic here
+      var widget = document.querySelector('.zaaky-widget');
+      if (!widget) return;
+      
+      var closeBtn = widget.querySelector('.zaaky-close');
+      var sendBtn = widget.querySelector('.zaaky-send');
+      var input = widget.querySelector('.zaaky-input');
+      
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+          widget.style.display = 'none';
+        });
+      }
+      
+      if (sendBtn && input) {
+        var sendMessage = () => this.sendMessage(input.value);
+        sendBtn.addEventListener('click', sendMessage);
+        input.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') sendMessage();
+        });
+      }
+    },
+    
+    sendMessage: function(message) {
+      if (!message.trim()) return;
+      
+      var input = document.querySelector('.zaaky-input');
+      var messagesContainer = document.querySelector('.zaaky-messages');
+      
+      if (!input || !messagesContainer) return;
+      
+      // Add user message
+      this.addMessage(message, 'user');
+      input.value = '';
+      
+      // Send to API
+      fetch(this.config.apiUrl + '/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: message,
+          chatbot_id: this.config.chatbotId,
+          session_id: this.getSessionId()
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.response) {
+          this.addMessage(data.response, 'bot');
+        }
+      })
+      .catch(error => {
+        console.error('ZaaKy API Error:', error);
+        this.addMessage('Sorry, I encountered an error. Please try again.', 'bot');
+      });
+    },
+    
+    addMessage: function(text, sender) {
+      var messagesContainer = document.querySelector('.zaaky-messages');
+      if (!messagesContainer) return;
+      
+      var messageDiv = document.createElement('div');
+      messageDiv.className = 'zaaky-message ' + sender;
+      messageDiv.style.cssText = `
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        ${sender === 'user' ? 
+          'background: ' + this.config.color + '; color: white; margin-left: 40px;' : 
+          'background: #f8f9fa; margin-right: 40px;'
+        }
+      `;
+      messageDiv.textContent = text;
+      
+      messagesContainer.appendChild(messageDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    },
+    
+    getSessionId: function() {
+      var sessionId = localStorage.getItem('zaaky-session-' + this.config.chatbotId);
+      if (!sessionId) {
+        sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('zaaky-session-' + this.config.chatbotId, sessionId);
+      }
+      return sessionId;
     }
   };
 })();

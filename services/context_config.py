@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Set, Optional
 from enum import Enum
 import logging
 from datetime import datetime, timedelta
@@ -23,10 +23,15 @@ class ModelTier(str, Enum):
     ENTERPRISE = "enterprise"  # Custom fine-tuned models
 
 
+# Update the ContextEngineeringConfig class (around line 30)
+
+# Update the ContextEngineeringConfig class (around line 30)
+
 class ContextEngineeringConfig(BaseModel):
     """Configuration model for context engineering parameters"""
 
-    # Organization identification
+    # Chatbot identification
+    # chatbot_id: str
     org_id: str
     config_name: str = "default"
 
@@ -76,19 +81,11 @@ class ContextEngineeringConfig(BaseModel):
 
     # Performance Settings
     max_response_time_ms: int = Field(
-        default=5000, ge=1000, le=15000, description="Maximum response time in milliseconds")
+        default=5000, ge=1000, le=60000, description="Maximum response time in milliseconds")
     enable_caching: bool = Field(
         default=True, description="Enable response caching")
     cache_ttl_minutes: int = Field(
         default=60, ge=5, le=1440, description="Cache TTL in minutes")
-
-    # Domain-Specific Settings
-    domain_filters: Dict[str, Any] = Field(
-        default_factory=dict, description="Domain-specific filters")
-    business_context: str = Field(
-        default="", description="Business context for this organization")
-    specialized_instructions: str = Field(
-        default="", description="Specialized instructions for this domain")
 
     # Monitoring & Analytics
     enable_detailed_logging: bool = Field(
@@ -98,6 +95,18 @@ class ContextEngineeringConfig(BaseModel):
     collect_feedback: bool = Field(
         default=True, description="Collect user feedback")
 
+    # Context & Behavior Fields - ADDED
+    business_context: str = Field(
+        default="", description="Organization-specific business context and industry information")
+    domain_knowledge: str = Field(
+        default="", description="Domain-specific knowledge and terminology")
+    response_style: str = Field(
+        default="professional", description="Preferred response style")
+    fallback_behavior: str = Field(
+        default="apologetic", description="Behavior when no relevant context is found")
+    specialized_instructions: str = Field(
+        default="", description="Specialized instructions for the AI assistant")
+
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -105,9 +114,8 @@ class ContextEngineeringConfig(BaseModel):
     class Config:
         use_enum_values = True
         json_encoders = {
-            datetime: lambda v: v.isoformat()
+            datetime: lambda v: v.isoformat() if isinstance(v, datetime) else v
         }
-
 
 class ContextConfigManager:
     """Manager for context engineering configurations"""
@@ -116,58 +124,6 @@ class ContextConfigManager:
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         self.supabase: Client = create_client(supabase_url, supabase_key)
-
-        # Default configurations for different business types
-        self.default_configs = {
-            "saas": ContextEngineeringConfig(
-                org_id="default",
-                config_name="saas_optimized",
-                retrieval_strategy=RetrievalStrategy.HYBRID,
-                model_tier=ModelTier.BALANCED,
-                final_context_chunks=5,
-                business_context="SaaS platform with technical documentation and user guides",
-                confidence_threshold=0.7,
-                enable_semantic_rerank=True,
-                enable_hallucination_check=True,
-                enable_source_verification=True,
-                max_response_time_ms=5000
-            ),
-            "ecommerce": ContextEngineeringConfig(
-                org_id="default",
-                config_name="ecommerce_optimized",
-                retrieval_strategy=RetrievalStrategy.SEMANTIC_ONLY,
-                model_tier=ModelTier.FAST,
-                final_context_chunks=3,
-                business_context="E-commerce platform with product information and customer support",
-                confidence_threshold=0.6,
-                enable_semantic_rerank=True,
-                max_response_time_ms=3000
-            ),
-            "healthcare": ContextEngineeringConfig(
-                org_id="default",
-                config_name="healthcare_optimized",
-                retrieval_strategy=RetrievalStrategy.DOMAIN_SPECIFIC,
-                model_tier=ModelTier.PREMIUM,
-                final_context_chunks=7,
-                confidence_threshold=0.85,
-                enable_hallucination_check=True,
-                enable_source_verification=True,
-                business_context="Healthcare organization with medical information and patient support",
-                max_response_time_ms=8000
-            ),
-            "finance": ContextEngineeringConfig(
-                org_id="default",
-                config_name="finance_optimized",
-                retrieval_strategy=RetrievalStrategy.HYBRID,
-                model_tier=ModelTier.PREMIUM,
-                final_context_chunks=6,
-                confidence_threshold=0.8,
-                enable_hallucination_check=True,
-                enable_source_verification=True,
-                business_context="Financial services with regulatory information and customer support",
-                max_response_time_ms=6000
-            )
-        }
 
     async def get_config(self, org_id: str, config_name: str = "default") -> ContextEngineeringConfig:
         """Get context engineering configuration for an organization"""
@@ -204,17 +160,36 @@ class ContextConfigManager:
             return ContextEngineeringConfig(org_id=org_id, config_name=config_name)
 
     async def save_config(self, config: ContextEngineeringConfig) -> bool:
-        """Save context engineering configuration"""
+        """Save context engineering configuration with proper datetime handling"""
         try:
             logging.info(f"Saving config for org {config.org_id}")
-            config.updated_at = datetime.utcnow()
+
+            # Ensure timestamps are datetime objects
+            now = datetime.utcnow()
+            config.updated_at = now
+
+            # If created_at is a string, convert it to datetime
+            if isinstance(config.created_at, str):
+                try:
+                    config.created_at = datetime.fromisoformat(
+                        config.created_at.replace('Z', '+00:00'))
+                except ValueError:
+                    config.created_at = now
+
+            # Convert config to dict with proper datetime serialization
+            config_dict = config.model_dump()
+
+            # Manually handle datetime serialization
+            for key, value in config_dict.items():
+                if isinstance(value, datetime):
+                    config_dict[key] = value.isoformat()
 
             config_data = {
                 "org_id": config.org_id,
                 "config_name": config.config_name,
-                "config_data": config.model_dump(),
-                "created_at": config.created_at.isoformat(),
-                "updated_at": config.updated_at.isoformat()
+                "config_data": config_dict,
+                "created_at": config.created_at.isoformat() if isinstance(config.created_at, datetime) else config.created_at,
+                "updated_at": now.isoformat()
             }
 
             # Upsert configuration
@@ -233,6 +208,128 @@ class ContextConfigManager:
                 f"Error saving context config for org {config.org_id}: {e}")
             return False
 
+    def _get_valid_fields(self) -> Set[str]:
+        """Get valid field names for ContextEngineeringConfig - Pylint safe"""
+        # Use a hardcoded set of valid fields to avoid Pylint issues
+        # This is the most reliable approach for static analysis
+        valid_fields = {
+            'org_id', 'config_name', 'initial_retrieval_count', 'semantic_rerank_count',
+            'final_context_chunks', 'max_context_length', 'enable_query_rewriting',
+            'max_query_variants', 'conversation_context_turns', 'retrieval_strategy',
+            'semantic_weight', 'keyword_weight', 'model_tier', 'embedding_model',
+            'rerank_model', 'enable_semantic_rerank', 'enable_hallucination_check',
+            'enable_source_verification', 'confidence_threshold', 'max_response_time_ms',
+            'enable_caching', 'cache_ttl_minutes', 'enable_detailed_logging',
+            'log_user_queries', 'collect_feedback', 'created_at', 'updated_at', 
+            'business_context', 'domain_knowledge', 'response_style', 'fallback_behavior'
+        }
+
+        # Try to get dynamic fields as backup, but fallback to hardcoded set
+        try:
+            model_fields = getattr(
+                ContextEngineeringConfig, 'model_fields', None)
+            if model_fields and hasattr(model_fields, 'keys'):
+                dynamic_fields = set(model_fields.keys())
+                return dynamic_fields if dynamic_fields else valid_fields
+        except (AttributeError, TypeError):
+            pass
+
+        try:
+            fields = getattr(ContextEngineeringConfig, '__fields__', None)
+            if fields and hasattr(fields, 'keys'):
+                dynamic_fields = set(fields.keys())
+                return dynamic_fields if dynamic_fields else valid_fields
+        except (AttributeError, TypeError):
+            pass
+
+        try:
+            annotations = getattr(
+                ContextEngineeringConfig, '__annotations__', {})
+            if annotations and hasattr(annotations, 'keys'):
+                dynamic_fields = set(annotations.keys())
+                return dynamic_fields if dynamic_fields else valid_fields
+        except (AttributeError, TypeError):
+            pass
+
+        return valid_fields
+
+    def _get_field_type(self, field_name: str) -> Optional[type]:
+        """Get field type for a given field name - Pylint safe"""
+        # Try different approaches to get field type
+        try:
+            model_fields = getattr(
+                ContextEngineeringConfig, 'model_fields', None)
+            if model_fields and hasattr(model_fields, 'get'):
+                field_info = model_fields.get(field_name)
+                if field_info and hasattr(field_info, 'annotation'):
+                    return field_info.annotation
+        except (AttributeError, TypeError):
+            pass
+
+        try:
+            fields = getattr(ContextEngineeringConfig, '__fields__', None)
+            if fields and hasattr(fields, 'get'):
+                field_info = fields.get(field_name)
+                if field_info and hasattr(field_info, 'type_'):
+                    return field_info.type_
+        except (AttributeError, TypeError):
+            pass
+
+        try:
+            annotations = getattr(
+                ContextEngineeringConfig, '__annotations__', {})
+            if annotations and hasattr(annotations, 'get'):
+                return annotations.get(field_name)
+        except (AttributeError, TypeError):
+            pass
+
+        return None
+
+    def _is_enum_type(self, field_type: Any) -> bool:
+        """Check if a field type is an enum - Pylint safe"""
+        if not field_type:
+            return False
+
+        try:
+            # Handle Union types (like Optional[Enum])
+            if hasattr(field_type, '__origin__'):
+                if hasattr(field_type, '__args__'):
+                    args = getattr(field_type, '__args__', ())
+                    for arg in args:
+                        if arg != type(None) and self._is_enum_type(arg):
+                            return True
+                return False
+
+            # Check if it's a direct enum type
+            if isinstance(field_type, type):
+                return issubclass(field_type, Enum)
+        except (TypeError, AttributeError):
+            pass
+
+        return False
+
+    def _set_field_value(self, config: ContextEngineeringConfig, key: str, value: Any) -> bool:
+        """Set field value with proper type handling - Pylint safe"""
+        try:
+            field_type = self._get_field_type(key)
+
+            if self._is_enum_type(field_type):
+                # Handle enum types
+                if isinstance(value, str):
+                    setattr(config, key, value)
+                elif field_type and isinstance(field_type, type):
+                    setattr(config, key, field_type(value))
+                else:
+                    setattr(config, key, value)
+            else:
+                # Handle regular types
+                setattr(config, key, value)
+
+            return True
+        except (ValueError, TypeError) as e:
+            logging.error(f"Error setting field {key} to {value}: {e}")
+            return False
+
     async def update_config(
         self,
         org_id: str,
@@ -247,38 +344,42 @@ class ContextConfigManager:
             # Get current config
             current_config = await self.get_config(org_id, config_name)
 
-            # Validate updates
-            valid_fields = ContextEngineeringConfig.model_fields.keys()
-            invalid_fields = [
-                k for k in updates.keys() if k not in valid_fields]
-            if invalid_fields:
-                logging.error(f"Invalid fields in updates: {invalid_fields}")
-                raise ValueError(
-                    f"Invalid configuration fields: {invalid_fields}")
+            # Get valid fields using safe method
+            valid_fields = self._get_valid_fields()
 
-            # Apply updates with proper type handling
+            # Filter out invalid fields
+            valid_updates = {}
+            invalid_fields = []
+
             for key, value in updates.items():
-                if hasattr(current_config, key):
-                    try:
-                        # Handle enum fields
-                        field_info = ContextEngineeringConfig.model_fields[key]
-                        field_type = field_info.annotation
+                if key in valid_fields:
+                    valid_updates[key] = value
+                else:
+                    invalid_fields.append(key)
 
-                        if hasattr(field_type, '__origin__') and field_type.__origin__ is type(Enum):
-                            # Handle enum types
-                            if isinstance(value, str):
-                                setattr(current_config, key, value)
-                            else:
-                                setattr(current_config, key, field_type(value))
-                        else:
-                            setattr(current_config, key, value)
-                    except (ValueError, TypeError) as e:
-                        logging.error(f"Error setting field {key}: {e}")
-                        continue
+            if invalid_fields:
+                logging.warning(
+                    f"Ignoring invalid fields in updates: {invalid_fields}")
+
+            if not valid_updates:
+                logging.warning("No valid updates provided")
+                return False
+
+            # Apply valid updates
+            success_count = 0
+            for key, value in valid_updates.items():
+                if hasattr(current_config, key):
+                    if self._set_field_value(current_config, key, value):
+                        success_count += 1
+
+            if success_count == 0:
+                logging.error("Failed to apply any updates")
+                return False
 
             # Save updated config
             success = await self.save_config(current_config)
-            logging.info(f"Config update result for org {org_id}: {success}")
+            logging.info(
+                f"Config update result for org {org_id}: {success} ({success_count}/{len(valid_updates)} fields updated)")
             return success
 
         except Exception as e:
@@ -286,47 +387,9 @@ class ContextConfigManager:
                 f"Error updating context config for org {org_id}: {e}")
             return False
 
-    async def get_default_config(self, org_id: str) -> ContextEngineeringConfig:
-        """Get a default configuration for an organization"""
-        return ContextEngineeringConfig(
-            org_id=org_id,
-            config_name="default"
-        )
-
-    async def create_custom_config(
-        self,
-        org_id: str,
-        config_name: str,
-        base_template: str = "saas",
-        custom_settings: Dict[str, Any] = None
-    ) -> ContextEngineeringConfig:
-        """Create a custom configuration based on template"""
-        try:
-            # Start with base template
-            base_config = self.default_configs.get(
-                base_template, self.default_configs["saas"])
-            config = base_config.model_copy(update={
-                "org_id": org_id,
-                "config_name": config_name
-            })
-
-            # Apply custom settings
-            if custom_settings:
-                for key, value in custom_settings.items():
-                    if hasattr(config, key):
-                        setattr(config, key, value)
-
-            # Save the custom config
-            await self.save_config(config)
-            return config
-
-        except Exception as e:
-            logging.error(f"Error creating custom config: {e}")
-            raise
-
     def get_model_config(self, tier: ModelTier) -> Dict[str, Any]:
         """Get model configuration based on tier"""
-        model_configs = {
+        model_configs: Dict[ModelTier, Dict[str, Any]] = {
             ModelTier.FAST: {
                 "model": "gpt-3.5-turbo",
                 "max_tokens": 800,

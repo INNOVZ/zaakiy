@@ -30,7 +30,7 @@ class ChatService:
 
         # Context engineering config will be loaded per request
         self.context_config = None
-
+        
         # Initialize retrieval config with defaults (will be updated per request)
         self.retrieval_config = {
             "initial": 10,
@@ -359,8 +359,7 @@ Enhanced query (maintain intent, add relevant context, make it more specific):
                         }
 
             except (ValueError, KeyError, ConnectionError) as e:
-                logging.warning(
-                    "Retrieval failed for query '%s': %s", query, e)
+                logging.warning("Retrieval failed for query '%s': %s", query, e)
 
         # Return top documents sorted by score
         sorted_docs = sorted(
@@ -556,7 +555,7 @@ Respond with just the number (1-5):
                 retrieval_time_ms=response_data.get(
                     "retrieval_stats", {}).get("retrieval_time_ms", 0),
                 response_time_ms=processing_time,
-                model_used=self.context_config.model_tier.value,
+                model_used=str(self.context_config.model_tier),
                 sources_count=len(response_data.get("sources", []))
             )
 
@@ -564,6 +563,19 @@ Respond with just the number (1-5):
             await context_analytics.log_context_metrics(metrics)
 
             # Also log to context_logs table (legacy support)
+            context_data = {
+                "message_id": message_id,
+                "org_id": self.org_id,
+                "query_original": query_original,
+                "query_enhanced": response_data.get("enhanced_queries", []),
+                "documents_retrieved": response_data.get("sources", []),
+                "context_used": response_data.get("context_used", ""),
+                "retrieval_stats": response_data.get("retrieval_stats", {}),
+                "context_quality": response_data.get("context_quality", {}),
+                "model_used": str(self.context_config.model_tier)
+            }
+
+            self.supabase.table("context_analytics").insert(context_data).execute()
 
         except (ValueError, KeyError, ConnectionError) as e:
             logging.warning("Analytics logging failed: %s", e)
