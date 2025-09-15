@@ -1,11 +1,9 @@
-
 import os
 from typing import Dict, Any
 from enum import Enum
 import logging
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
-# import json
 from supabase import create_client, Client
 
 
@@ -120,7 +118,7 @@ class ContextConfigManager:
         self.supabase: Client = create_client(supabase_url, supabase_key)
 
         # Default configurations for different business types
-        self.default_configs = self.default_configs = {
+        self.default_configs = {
             "saas": ContextEngineeringConfig(
                 org_id="default",
                 config_name="saas_optimized",
@@ -172,51 +170,50 @@ class ContextConfigManager:
         }
 
     async def get_config(self, org_id: str, config_name: str = "default") -> ContextEngineeringConfig:
-        """Get context engineering configuration for organization"""
+        """Get context engineering configuration for an organization"""
         try:
-            # Try to get from database first
+            logging.info(f"Getting context config for org {org_id}")
+
+            # Get existing config
             response = self.supabase.table("context_engineering_configs").select("*").eq(
                 "org_id", org_id
             ).eq("config_name", config_name).execute()
 
             if response.data and len(response.data) > 0:
-                config_data = response.data[0]["config_data"]
-                return ContextEngineeringConfig(**config_data)
+                config_data = response.data[0]
+                # Extract the actual config from config_data field if it's nested
+                if isinstance(config_data.get('config_data'), dict):
+                    return ContextEngineeringConfig(**config_data['config_data'])
+                else:
+                    return ContextEngineeringConfig(**config_data)
 
-            # Fall back to org's business type default
-            org_response = self.supabase.table("organizations").select(
-                "type").eq("id", org_id).execute()
+            # Create default config if none exists
+            logging.info(f"Creating default config for org {org_id}")
+            default_config = ContextEngineeringConfig(
+                org_id=org_id,
+                config_name=config_name
+            )
 
-            if org_response.data and len(org_response.data) > 0:
-                org_type = org_response.data[0].get("type", "saas").lower()
-                if org_type in self.default_configs:
-                    config = self.default_configs[org_type].model_copy(
-                        update={"org_id": org_id})
-                    # Save default config to database
-                    await self.save_config(config)
-                    return config
+            # Save to database
+            await self.save_config(default_config)
+            return default_config
 
-            # Ultimate fallback - SaaS default
-            config = self.default_configs["saas"].model_copy(
-                update={"org_id": org_id})
-            await self.save_config(config)
-            return config
-
-        except (KeyError, ValueError, TypeError) as e:
-            logging.error(
-                "Error getting context config for org %s: %s", org_id, e)
-            # Return SaaS default as emergency fallback
-            return self.default_configs["saas"].model_copy(update={"org_id": org_id})
+        except Exception as e:
+            logging.error(f"Error getting config for org {org_id}: {e}")
+            # Return basic default config as fallback
+            return ContextEngineeringConfig(org_id=org_id, config_name=config_name)
 
     async def save_config(self, config: ContextEngineeringConfig) -> bool:
         """Save context engineering configuration"""
         try:
+            logging.info(f"Saving config for org {config.org_id}")
             config.updated_at = datetime.utcnow()
 
             config_data = {
                 "org_id": config.org_id,
                 "config_name": config.config_name,
                 "config_data": config.model_dump(),
+                "created_at": config.created_at.isoformat(),
                 "updated_at": config.updated_at.isoformat()
             }
 
@@ -226,10 +223,14 @@ class ContextConfigManager:
                 on_conflict="org_id,config_name"
             ).execute()
 
-            return bool(response.data)
+            success = bool(response.data)
+            logging.info(
+                f"Config save result for org {config.org_id}: {success}")
+            return success
 
-        except (ValueError, TypeError, KeyError, ConnectionError) as e:
-            logging.error("Error saving context config: %s", e)
+        except Exception as e:
+            logging.error(
+                f"Error saving context config for org {config.org_id}: {e}")
             return False
 
     async def update_config(
@@ -240,6 +241,9 @@ class ContextConfigManager:
     ) -> bool:
         """Update specific configuration parameters"""
         try:
+            logging.info(
+                f"Updating config for org {org_id} with updates: {updates}")
+
             # Get current config
             current_config = await self.get_config(org_id, config_name)
 
@@ -248,22 +252,46 @@ class ContextConfigManager:
             invalid_fields = [
                 k for k in updates.keys() if k not in valid_fields]
             if invalid_fields:
-                logging.error("Invalid fields in updates: %s", invalid_fields)
+                logging.error(f"Invalid fields in updates: {invalid_fields}")
                 raise ValueError(
                     f"Invalid configuration fields: {invalid_fields}")
 
-            # Apply updates
+            # Apply updates with proper type handling
             for key, value in updates.items():
                 if hasattr(current_config, key):
-                    setattr(current_config, key, value)
+                    try:
+                        # Handle enum fields
+                        field_info = ContextEngineeringConfig.model_fields[key]
+                        field_type = field_info.annotation
+
+                        if hasattr(field_type, '__origin__') and field_type.__origin__ is type(Enum):
+                            # Handle enum types
+                            if isinstance(value, str):
+                                setattr(current_config, key, value)
+                            else:
+                                setattr(current_config, key, field_type(value))
+                        else:
+                            setattr(current_config, key, value)
+                    except (ValueError, TypeError) as e:
+                        logging.error(f"Error setting field {key}: {e}")
+                        continue
 
             # Save updated config
-            return await self.save_config(current_config)
+            success = await self.save_config(current_config)
+            logging.info(f"Config update result for org {org_id}: {success}")
+            return success
 
-        except (ValueError, TypeError, KeyError, ConnectionError, AttributeError) as e:
-            logging.info("🔧 Incoming updates for %s: %s", org_id, updates)
-            logging.error("Error updating context config: %s", e)
+        except Exception as e:
+            logging.error(
+                f"Error updating context config for org {org_id}: {e}")
             return False
+
+    async def get_default_config(self, org_id: str) -> ContextEngineeringConfig:
+        """Get a default configuration for an organization"""
+        return ContextEngineeringConfig(
+            org_id=org_id,
+            config_name="default"
+        )
 
     async def create_custom_config(
         self,
@@ -293,7 +321,7 @@ class ContextConfigManager:
             return config
 
         except Exception as e:
-            logging.error("Error creating custom config: %s", e)
+            logging.error(f"Error creating custom config: {e}")
             raise
 
     def get_model_config(self, tier: ModelTier) -> Dict[str, Any]:
@@ -318,7 +346,7 @@ class ContextConfigManager:
                 "timeout": 8000
             },
             ModelTier.ENTERPRISE: {
-                "model": "gpt-4-turbo",  # This could be customized per org
+                "model": "gpt-4-turbo",
                 "max_tokens": 2000,
                 "temperature": 0.5,
                 "timeout": 10000
@@ -392,7 +420,6 @@ class ContextConfigManager:
 
             return {
                 "recommendations": recommendations,
-                # More data = higher confidence
                 "confidence": min(1.0, len(metrics) / 100),
                 "metrics_summary": {
                     "avg_response_time_ms": avg_response_time,
@@ -402,8 +429,8 @@ class ContextConfigManager:
                 }
             }
 
-        except (ValueError, TypeError, KeyError, ConnectionError, AttributeError) as e:
-            logging.error("Error getting performance recommendations: %s", e)
+        except Exception as e:
+            logging.error(f"Error getting performance recommendations: {e}")
             return {"recommendations": [], "confidence": 0}
 
 
