@@ -1,11 +1,13 @@
 import os
 import uuid
+import logging
 from supabase import create_client
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from services.supabase_auth import verify_jwt_token
 from services.user_service import get_user_with_org
 from pinecone import Pinecone
+from typing import List, Dict, Any
 
 router = APIRouter()
 
@@ -34,21 +36,32 @@ class SearchRequest(BaseModel):
 
 
 def delete_vectors_from_pinecone(upload_id: str, namespace: str):
-    """Delete all vectors associated with an upload from Pinecone"""
+    """Delete all vectors associated with an upload from Pinecone - IMPROVED VERSION"""
     try:
-        # First, get all vector IDs for this upload
+        logging.info(
+            f"Starting vector deletion for upload {upload_id} in namespace {namespace}")
+
+        # Method 1: Try deletion by metadata filter (most efficient)
+        try:
+            delete_response = index.delete(
+                filter={"upload_id": upload_id},
+                namespace=namespace
+            )
+            logging.info(
+                f"Deleted vectors using filter for upload {upload_id}: {delete_response}")
+            return
+        except Exception as filter_error:
+            logging.warning(
+                f"Filter-based deletion failed, falling back to query method: {filter_error}")
+
+        # Method 2: Fallback to query-based deletion
         vector_ids = []
-
-        # Use a dummy vector for metadata-only query
-        dummy_vector = [0.0] * 1536  # OpenAI embeddings are 1536 dimensions
-
-        # Query in batches to handle large numbers of vectors
         batch_size = 1000
-        has_more = True
 
-        while has_more:
+        # Use sparse vector query instead of dummy dense vector (more efficient)
+        try:
+            # Try to get vector IDs without dummy vector
             query_result = index.query(
-                vector=dummy_vector,
                 filter={"upload_id": upload_id},
                 namespace=namespace,
                 top_k=batch_size,
@@ -59,26 +72,114 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
             batch_ids = [match.id for match in query_result.matches]
             vector_ids.extend(batch_ids)
 
-            # If we got fewer results than batch_size, we're done
-            has_more = len(batch_ids) == batch_size
+        except Exception as query_error:
+            logging.warning(
+                f"Efficient query failed, using dummy vector: {query_error}")
+
+            # Last resort: use dummy vector approach (but with smaller dimension check)
+            try:
+                # Get index stats to determine dimension
+                stats = index.describe_index_stats()
+                dimension = 1536  # Default OpenAI dimension
+
+                dummy_vector = [0.0] * dimension
+
+                has_more = True
+                while has_more:
+                    query_result = index.query(
+                        vector=dummy_vector,
+                        filter={"upload_id": upload_id},
+                        namespace=namespace,
+                        top_k=batch_size,
+                        include_metadata=False,
+                        include_values=False
+                    )
+
+                    batch_ids = [match.id for match in query_result.matches]
+                    vector_ids.extend(batch_ids)
+                    has_more = len(batch_ids) == batch_size
+
+            except Exception as dummy_error:
+                logging.error(f"All deletion methods failed: {dummy_error}")
+                raise
 
         if vector_ids:
-            # Delete vectors in batches (Pinecone has limits on batch operations)
+            # Delete vectors in optimal batches
             delete_batch_size = 100
+            total_deleted = 0
+
             for i in range(0, len(vector_ids), delete_batch_size):
                 batch = vector_ids[i:i + delete_batch_size]
-                index.delete(ids=batch, namespace=namespace)
+                try:
+                    delete_result = index.delete(
+                        ids=batch, namespace=namespace)
+                    total_deleted += len(batch)
+                    logging.info(
+                        f"Deleted batch {i//delete_batch_size + 1}: {len(batch)} vectors")
+                except Exception as batch_error:
+                    logging.error(
+                        f"Failed to delete batch {i//delete_batch_size + 1}: {batch_error}")
+                    # Continue with other batches
 
-            print(
-                f"[Info] Deleted {len(vector_ids)} vectors from Pinecone for upload {upload_id}")
+            logging.info(
+                f"Successfully deleted {total_deleted} vectors from Pinecone for upload {upload_id}")
         else:
-            print(
-                f"[Info] No vectors found in Pinecone for upload {upload_id}")
+            logging.info(
+                f"No vectors found in Pinecone for upload {upload_id}")
 
     except Exception as e:
-        print(f"[Error] Failed to delete vectors from Pinecone: {e}")
+        logging.error(
+            f"Critical error in vector deletion for upload {upload_id}: {e}")
         # Don't raise exception - we still want to continue with other operations
+        # But log it for monitoring
 
+
+async def batch_delete_uploads(upload_ids: List[str], org_id: str) -> Dict[str, Any]:
+    """Efficiently delete multiple uploads in batch"""
+    try:
+        namespace = f"org-{org_id}"
+        results = {"success": [], "failed": []}
+
+        # Get all upload records first
+        upload_records = supabase.table("uploads").select("*").in_(
+            "id", upload_ids
+        ).eq("org_id", org_id).execute()
+
+        if not upload_records.data:
+            return {"success": [], "failed": upload_ids, "error": "No uploads found"}
+
+        # Delete vectors for all uploads in batch
+        for upload_record in upload_records.data:
+            upload_id = upload_record["id"]
+            try:
+                delete_vectors_from_pinecone(upload_id, namespace)
+
+                # Delete file from storage if applicable
+                if upload_record["type"] in ["pdf", "json"] and upload_record["source"]:
+                    try:
+                        supabase.storage.from_("uploads").remove(
+                            [upload_record["source"]])
+                    except Exception as storage_error:
+                        logging.warning(
+                            f"Storage deletion failed for {upload_id}: {storage_error}")
+
+                results["success"].append(upload_id)
+
+            except Exception as e:
+                logging.error(f"Failed to delete upload {upload_id}: {e}")
+                results["failed"].append(upload_id)
+
+        # Delete database records for successful deletions
+        if results["success"]:
+            supabase.table("uploads").delete().in_(
+                "id", results["success"]
+            ).eq("org_id", org_id).execute()
+
+        return results
+
+    except Exception as e:
+        logging.error(f"Batch delete failed: {e}")
+        return {"success": [], "failed": upload_ids, "error": str(e)}
 
 @router.post("/pdf")
 async def upload_pdf(

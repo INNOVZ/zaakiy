@@ -1,0 +1,702 @@
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.main | INFO | main.py:39 | Configuration validated successfully
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Starting background worker...
+2025-09-16 16:24:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:24:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:24:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:24:12 | ZaaKy | development | zaaky.main | INFO | main.py:45 | ZaaKy AI Platform started successfully
+2025-09-16 16:24:42 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:25:12 CEST)" (scheduled at 2025-09-16 16:24:42.689504+02:00)
+2025-09-16 16:24:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:24:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:25:12 CEST)" executed successfully
+2025-09-16 16:25:12 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:25:42 CEST)" (scheduled at 2025-09-16 16:25:12.689504+02:00)
+2025-09-16 16:25:13 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:25:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:25:42 CEST)" executed successfully
+2025-09-16 16:25:23 | ZaaKy | development | zaaky.main | INFO | main.py:49 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:25:23 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform shut down complete
+2025-09-16 16:25:23 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.main | INFO | main.py:39 | Configuration validated successfully
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Starting background worker...
+2025-09-16 16:25:26 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:25:26 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:25:26 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:25:26 | ZaaKy | development | zaaky.main | INFO | main.py:45 | ZaaKy AI Platform started successfully
+2025-09-16 16:25:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:26:26 CEST)" (scheduled at 2025-09-16 16:25:56.858939+02:00)
+2025-09-16 16:25:58 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:25:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:26:26 CEST)" executed successfully
+2025-09-16 16:26:13 | ZaaKy | development | zaaky.main | INFO | main.py:49 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:26:13 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform shut down complete
+2025-09-16 16:26:13 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.main | INFO | main.py:39 | Configuration validated successfully
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Starting background worker...
+2025-09-16 16:26:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:26:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:26:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:26:29 | ZaaKy | development | zaaky.main | INFO | main.py:45 | ZaaKy AI Platform started successfully
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.main | INFO | main.py:39 | Configuration validated successfully
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Starting background worker...
+2025-09-16 16:26:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:26:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:26:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:26:32 | ZaaKy | development | zaaky.main | INFO | main.py:45 | ZaaKy AI Platform started successfully
+2025-09-16 16:27:01 | ZaaKy | development | zaaky.main | INFO | main.py:49 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:27:01 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform shut down complete
+2025-09-16 16:27:01 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.main | INFO | main.py:27 | Starting ZaaKy AI Platform...
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.main | INFO | main.py:43 | Configuration validated successfully
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.main | INFO | main.py:49 | Starting background worker...
+2025-09-16 16:27:05 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:27:05 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:27:05 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:27:05 | ZaaKy | development | zaaky.main | INFO | main.py:52 | ZaaKy AI Platform started successfully
+2025-09-16 16:27:09 | ZaaKy | development | zaaky.main | INFO | main.py:56 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:27:09 | ZaaKy | development | zaaky.main | INFO | main.py:58 | ZaaKy AI Platform shut down complete
+2025-09-16 16:27:09 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:27:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:27:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:27:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:27:12 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:27:42 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:28:12 CEST)" (scheduled at 2025-09-16 16:27:42.032428+02:00)
+2025-09-16 16:27:43 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:27:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:28:12 CEST)" executed successfully
+2025-09-16 16:28:12 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:28:42 CEST)" (scheduled at 2025-09-16 16:28:12.032428+02:00)
+2025-09-16 16:28:13 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:28:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:28:42 CEST)" executed successfully
+2025-09-16 16:28:42 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:29:12 CEST)" (scheduled at 2025-09-16 16:28:42.032428+02:00)
+2025-09-16 16:28:43 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:28:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:29:12 CEST)" executed successfully
+2025-09-16 16:29:12 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:29:42 CEST)" (scheduled at 2025-09-16 16:29:12.032428+02:00)
+2025-09-16 16:29:13 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:29:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:29:42 CEST)" executed successfully
+2025-09-16 16:29:42 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:30:12 CEST)" (scheduled at 2025-09-16 16:29:42.032428+02:00)
+2025-09-16 16:29:43 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:29:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:30:12 CEST)" executed successfully
+2025-09-16 16:29:51 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:29:51 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 16:29:51 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:29:54 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:29:54 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:29:54 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:29:54 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:29:56 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:29:56 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:29:56 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:29:56 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:30:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:30:56 CEST)" (scheduled at 2025-09-16 16:30:26.791036+02:00)
+2025-09-16 16:30:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:30:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:30:56 CEST)" executed successfully
+2025-09-16 16:30:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:31:26 CEST)" (scheduled at 2025-09-16 16:30:56.791036+02:00)
+2025-09-16 16:30:58 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:30:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:31:26 CEST)" executed successfully
+2025-09-16 16:31:09 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:09 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:09 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:09 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:10 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:11 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 16:31:12 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:12 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:13 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:13 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:13 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&id=eq.97ae5ea1-40a1-4719-a39f-bc965cc4d4c1&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/2 200 OK"
+2025-09-16 16:31:14 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:15 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 16:31:15 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:16 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:16 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:17 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:17 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:17 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 16:31:18 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:18 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&id=eq.97ae5ea1-40a1-4719-a39f-bc965cc4d4c1&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/2 200 OK"
+2025-09-16 16:31:18 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:19 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:19 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:20 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:20 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:21 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&chain_status=eq.active&order=created_at.desc&limit=1 "HTTP/2 200 OK"
+2025-09-16 16:31:21 | ZaaKy | development | root | INFO | context_config.py:131 | Getting context config for org 21bcca33-a10c-442c-9bc5-7a0208b5928f
+2025-09-16 16:31:22 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_engineering_configs?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&config_name=eq.default "HTTP/2 200 OK"
+2025-09-16 16:31:23 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/conversations?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&session_id=eq.session-09294a59-4100-4854-bca3-b23bbe390557-1758025881&status=eq.active&order=updated_at.desc&limit=1 "HTTP/2 200 OK"
+2025-09-16 16:31:24 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/conversations "HTTP/2 201 Created"
+2025-09-16 16:31:24 | ZaaKy | development | root | INFO | chat_service.py:229 | Created new conversation: 1a8754e1-f8d4-4bc9-89d1-18586afde128
+2025-09-16 16:31:25 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/messages "HTTP/2 201 Created"
+2025-09-16 16:31:25 | ZaaKy | development | root | INFO | chat_service.py:272 | Added user message to conversation 1a8754e1-f8d4-4bc9-89d1-18586afde128
+2025-09-16 16:31:25 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/messages?select=%2A&conversation_id=eq.1a8754e1-f8d4-4bc9-89d1-18586afde128&role=neq.system&order=created_at.asc&limit=3 "HTTP/2 200 OK"
+2025-09-16 16:31:25 | ZaaKy | development | root | INFO | chat_service.py:307 | Retrieved 1 messages from conversation history
+2025-09-16 16:31:27 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-16 16:31:36 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-16 16:31:38 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-16 16:31:40 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/messages "HTTP/2 201 Created"
+2025-09-16 16:31:40 | ZaaKy | development | root | INFO | chat_service.py:272 | Added assistant message to conversation 1a8754e1-f8d4-4bc9-89d1-18586afde128
+2025-09-16 16:31:41 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_analytics "HTTP/2 201 Created"
+2025-09-16 16:31:41 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_analytics "HTTP/2 201 Created"
+2025-09-16 16:31:42 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:42 | ZaaKy | development | apscheduler.executors.default | WARNING | base.py:176 | Run time of job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:31:56 CEST)" was missed by 0:00:15.274498
+2025-09-16 16:31:43 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 16:31:43 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:44 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 16:31:45 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 16:31:45 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&chain_status=eq.active&order=created_at.desc&limit=1 "HTTP/2 200 OK"
+2025-09-16 16:31:45 | ZaaKy | development | root | INFO | context_config.py:131 | Getting context config for org 21bcca33-a10c-442c-9bc5-7a0208b5928f
+2025-09-16 16:31:46 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_engineering_configs?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&config_name=eq.default "HTTP/2 200 OK"
+2025-09-16 16:31:47 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/conversations?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&session_id=eq.session-09294a59-4100-4854-bca3-b23bbe390557-1758025905&status=eq.active&order=updated_at.desc&limit=1 "HTTP/2 200 OK"
+2025-09-16 16:31:48 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/conversations "HTTP/2 201 Created"
+2025-09-16 16:31:48 | ZaaKy | development | root | INFO | chat_service.py:229 | Created new conversation: cc3bf2bf-da60-484a-b7ec-febd7685f442
+2025-09-16 16:31:49 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/messages "HTTP/2 201 Created"
+2025-09-16 16:31:49 | ZaaKy | development | root | INFO | chat_service.py:272 | Added user message to conversation cc3bf2bf-da60-484a-b7ec-febd7685f442
+2025-09-16 16:31:50 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/messages?select=%2A&conversation_id=eq.cc3bf2bf-da60-484a-b7ec-febd7685f442&role=neq.system&order=created_at.asc&limit=3 "HTTP/2 200 OK"
+2025-09-16 16:31:50 | ZaaKy | development | root | INFO | chat_service.py:307 | Retrieved 1 messages from conversation history
+2025-09-16 16:31:52 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-16 16:31:56 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-16 16:31:59 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-16 16:32:00 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/messages "HTTP/2 201 Created"
+2025-09-16 16:32:00 | ZaaKy | development | root | INFO | chat_service.py:272 | Added assistant message to conversation cc3bf2bf-da60-484a-b7ec-febd7685f442
+2025-09-16 16:32:02 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_analytics "HTTP/2 201 Created"
+2025-09-16 16:32:03 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: POST https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_analytics "HTTP/2 201 Created"
+2025-09-16 16:32:03 | ZaaKy | development | apscheduler.executors.default | WARNING | base.py:176 | Run time of job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:32:26 CEST)" was missed by 0:00:06.516547
+2025-09-16 16:32:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:32:56 CEST)" (scheduled at 2025-09-16 16:32:26.791036+02:00)
+2025-09-16 16:32:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:32:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:32:56 CEST)" executed successfully
+2025-09-16 16:32:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:33:26 CEST)" (scheduled at 2025-09-16 16:32:56.791036+02:00)
+2025-09-16 16:32:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:32:57 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:33:26 CEST)" executed successfully
+2025-09-16 16:33:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:33:56 CEST)" (scheduled at 2025-09-16 16:33:26.791036+02:00)
+2025-09-16 16:33:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:33:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:33:56 CEST)" executed successfully
+2025-09-16 16:33:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:34:26 CEST)" (scheduled at 2025-09-16 16:33:56.791036+02:00)
+2025-09-16 16:33:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:33:57 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:34:26 CEST)" executed successfully
+2025-09-16 16:34:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:34:56 CEST)" (scheduled at 2025-09-16 16:34:26.791036+02:00)
+2025-09-16 16:34:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:34:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:34:56 CEST)" executed successfully
+2025-09-16 16:34:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:35:26 CEST)" (scheduled at 2025-09-16 16:34:56.791036+02:00)
+2025-09-16 16:34:58 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:34:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:35:26 CEST)" executed successfully
+2025-09-16 16:35:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:35:56 CEST)" (scheduled at 2025-09-16 16:35:26.791036+02:00)
+2025-09-16 16:35:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:35:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:35:56 CEST)" executed successfully
+2025-09-16 16:35:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:36:26 CEST)" (scheduled at 2025-09-16 16:35:56.791036+02:00)
+2025-09-16 16:35:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:35:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:36:26 CEST)" executed successfully
+2025-09-16 16:36:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:36:56 CEST)" (scheduled at 2025-09-16 16:36:26.791036+02:00)
+2025-09-16 16:36:27 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:36:27 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:36:56 CEST)" executed successfully
+2025-09-16 16:36:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:37:26 CEST)" (scheduled at 2025-09-16 16:36:56.791036+02:00)
+2025-09-16 16:36:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:36:57 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:37:26 CEST)" executed successfully
+2025-09-16 16:37:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:37:56 CEST)" (scheduled at 2025-09-16 16:37:26.791036+02:00)
+2025-09-16 16:37:27 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:37:27 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:37:56 CEST)" executed successfully
+2025-09-16 16:37:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:38:26 CEST)" (scheduled at 2025-09-16 16:37:56.791036+02:00)
+2025-09-16 16:37:58 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:37:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:38:26 CEST)" executed successfully
+2025-09-16 16:38:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:38:56 CEST)" (scheduled at 2025-09-16 16:38:26.791036+02:00)
+2025-09-16 16:38:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:38:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:38:56 CEST)" executed successfully
+2025-09-16 16:38:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:39:26 CEST)" (scheduled at 2025-09-16 16:38:56.791036+02:00)
+2025-09-16 16:38:58 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:38:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:39:26 CEST)" executed successfully
+2025-09-16 16:39:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:39:56 CEST)" (scheduled at 2025-09-16 16:39:26.791036+02:00)
+2025-09-16 16:39:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:39:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:39:56 CEST)" executed successfully
+2025-09-16 16:39:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:40:26 CEST)" (scheduled at 2025-09-16 16:39:56.791036+02:00)
+2025-09-16 16:39:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:39:57 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:40:26 CEST)" executed successfully
+2025-09-16 16:40:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:40:56 CEST)" (scheduled at 2025-09-16 16:40:26.791036+02:00)
+2025-09-16 16:40:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:40:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:40:56 CEST)" executed successfully
+2025-09-16 16:40:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:41:26 CEST)" (scheduled at 2025-09-16 16:40:56.791036+02:00)
+2025-09-16 16:40:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:40:57 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:41:26 CEST)" executed successfully
+2025-09-16 16:41:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:41:56 CEST)" (scheduled at 2025-09-16 16:41:26.791036+02:00)
+2025-09-16 16:41:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:41:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:41:56 CEST)" executed successfully
+2025-09-16 16:41:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:42:26 CEST)" (scheduled at 2025-09-16 16:41:56.791036+02:00)
+2025-09-16 16:41:58 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:41:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:42:26 CEST)" executed successfully
+2025-09-16 16:42:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:42:56 CEST)" (scheduled at 2025-09-16 16:42:26.791036+02:00)
+2025-09-16 16:42:27 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:42:27 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:42:56 CEST)" executed successfully
+2025-09-16 16:42:56 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:43:26 CEST)" (scheduled at 2025-09-16 16:42:56.791036+02:00)
+2025-09-16 16:42:57 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:42:57 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:43:26 CEST)" executed successfully
+2025-09-16 16:43:26 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:43:56 CEST)" (scheduled at 2025-09-16 16:43:26.791036+02:00)
+2025-09-16 16:43:28 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:43:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:43:56 CEST)" executed successfully
+2025-09-16 16:43:37 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:43:37 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 16:43:37 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:43:40 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:43:40 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:43:40 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:43:40 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:43:43 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:43:43 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:43:43 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:43:43 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:44:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:44:43 CEST)" (scheduled at 2025-09-16 16:44:13.709387+02:00)
+2025-09-16 16:44:15 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:44:15 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:44:43 CEST)" executed successfully
+2025-09-16 16:44:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:45:13 CEST)" (scheduled at 2025-09-16 16:44:43.709387+02:00)
+2025-09-16 16:44:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:44:45 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:45:13 CEST)" executed successfully
+2025-09-16 16:45:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:45:43 CEST)" (scheduled at 2025-09-16 16:45:13.709387+02:00)
+2025-09-16 16:45:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:45:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:45:43 CEST)" executed successfully
+2025-09-16 16:45:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:46:13 CEST)" (scheduled at 2025-09-16 16:45:43.709387+02:00)
+2025-09-16 16:45:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:45:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:46:13 CEST)" executed successfully
+2025-09-16 16:46:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:46:43 CEST)" (scheduled at 2025-09-16 16:46:13.709387+02:00)
+2025-09-16 16:46:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:46:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:46:43 CEST)" executed successfully
+2025-09-16 16:46:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:47:13 CEST)" (scheduled at 2025-09-16 16:46:43.709387+02:00)
+2025-09-16 16:46:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:46:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:47:13 CEST)" executed successfully
+2025-09-16 16:47:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:47:43 CEST)" (scheduled at 2025-09-16 16:47:13.709387+02:00)
+2025-09-16 16:47:15 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:47:15 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:47:43 CEST)" executed successfully
+2025-09-16 16:47:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:48:13 CEST)" (scheduled at 2025-09-16 16:47:43.709387+02:00)
+2025-09-16 16:47:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:47:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:48:13 CEST)" executed successfully
+2025-09-16 16:48:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:48:43 CEST)" (scheduled at 2025-09-16 16:48:13.709387+02:00)
+2025-09-16 16:48:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:48:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:48:43 CEST)" executed successfully
+2025-09-16 16:48:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:49:13 CEST)" (scheduled at 2025-09-16 16:48:43.709387+02:00)
+2025-09-16 16:48:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:48:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:49:13 CEST)" executed successfully
+2025-09-16 16:49:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:49:43 CEST)" (scheduled at 2025-09-16 16:49:13.709387+02:00)
+2025-09-16 16:49:15 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:49:15 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:49:43 CEST)" executed successfully
+2025-09-16 16:49:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:50:13 CEST)" (scheduled at 2025-09-16 16:49:43.709387+02:00)
+2025-09-16 16:49:45 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:49:45 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:50:13 CEST)" executed successfully
+2025-09-16 16:50:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:50:43 CEST)" (scheduled at 2025-09-16 16:50:13.709387+02:00)
+2025-09-16 16:50:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:50:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:50:43 CEST)" executed successfully
+2025-09-16 16:50:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:51:13 CEST)" (scheduled at 2025-09-16 16:50:43.709387+02:00)
+2025-09-16 16:50:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:50:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:51:13 CEST)" executed successfully
+2025-09-16 16:51:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:51:43 CEST)" (scheduled at 2025-09-16 16:51:13.709387+02:00)
+2025-09-16 16:51:15 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:51:15 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:51:43 CEST)" executed successfully
+2025-09-16 16:51:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:52:13 CEST)" (scheduled at 2025-09-16 16:51:43.709387+02:00)
+2025-09-16 16:51:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:51:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:52:13 CEST)" executed successfully
+2025-09-16 16:52:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:52:43 CEST)" (scheduled at 2025-09-16 16:52:13.709387+02:00)
+2025-09-16 16:52:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:52:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:52:43 CEST)" executed successfully
+2025-09-16 16:52:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:53:13 CEST)" (scheduled at 2025-09-16 16:52:43.709387+02:00)
+2025-09-16 16:52:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:52:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:53:13 CEST)" executed successfully
+2025-09-16 16:53:02 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:53:02 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 16:53:02 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:53:06 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:53:06 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:53:06 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:53:06 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:53:09 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:53:09 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:53:09 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:53:09 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:53:39 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:54:09 CEST)" (scheduled at 2025-09-16 16:53:39.247281+02:00)
+2025-09-16 16:53:40 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:53:40 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:54:09 CEST)" executed successfully
+2025-09-16 16:54:06 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:54:06 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 16:54:06 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:54:10 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:54:10 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:54:10 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:54:10 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:54:13 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:54:13 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:54:13 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:54:13 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:54:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:55:13 CEST)" (scheduled at 2025-09-16 16:54:43.274805+02:00)
+2025-09-16 16:54:44 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:54:44 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:55:13 CEST)" executed successfully
+2025-09-16 16:55:13 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:55:43 CEST)" (scheduled at 2025-09-16 16:55:13.274805+02:00)
+2025-09-16 16:55:14 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:55:14 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:55:43 CEST)" executed successfully
+2025-09-16 16:55:43 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:56:13 CEST)" (scheduled at 2025-09-16 16:55:43.274805+02:00)
+2025-09-16 16:55:45 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:55:45 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:56:13 CEST)" executed successfully
+2025-09-16 16:56:00 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:56:00 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 16:56:00 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:56:02 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:56:02 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:56:02 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:56:02 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:56:32 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:57:02 CEST)" (scheduled at 2025-09-16 16:56:32.998356+02:00)
+2025-09-16 16:56:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:56:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:57:02 CEST)" executed successfully
+2025-09-16 16:57:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:57:32 CEST)" (scheduled at 2025-09-16 16:57:02.998356+02:00)
+2025-09-16 16:57:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:57:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:57:32 CEST)" executed successfully
+2025-09-16 16:57:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:58:02 CEST)" (scheduled at 2025-09-16 16:57:32.998356+02:00)
+2025-09-16 16:57:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:57:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:58:02 CEST)" executed successfully
+2025-09-16 16:58:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:58:32 CEST)" (scheduled at 2025-09-16 16:58:02.998356+02:00)
+2025-09-16 16:58:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:58:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:58:32 CEST)" executed successfully
+2025-09-16 16:58:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:59:02 CEST)" (scheduled at 2025-09-16 16:58:32.998356+02:00)
+2025-09-16 16:58:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:58:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:59:02 CEST)" executed successfully
+2025-09-16 16:58:55 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 16:58:55 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 16:58:55 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 16:58:58 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 16:58:58 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 16:58:58 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 16:58:58 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 16:59:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:59:58 CEST)" (scheduled at 2025-09-16 16:59:28.722755+02:00)
+2025-09-16 16:59:30 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 16:59:30 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 16:59:58 CEST)" executed successfully
+2025-09-16 16:59:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:00:28 CEST)" (scheduled at 2025-09-16 16:59:58.722755+02:00)
+2025-09-16 17:00:00 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:00:00 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:00:28 CEST)" executed successfully
+2025-09-16 17:00:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:00:58 CEST)" (scheduled at 2025-09-16 17:00:28.722755+02:00)
+2025-09-16 17:00:29 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:00:29 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:00:58 CEST)" executed successfully
+2025-09-16 17:00:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:01:28 CEST)" (scheduled at 2025-09-16 17:00:58.722755+02:00)
+2025-09-16 17:01:00 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:01:00 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:01:28 CEST)" executed successfully
+2025-09-16 17:01:28 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:01:58 CEST)" (scheduled at 2025-09-16 17:01:28.722755+02:00)
+2025-09-16 17:01:30 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:01:30 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:01:58 CEST)" executed successfully
+2025-09-16 17:01:58 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:02:28 CEST)" (scheduled at 2025-09-16 17:01:58.722755+02:00)
+2025-09-16 17:02:00 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:02:00 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:02:28 CEST)" executed successfully
+2025-09-16 17:02:20 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:02:20 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:02:20 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:02:23 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:02:23 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:02:23 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:02:23 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:02:53 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:03:23 CEST)" (scheduled at 2025-09-16 17:02:53.989574+02:00)
+2025-09-16 17:02:55 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:02:55 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:03:23 CEST)" executed successfully
+2025-09-16 17:03:23 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:03:53 CEST)" (scheduled at 2025-09-16 17:03:23.989574+02:00)
+2025-09-16 17:03:25 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:03:25 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:03:53 CEST)" executed successfully
+2025-09-16 17:03:29 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:03:29 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:03:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:03:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:03:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:03:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:03:32 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:04:02 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:04:32 CEST)" (scheduled at 2025-09-16 17:04:02.519715+02:00)
+2025-09-16 17:04:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:04:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:04:32 CEST)" executed successfully
+2025-09-16 17:04:32 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:05:02 CEST)" (scheduled at 2025-09-16 17:04:32.519715+02:00)
+2025-09-16 17:04:33 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:04:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:05:02 CEST)" executed successfully
+2025-09-16 17:05:02 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:05:32 CEST)" (scheduled at 2025-09-16 17:05:02.519715+02:00)
+2025-09-16 17:05:03 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:05:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:05:32 CEST)" executed successfully
+2025-09-16 17:05:30 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:05:30 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:05:30 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:05:33 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:05:33 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:05:33 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:05:33 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:06:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:06:33 CEST)" (scheduled at 2025-09-16 17:06:03.340587+02:00)
+2025-09-16 17:06:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:06:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:06:33 CEST)" executed successfully
+2025-09-16 17:06:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:07:03 CEST)" (scheduled at 2025-09-16 17:06:33.340587+02:00)
+2025-09-16 17:06:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:06:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:07:03 CEST)" executed successfully
+2025-09-16 17:07:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:07:33 CEST)" (scheduled at 2025-09-16 17:07:03.340587+02:00)
+2025-09-16 17:07:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:07:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:07:33 CEST)" executed successfully
+2025-09-16 17:07:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:08:03 CEST)" (scheduled at 2025-09-16 17:07:33.340587+02:00)
+2025-09-16 17:07:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:07:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:08:03 CEST)" executed successfully
+2025-09-16 17:08:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:08:33 CEST)" (scheduled at 2025-09-16 17:08:03.340587+02:00)
+2025-09-16 17:08:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:08:05 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:08:33 CEST)" executed successfully
+2025-09-16 17:08:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:09:03 CEST)" (scheduled at 2025-09-16 17:08:33.340587+02:00)
+2025-09-16 17:08:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:08:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:09:03 CEST)" executed successfully
+2025-09-16 17:09:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:09:33 CEST)" (scheduled at 2025-09-16 17:09:03.340587+02:00)
+2025-09-16 17:09:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:09:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:09:33 CEST)" executed successfully
+2025-09-16 17:09:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:10:03 CEST)" (scheduled at 2025-09-16 17:09:33.340587+02:00)
+2025-09-16 17:09:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:09:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:10:03 CEST)" executed successfully
+2025-09-16 17:10:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:10:33 CEST)" (scheduled at 2025-09-16 17:10:03.340587+02:00)
+2025-09-16 17:10:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:10:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:10:33 CEST)" executed successfully
+2025-09-16 17:10:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:11:03 CEST)" (scheduled at 2025-09-16 17:10:33.340587+02:00)
+2025-09-16 17:10:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:10:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:11:03 CEST)" executed successfully
+2025-09-16 17:11:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:11:33 CEST)" (scheduled at 2025-09-16 17:11:03.340587+02:00)
+2025-09-16 17:11:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:11:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:11:33 CEST)" executed successfully
+2025-09-16 17:11:33 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:12:03 CEST)" (scheduled at 2025-09-16 17:11:33.340587+02:00)
+2025-09-16 17:11:34 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:11:34 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:12:03 CEST)" executed successfully
+2025-09-16 17:12:03 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:12:33 CEST)" (scheduled at 2025-09-16 17:12:03.340587+02:00)
+2025-09-16 17:12:04 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:12:04 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:12:33 CEST)" executed successfully
+2025-09-16 17:12:12 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:12:12 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:12:12 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:12:16 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:12:16 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:12:16 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:12:16 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:12:22 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:12:22 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:12:22 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:12:46 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:13:16 CEST)" (scheduled at 2025-09-16 17:12:46.092977+02:00)
+2025-09-16 17:12:47 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:12:47 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:13:16 CEST)" executed successfully
+2025-09-16 17:13:16 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:13:46 CEST)" (scheduled at 2025-09-16 17:13:16.092977+02:00)
+2025-09-16 17:13:17 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:13:17 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:13:46 CEST)" executed successfully
+2025-09-16 17:13:46 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:14:16 CEST)" (scheduled at 2025-09-16 17:13:46.092977+02:00)
+2025-09-16 17:13:47 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:13:47 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:14:16 CEST)" executed successfully
+2025-09-16 17:14:16 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:14:46 CEST)" (scheduled at 2025-09-16 17:14:16.092977+02:00)
+2025-09-16 17:14:17 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:14:17 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:14:46 CEST)" executed successfully
+2025-09-16 17:14:18 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:14:18 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:14:18 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:15:04 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:15:04 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:15:04 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:15:04 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:15:08 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:15:08 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:15:08 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.main | INFO | main.py:26 | Starting ZaaKy AI Platform...
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:15:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:15:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:15:32 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:15:32 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.main | INFO | main.py:27 | Starting ZaaKy AI Platform...
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:15:35 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:15:35 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:15:35 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:15:35 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:16:05 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:16:35 CEST)" (scheduled at 2025-09-16 17:16:05.221274+02:00)
+2025-09-16 17:16:06 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:16:06 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:16:35 CEST)" executed successfully
+2025-09-16 17:16:26 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:16:26 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:16:26 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.main | INFO | main.py:27 | Starting ZaaKy AI Platform...
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:16:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:16:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:16:29 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:16:29 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:16:59 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:17:29 CEST)" (scheduled at 2025-09-16 17:16:59.964905+02:00)
+2025-09-16 17:17:01 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:17:01 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:17:29 CEST)" executed successfully
+2025-09-16 17:17:29 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:17:59 CEST)" (scheduled at 2025-09-16 17:17:29.964905+02:00)
+2025-09-16 17:17:31 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:17:31 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:17:59 CEST)" executed successfully
+2025-09-16 17:17:43 | ZaaKy | development | zaaky.main | INFO | main.py:55 | Shutting down ZaaKy AI Platform...
+2025-09-16 17:17:43 | ZaaKy | development | zaaky.main | INFO | main.py:57 | ZaaKy AI Platform shut down complete
+2025-09-16 17:17:43 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:245 | Scheduler has been shut down
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:143 | Logging configuration initialized successfully
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:144 | Log file: logs/zaaky_20250916.log
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.setup | INFO | logging_config.py:145 | Log level: INFO
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.main | INFO | main.py:27 | Starting ZaaKy AI Platform...
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.main | INFO | main.py:42 | Configuration validated successfully
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.main | INFO | main.py:48 | Starting background worker...
+2025-09-16 17:17:49 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:507 | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-09-16 17:17:49 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:1090 | Added job "process_pending_uploads" to job store "default"
+2025-09-16 17:17:49 | ZaaKy | development | apscheduler.scheduler | INFO | base.py:214 | Scheduler started
+2025-09-16 17:17:49 | ZaaKy | development | zaaky.main | INFO | main.py:51 | ZaaKy AI Platform started successfully
+2025-09-16 17:18:19 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?select=id&limit=1 "HTTP/2 200 OK"
+2025-09-16 17:18:19 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:18:49 CEST)" (scheduled at 2025-09-16 17:18:19.448400+02:00)
+2025-09-16 17:18:21 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:18:21 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:18:49 CEST)" executed successfully
+2025-09-16 17:18:22 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?select=id&limit=1 "HTTP/2 200 OK"
+2025-09-16 17:18:23 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?select=id&limit=1 "HTTP/2 200 OK"
+2025-09-16 17:18:25 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?select=id&limit=1 "HTTP/2 200 OK"
+2025-09-16 17:18:26 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:26 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:26 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:27 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:27 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:27 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:28 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 17:18:29 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 17:18:29 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 17:18:29 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 17:18:31 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 17:18:31 | ZaaKy | development | root | INFO | context_config.py:131 | Getting context config for org 21bcca33-a10c-442c-9bc5-7a0208b5928f
+2025-09-16 17:18:32 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_engineering_configs?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&config_name=eq.default "HTTP/2 200 OK"
+2025-09-16 17:18:33 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:33 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:33 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:33 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:33 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:34 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 17:18:35 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 17:18:35 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 17:18:35 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/users?id=eq.09294a59-4100-4854-bca3-b23bbe390557 "HTTP/1.1 200 OK"
+2025-09-16 17:18:36 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/chatbots?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&order=created_at.desc "HTTP/2 200 OK"
+2025-09-16 17:18:37 | ZaaKy | development | httpx | INFO | _client.py:1740 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/organizations?id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f "HTTP/1.1 200 OK"
+2025-09-16 17:18:37 | ZaaKy | development | root | INFO | context_config.py:131 | Getting context config for org 21bcca33-a10c-442c-9bc5-7a0208b5928f
+2025-09-16 17:18:37 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/context_engineering_configs?select=%2A&org_id=eq.21bcca33-a10c-442c-9bc5-7a0208b5928f&config_name=eq.default "HTTP/2 200 OK"
+2025-09-16 17:18:49 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:19:19 CEST)" (scheduled at 2025-09-16 17:18:49.448400+02:00)
+2025-09-16 17:18:50 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:18:50 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:19:19 CEST)" executed successfully
+2025-09-16 17:19:19 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:19:49 CEST)" (scheduled at 2025-09-16 17:19:19.448400+02:00)
+2025-09-16 17:19:20 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:19:20 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:19:49 CEST)" executed successfully
+2025-09-16 17:19:49 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:20:19 CEST)" (scheduled at 2025-09-16 17:19:49.448400+02:00)
+2025-09-16 17:19:50 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:19:50 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:20:19 CEST)" executed successfully
+2025-09-16 17:20:19 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:20:49 CEST)" (scheduled at 2025-09-16 17:20:19.448400+02:00)
+2025-09-16 17:20:20 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:20:20 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:20:49 CEST)" executed successfully
+2025-09-16 17:20:49 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:21:19 CEST)" (scheduled at 2025-09-16 17:20:49.448400+02:00)
+2025-09-16 17:20:51 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:20:51 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:21:19 CEST)" executed successfully
+2025-09-16 17:21:19 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:21:49 CEST)" (scheduled at 2025-09-16 17:21:19.448400+02:00)
+2025-09-16 17:21:20 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:21:20 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:21:49 CEST)" executed successfully
+2025-09-16 17:21:49 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:179 | Running job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:22:19 CEST)" (scheduled at 2025-09-16 17:21:49.448400+02:00)
+2025-09-16 17:21:50 | ZaaKy | development | httpx | INFO | _client.py:1025 | HTTP Request: GET https://raoonyyrzzftdenvknfi.supabase.co/rest/v1/uploads?select=%2A&status=eq.pending "HTTP/2 200 OK"
+2025-09-16 17:21:50 | ZaaKy | development | apscheduler.executors.default | INFO | base.py:203 | Job "process_pending_uploads (trigger: interval[0:00:30], next run at: 2025-09-16 17:22:19 CEST)" executed successfully

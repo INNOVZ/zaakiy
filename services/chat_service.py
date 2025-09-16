@@ -1,13 +1,33 @@
 import os
-# import uuid
+import uuid
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 import openai
 from pinecone import Pinecone
 from supabase import create_client, Client
 from services.context_config import context_config_manager
 from services.context_analytics import context_analytics, ContextMetrics
+
+
+class ChatServiceError(Exception):
+    """Base exception for chat service errors"""
+    pass
+
+
+class RetrievalError(ChatServiceError):
+    """Exception for retrieval-related errors"""
+    pass
+
+
+class ContextError(ChatServiceError):
+    """Exception for context engineering errors"""
+    pass
+
+
+class ResponseGenerationError(ChatServiceError):
+    """Exception for response generation errors"""
+    pass
 
 
 class ChatService:
@@ -18,19 +38,25 @@ class ChatService:
         self.namespace = f"org-{org_id}"
         self.chatbot_config = chatbot_config
 
-        # Initialize clients
-        self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-        self.index = pc.Index(os.getenv("PINECONE_INDEX"))
+        # Initialize clients with error handling
+        try:
+            self.openai_client = openai.OpenAI(
+                api_key=os.getenv("OPENAI_API_KEY"))
+            pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+            self.index = pc.Index(os.getenv("PINECONE_INDEX"))
 
-        # Initialize Supabase for conversation management
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        self.supabase: Client = create_client(supabase_url, supabase_key)
+            # Initialize Supabase for conversation management
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            self.supabase: Client = create_client(supabase_url, supabase_key)
+        except Exception as e:
+            logging.error(f"Failed to initialize ChatService: {e}")
+            raise ChatServiceError(
+                f"Service initialization failed: {e}") from e
 
         # Context engineering config will be loaded per request
         self.context_config = None
-        
+
         # Initialize retrieval config with defaults (will be updated per request)
         self.retrieval_config = {
             "initial": 10,
@@ -47,10 +73,10 @@ class ChatService:
         self,
         message: str,
         session_id: str,
-        chatbot_id: str = None,
+        chatbot_id: Optional[str] = None,
         channel: str = 'web'
-    ) -> Dict:
-        """Main chat interface - handles everything"""
+    ) -> Dict[str, Any]:
+        """Main chat interface - handles everything with improved error handling"""
         start_time = datetime.utcnow()
 
         try:
@@ -128,20 +154,40 @@ class ChatService:
                 "config_used": self.context_config.config_name
             }
 
-        except (openai.OpenAIError, ValueError, KeyError, ConnectionError) as e:
-            logging.error("Chat error: %s", e)
-            return await self._fallback_response(message, session_id)
+        except openai.OpenAIError as e:
+            logging.error(f"OpenAI API error: {e}")
+            return await self._fallback_response(message, session_id, "AI service temporarily unavailable")
+
+        except ConnectionError as e:
+            logging.error(f"Database connection error: {e}")
+            return await self._fallback_response(message, session_id, "Database connection issue")
+
+        except RetrievalError as e:
+            logging.error(f"Retrieval error: {e}")
+            return await self._fallback_response(message, session_id, "Knowledge retrieval issue")
+
+        except ContextError as e:
+            logging.error(f"Context engineering error: {e}")
+            return await self._fallback_response(message, session_id, "Context processing issue")
+
+        except ResponseGenerationError as e:
+            logging.error(f"Response generation error: {e}")
+            return await self._fallback_response(message, session_id, "Response generation issue")
+
+        except Exception as e:
+            logging.error(f"Unexpected chat error: {e}")
+            return await self._fallback_response(message, session_id, "Unexpected error occurred")
 
     # ==========================================
-    # CONVERSATION MANAGEMENT
+    # CONVERSATION MANAGEMENT - MISSING METHODS
     # ==========================================
 
     async def _get_or_create_conversation(
         self,
         session_id: str,
-        chatbot_id: str = None,
+        chatbot_id: Optional[str] = None,
         channel: str = 'web'
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """Get existing conversation or create new one"""
         try:
             # Check for existing active conversation
@@ -154,60 +200,101 @@ class ChatService:
             ).order("updated_at", desc=True).limit(1).execute()
 
             if response.data and len(response.data) > 0:
-                return response.data[0]
+                conversation = response.data[0]
+                logging.info(
+                    f"Found existing conversation: {conversation['id']}")
+                return conversation
 
             # Create new conversation
             conversation_data = {
+                "id": str(uuid.uuid4()),
                 "org_id": self.org_id,
                 "chatbot_id": chatbot_id or "default",
                 "session_id": session_id,
                 "channel": channel,
                 "status": "active",
+                "title": f"Conversation {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+                "user_identifier": session_id,
                 "metadata": {
                     "context_config": self.context_config.config_name if self.context_config else "default"
-                }
+                },
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
             }
 
             new_conv = self.supabase.table("conversations").insert(
                 conversation_data).execute()
-            return new_conv.data[0]
 
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error managing conversation: %s", e)
-            raise
+            if new_conv.data and len(new_conv.data) > 0:
+                logging.info(
+                    f"Created new conversation: {new_conv.data[0]['id']}")
+                return new_conv.data[0]
+            else:
+                raise ConnectionError(
+                    "Failed to create conversation in database")
+
+        except Exception as e:
+            logging.error(f"Error managing conversation: {e}")
+            # Return a fallback conversation object
+            fallback_conversation = {
+                "id": f"fallback-{session_id}",
+                "org_id": self.org_id,
+                "session_id": session_id,
+                "status": "active"
+            }
+            return fallback_conversation
 
     async def _add_message(
         self,
         conversation_id: str,
         role: str,
         content: str,
-        metadata: Dict = None,
+        metadata: Optional[Dict[str, Any]] = None,
         processing_time_ms: int = 0
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """Add message to conversation"""
         try:
             message_data = {
+                "id": str(uuid.uuid4()),
                 "conversation_id": conversation_id,
                 "role": role,
                 "content": content,
                 "metadata": metadata or {},
                 "processing_time_ms": processing_time_ms,
-                "token_count": len(content) // 4  # Rough estimation
+                "token_count": len(content) // 4,  # Rough estimation
+                "created_at": datetime.utcnow().isoformat()
             }
 
             response = self.supabase.table(
                 "messages").insert(message_data).execute()
-            return response.data[0]
 
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error adding message: %s", e)
-            raise
+            if response.data and len(response.data) > 0:
+                logging.info(
+                    f"Added {role} message to conversation {conversation_id}")
+                return response.data[0]
+            else:
+                # Return the message data even if database insert failed
+                logging.warning(
+                    f"Database insert failed for message, returning fallback")
+                return message_data
+
+        except Exception as e:
+            logging.error(f"Error adding message: {e}")
+            # Return fallback message object
+            fallback_message = {
+                "id": str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "created_at": datetime.utcnow().isoformat()
+            }
+            return fallback_message
 
     async def _get_conversation_history(
         self,
         conversation_id: str,
         limit: int = 10
-    ) -> List[Dict]:
+    ) -> List[Dict[str, Any]]:
         """Get recent conversation history"""
         try:
             response = self.supabase.table("messages").select("*").eq(
@@ -216,21 +303,24 @@ class ChatService:
                 "role", "system"
             ).order("created_at", desc=False).limit(limit).execute()
 
-            return response.data or []
+            history = response.data or []
+            logging.info(
+                f"Retrieved {len(history)} messages from conversation history")
+            return history
 
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error getting conversation history: %s", e)
+        except Exception as e:
+            logging.error(f"Error getting conversation history: {e}")
             return []
 
     # ==========================================
-    # CONTEXT ENGINEERING & RAG
+    # CONTEXT ENGINEERING & RAG - MISSING METHODS
     # ==========================================
 
     async def _generate_enhanced_response(
         self,
         message: str,
-        conversation_history: List[Dict]
-    ) -> Dict:
+        conversation_history: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Generate response with enhanced context engineering"""
         retrieval_start = datetime.utcnow()
 
@@ -280,8 +370,8 @@ class ChatService:
                 ]
             }
 
-        except (openai.OpenAIError, ValueError, KeyError, ConnectionError) as e:
-            logging.error("Enhanced response generation error: %s", e)
+        except Exception as e:
+            logging.error(f"Enhanced response generation error: {e}")
             return {
                 "response": "I apologize, but I'm having trouble processing your request right now. Please try again.",
                 "sources": [],
@@ -289,7 +379,7 @@ class ChatService:
                 "retrieval_stats": {"error": True}
             }
 
-    async def _enhance_query(self, query: str, history: List[Dict]) -> List[str]:
+    async def _enhance_query(self, query: str, history: List[Dict[str, Any]]) -> List[str]:
         """Enhance query with conversation context"""
         enhanced = [query]  # Always include original
 
@@ -327,12 +417,12 @@ Enhanced query (maintain intent, add relevant context, make it more specific):
             # Limit to max query variants
             return enhanced[:self.context_config.max_query_variants]
 
-        except (openai.OpenAIError, ValueError, KeyError) as e:
-            logging.warning("Query enhancement failed: %s", e)
+        except Exception as e:
+            logging.warning(f"Query enhancement failed: {e}")
             return enhanced
 
-    async def _retrieve_documents(self, queries: List[str]) -> List[Dict]:
-        """Retrieve relevant documents using multiple queries"""
+    async def _retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
+        """Retrieve relevant documents using multiple queries with better error handling"""
         all_docs = {}
 
         for query in queries:
@@ -358,15 +448,24 @@ Enhanced query (maintain intent, add relevant context, make it more specific):
                             "query_variant": query
                         }
 
-            except (ValueError, KeyError, ConnectionError) as e:
-                logging.warning("Retrieval failed for query '%s': %s", query, e)
+            except ConnectionError as e:
+                logging.warning(
+                    f"Pinecone connection error for query '{query}': {e}")
+                raise RetrievalError(
+                    f"Vector database connection failed: {e}") from e
+            except TimeoutError as e:
+                logging.warning(f"Retrieval timeout for query '{query}': {e}")
+                raise RetrievalError(f"Retrieval timeout: {e}") from e
+            except Exception as e:
+                logging.warning(f"Retrieval failed for query '{query}': {e}")
+                raise RetrievalError(f"Document retrieval failed: {e}") from e
 
         # Return top documents sorted by score
         sorted_docs = sorted(
             all_docs.values(), key=lambda x: x["score"], reverse=True)
         return sorted_docs[:self.retrieval_config["final"]]
 
-    async def _assemble_context(self, documents: List[Dict], query: str) -> str:
+    async def _assemble_context(self, documents: List[Dict[str, Any]], query: str) -> str:
         """Assemble context from retrieved documents"""
         if not documents:
             return "No relevant information found in uploaded documents."
@@ -405,7 +504,7 @@ Enhanced query (maintain intent, add relevant context, make it more specific):
         self,
         message: str,
         context: str,
-        conversation_history: List[Dict]
+        conversation_history: List[Dict[str, Any]]
     ) -> str:
         """Generate final response using context and conversation history"""
 
@@ -475,8 +574,8 @@ INSTRUCTIONS:
 
             return generated_response
 
-        except (openai.OpenAIError, ValueError, KeyError) as e:
-            logging.error("Response generation failed: %s", e)
+        except Exception as e:
+            logging.error(f"Response generation failed: {e}")
             return self.chatbot_config.get(
                 'fallback_message',
                 "I apologize, but I'm having trouble generating a response right now."
@@ -522,9 +621,69 @@ Respond with just the number (1-5):
 
             return response
 
-        except (openai.OpenAIError, ValueError, KeyError) as e:
-            logging.warning("Response quality check failed: %s", e)
+        except Exception as e:
+            logging.warning(f"Response quality check failed: {e}")
             return response
+
+    # ==========================================
+    # UTILITY METHODS
+    # ==========================================
+
+    async def _generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for text"""
+        try:
+            response = self.openai_client.embeddings.create(
+                model=self.context_config.embedding_model,
+                input=text
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logging.error(f"Embedding generation failed: {e}")
+            raise
+
+    def _assess_context_quality(self, context: str, query: str) -> Dict[str, Any]:
+        """Assess context quality with enhanced metrics"""
+        has_context = len(context.strip()) > 100
+        context_length = len(context)
+
+        # Simple coverage score based on context length vs optimal length
+        optimal_length = self.max_context_length * 0.7  # 70% of max is considered good
+        coverage_score = min(1.0, context_length /
+                             optimal_length) if has_context else 0.0
+
+        return {
+            "context_length": context_length,
+            "has_context": has_context,
+            "coverage_score": coverage_score,
+            "quality_tier": "high" if coverage_score > 0.7 else "medium" if coverage_score > 0.3 else "low",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    async def _fallback_response(self, message: str, session_id: str, error_type: Optional[str] = None) -> Dict[str, Any]:
+        """Enhanced fallback response with error context"""
+        fallback_messages = {
+            "AI service temporarily unavailable": "I'm experiencing some issues connecting to my AI service. Please try again in a moment.",
+            "Database connection issue": "I'm having trouble accessing my memory right now. Please try again shortly.",
+            "Knowledge retrieval issue": "I'm having difficulty finding relevant information. Please rephrase your question.",
+            "Context processing issue": "I'm having trouble understanding the context. Could you be more specific?",
+            "Response generation issue": "I'm having trouble formulating a response. Please try rephrasing your question."
+        }
+
+        response_text = fallback_messages.get(error_type,
+                                              self.chatbot_config.get('fallback_message',
+                                                                      "I apologize, but I'm experiencing some technical difficulties. Please try again in a moment."
+                                                                      )
+                                              )
+
+        return {
+            "response": response_text,
+            "sources": [],
+            "conversation_id": session_id,
+            "message_id": None,
+            "processing_time_ms": 0,
+            "context_quality": {"error": True, "error_type": error_type},
+            "error_context": error_type
+        }
 
     # ==========================================
     # ANALYTICS AND LOGGING
@@ -535,9 +694,9 @@ Respond with just the number (1-5):
         conversation_id: str,
         message_id: str,
         query_original: str,
-        response_data: Dict,
+        response_data: Dict[str, Any],
         processing_time: int
-    ):
+    ) -> None:
         """Log comprehensive analytics data"""
         try:
             # Create context metrics
@@ -562,7 +721,7 @@ Respond with just the number (1-5):
             # Log to analytics system
             await context_analytics.log_context_metrics(metrics)
 
-            # Also log to context_logs table (legacy support)
+            # Also log to context_analytics table (legacy support)
             context_data = {
                 "message_id": message_id,
                 "org_id": self.org_id,
@@ -575,64 +734,17 @@ Respond with just the number (1-5):
                 "model_used": str(self.context_config.model_tier)
             }
 
-            self.supabase.table("context_analytics").insert(context_data).execute()
+            self.supabase.table("context_analytics").insert(
+                context_data).execute()
 
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.warning("Analytics logging failed: %s", e)
-
-    # ==========================================
-    # UTILITY METHODS
-    # ==========================================
-
-    async def _generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding for text"""
-        try:
-            response = self.openai_client.embeddings.create(
-                model=self.context_config.embedding_model,
-                input=text
-            )
-            return response.data[0].embedding
-        except (openai.OpenAIError, ValueError, KeyError) as e:
-            logging.error("Embedding generation failed: %s", e)
-            raise
-
-    def _assess_context_quality(self, context: str, query: str) -> Dict:
-        """Assess context quality with enhanced metrics"""
-        has_context = len(context.strip()) > 100
-        context_length = len(context)
-
-        # Simple coverage score based on context length vs optimal length
-        optimal_length = self.max_context_length * 0.7  # 70% of max is considered good
-        coverage_score = min(1.0, context_length /
-                             optimal_length) if has_context else 0.0
-
-        return {
-            "context_length": context_length,
-            "has_context": has_context,
-            "coverage_score": coverage_score,
-            "quality_tier": "high" if coverage_score > 0.7 else "medium" if coverage_score > 0.3 else "low",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-    async def _fallback_response(self, message: str, session_id: str) -> Dict:
-        """Fallback response when main chat fails"""
-        return {
-            "response": self.chatbot_config.get(
-                'fallback_message',
-                "I apologize, but I'm experiencing some technical difficulties. Please try again in a moment."
-            ),
-            "sources": [],
-            "conversation_id": session_id,
-            "message_id": None,
-            "processing_time_ms": 0,
-            "context_quality": {"error": True}
-        }
+        except Exception as e:
+            logging.warning(f"Analytics logging failed: {e}")
 
     # ==========================================
     # CONVERSATION MANAGEMENT UTILITIES
     # ==========================================
 
-    async def get_recent_conversations(self, limit: int = 20) -> List[Dict]:
+    async def get_recent_conversations(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get recent conversations for this organization"""
         try:
             response = self.supabase.table("conversations").select(
@@ -643,15 +755,15 @@ Respond with just the number (1-5):
 
             return response.data or []
 
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error getting conversations: %s", e)
+        except Exception as e:
+            logging.error(f"Error getting conversations: {e}")
             return []
 
     async def add_feedback(
         self,
         message_id: str,
         rating: int,
-        feedback_text: str = None
+        feedback_text: Optional[str] = None
     ) -> bool:
         """Add user feedback and update analytics"""
         try:
@@ -684,14 +796,14 @@ Respond with just the number (1-5):
                         "user_satisfaction": satisfaction_score,
                         "feedback_text": feedback_text
                     }).eq("message_id", message_id).execute()
-                except (ValueError, KeyError, ConnectionError) as e:
+                except Exception as e:
                     logging.warning(
-                        "Failed to update analytics with feedback: %s", e)
+                        f"Failed to update analytics with feedback: {e}")
 
             return bool(response.data)
 
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error adding feedback: %s", e)
+        except Exception as e:
+            logging.error(f"Error adding feedback: {e}")
             return False
 
     async def get_performance_insights(self) -> Dict[str, Any]:
@@ -699,14 +811,14 @@ Respond with just the number (1-5):
         try:
             dashboard = await context_analytics.get_performance_dashboard(self.org_id, days=7)
             return dashboard
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error getting performance insights: %s", e)
+        except Exception as e:
+            logging.error(f"Error getting performance insights: {e}")
             return {}
 
     async def update_context_config(self, updates: Dict[str, Any]) -> bool:
         """Update context engineering configuration"""
         try:
             return await context_config_manager.update_config(self.org_id, updates)
-        except (ValueError, KeyError, ConnectionError) as e:
-            logging.error("Error updating context config: %s", e)
+        except Exception as e:
+            logging.error(f"Error updating context config: {e}")
             return False

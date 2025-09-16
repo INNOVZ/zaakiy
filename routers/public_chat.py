@@ -1,3 +1,4 @@
+import html
 import os
 from typing import Optional
 from fastapi import APIRouter, HTTPException
@@ -20,7 +21,7 @@ class PublicChatRequest(BaseModel):
     message: str
     chatbot_id: str
     session_id: Optional[str] = None
-    user_identifier: Optional[str] = None  # For tracking anonymous users
+    user_identifier: Optional[str] = None
 
 
 class PublicChatResponse(BaseModel):
@@ -113,7 +114,7 @@ async def get_public_chatbot_config(chatbot_id: str):
 
 @router.get("/chatbot/{chatbot_id}/widget")
 async def get_chatbot_widget_code(chatbot_id: str):
-    """Get embeddable widget code for a chatbot"""
+    """Get embeddable widget code for a chatbot - FIXED XSS vulnerability"""
     try:
         # Get chatbot config
         response = supabase.table("chatbots").select("*").eq(
@@ -127,27 +128,31 @@ async def get_chatbot_widget_code(chatbot_id: str):
 
         # Get environment variables
         api_base_url = os.getenv("API_BASE_URL", "http://localhost:8001")
-        chatbot_name = chatbot["name"]
-        chatbot_color = chatbot["color_hex"]
-        greeting_msg = chatbot.get(
-            "greeting_message", "Hello! How can I help you today!")
 
-        # Generate widget HTML/JS code - Fixed f-string interpolation
+        # SECURITY FIX: Escape all user-provided data
+        chatbot_id_escaped = html.escape(chatbot_id)
+        chatbot_name_escaped = html.escape(str(chatbot["name"]))
+        chatbot_color_escaped = html.escape(str(chatbot["color_hex"]))
+        greeting_msg_escaped = html.escape(str(chatbot.get(
+            "greeting_message", "Hello! How can I help you today!")))
+        api_base_url_escaped = html.escape(api_base_url)
+
+        # Generate widget HTML/JS code - Fixed XSS vulnerability
         widget_code = f"""
 <!-- ZaaKy AI Chatbot Widget -->
-<div id="zaaky-chatbot-{chatbot_id}"></div>
+<div id="zaaky-chatbot-{chatbot_id_escaped}"></div>
 <script>
   (function() {{
     var chatbotConfig = {{
-      chatbotId: '{chatbot_id}',
-      apiUrl: '{api_base_url}/api/public',
-      name: '{chatbot_name}',
-      color: '{chatbot_color}',
-      greeting: '{greeting_msg}'
+      chatbotId: '{chatbot_id_escaped}',
+      apiUrl: '{api_base_url_escaped}/api/public',
+      name: '{chatbot_name_escaped}',
+      color: '{chatbot_color_escaped}',
+      greeting: '{greeting_msg_escaped}'
     }};
     
     var script = document.createElement('script');
-    script.src = chatbotConfig.apiUrl + '/chatbot/{chatbot_id}/widget.js';
+    script.src = chatbotConfig.apiUrl + '/chatbot/' + encodeURIComponent(chatbotConfig.chatbotId) + '/widget.js';
     script.onload = function() {{
       if (window.ZaakyWidget) {{
         ZaakyWidget.init(chatbotConfig);
@@ -175,7 +180,7 @@ async def get_chatbot_widget_code(chatbot_id: str):
 
 @router.get("/chatbot/{chatbot_id}/widget.js")
 async def get_chatbot_widget_js(chatbot_id: str):
-    """Serve the JavaScript widget file"""
+    """Serve the JavaScript widget file - Enhanced security"""
     try:
         # Get chatbot config for defaults
         response = supabase.table("chatbots").select("*").eq(
@@ -185,11 +190,9 @@ async def get_chatbot_widget_js(chatbot_id: str):
         if not response.data or len(response.data) == 0:
             raise HTTPException(status_code=404, detail="Chatbot not found")
 
-        # chatbot = response.data[0]
-
-        # Enhanced JavaScript widget code - Fixed template string interpolation
+        # Enhanced JavaScript widget code with improved security
         js_code = """
-// ZaaKy AI Chatbot Widget v2.0
+// ZaaKy AI Chatbot Widget v2.1 - Security Enhanced
 (function() {
   'use strict';
   
@@ -208,7 +211,7 @@ async def get_chatbot_widget_js(chatbot_id: str):
       this.bindEvents();
       this.isInitialized = true;
       
-      console.log('ZaaKy Widget v2.0 initialized for chatbot:', this.config.chatbotId);
+      console.log('ZaaKy Widget v2.1 initialized for chatbot:', this.config.chatbotId);
     },
     
     sanitizeConfig: function(config) {
@@ -216,7 +219,7 @@ async def get_chatbot_widget_js(chatbot_id: str):
         chatbotId: this.escapeHtml(config.chatbotId || ''),
         apiUrl: this.escapeHtml(config.apiUrl || ''),
         name: this.escapeHtml(config.name || 'AI Assistant'),
-        color: this.escapeHtml(config.color || '#6a8fff'),
+        color: this.sanitizeColor(config.color || '#6a8fff'),
         greeting: this.escapeHtml(config.greeting || 'Hello! How can I help you today?')
       };
     },
@@ -228,6 +231,16 @@ async def get_chatbot_widget_js(chatbot_id: str):
       return div.innerHTML;
     },
     
+    sanitizeColor: function(color) {
+      // Basic color validation
+      if (typeof color !== 'string') return '#6a8fff';
+      // Allow hex colors and basic color names
+      if (/^#[0-9A-Fa-f]{6}$/.test(color) || /^#[0-9A-Fa-f]{3}$/.test(color)) {
+        return color;
+      }
+      return '#6a8fff'; // Default fallback
+    },
+    
     createWidget: function() {
       var container = document.getElementById('zaaky-chatbot-' + this.config.chatbotId);
       if (!container) {
@@ -235,8 +248,13 @@ async def get_chatbot_widget_js(chatbot_id: str):
         return;
       }
       
-      // Create widget UI
-      container.innerHTML = `
+      // Create widget UI with properly escaped content
+      var widgetHTML = this.buildWidgetHTML();
+      container.innerHTML = widgetHTML;
+    },
+    
+    buildWidgetHTML: function() {
+      return `
         <div class="zaaky-widget" style="
           position: fixed;
           bottom: 20px;
@@ -341,7 +359,7 @@ async def get_chatbot_widget_js(chatbot_id: str):
       this.addMessage(message, 'user');
       input.value = '';
       
-      // Send to API
+      // Send to API with proper error handling
       fetch(this.config.apiUrl + '/chat', {
         method: 'POST',
         headers: {
@@ -353,7 +371,12 @@ async def get_chatbot_widget_js(chatbot_id: str):
           session_id: this.getSessionId()
         })
       })
-      .then(response => response.json())
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.json();
+      })
       .then(data => {
         if (data.response) {
           this.addMessage(data.response, 'bot');
@@ -380,7 +403,7 @@ async def get_chatbot_widget_js(chatbot_id: str):
           'background: #f8f9fa; margin-right: 40px;'
         }
       `;
-      messageDiv.textContent = text;
+      messageDiv.textContent = text; // Use textContent to prevent XSS
       
       messagesContainer.appendChild(messageDiv);
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
