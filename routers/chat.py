@@ -1,3 +1,8 @@
+"""
+This module handles chat requests and responses.
+
+Contains functions for creating and managing chat, chat conversation, performing analytics, and configuring context.
+"""
 import os
 import uuid
 import traceback
@@ -24,12 +29,22 @@ router = APIRouter()
 
 
 class ChatRequest(BaseModel):
+    """
+This module handles chat basemodel.
+
+Contains functions for creating and managing chat requests.
+"""
     message: str
     chatbot_id: Optional[str] = None
     conversation_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
+    """
+This module handles chat response.
+
+Contains functions for generating and formatting chat responses.
+"""
     response: str
     sources: List[str] = []
     chatbot_config: dict
@@ -40,6 +55,11 @@ class ChatResponse(BaseModel):
 
 
 class CreateChatbotRequest(BaseModel):
+    """
+This module handles chatbot configuration.
+
+Contains functions for creating and managing chatbots.
+"""
     name: str
     description: Optional[str] = None
     color_hex: Optional[str] = "#3B82F6"
@@ -53,6 +73,11 @@ class CreateChatbotRequest(BaseModel):
 
 
 class UpdateChatbotRequest(BaseModel):
+    """
+This module handles chatbot updates.
+
+Contains functions for updating chatbot configurations and settings.
+"""
     name: Optional[str] = None
     description: Optional[str] = None
     color_hex: Optional[str] = None
@@ -66,12 +91,22 @@ class UpdateChatbotRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
+    """
+This module handles user authentication and session management.
+
+Contains functions for login, logout, and token validation.
+"""
     message_id: str
     rating: int  # 1 for thumbs up, -1 for thumbs down
     feedback_text: Optional[str] = None
 
 
 class ContextConfigRequest(BaseModel):
+    """
+This module handles context configuration.
+
+Contains Class for context config.
+"""
     config_updates: dict
 
 # ==========================================

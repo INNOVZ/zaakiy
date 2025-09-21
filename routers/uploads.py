@@ -1,13 +1,13 @@
 import os
 import uuid
+from typing import List, Dict, Any
 import logging
-from supabase import create_client
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
+from pinecone import Pinecone
+from supabase import create_client
 from services.supabase_auth import verify_jwt_token
 from services.user_service import get_user_with_org
-from pinecone import Pinecone
-from typing import List, Dict, Any
 
 router = APIRouter()
 
@@ -22,14 +22,23 @@ index = pc.Index(os.getenv("PINECONE_INDEX"))
 
 
 class URLIngestRequest(BaseModel):
+    """
+This module handles vector data ingestion from URLs.
+"""
     url: str
 
 
 class UpdateRequest(BaseModel):
+    """
+This module handles upload vector update functionality.
+"""
     url: str
 
 
 class SearchRequest(BaseModel):
+    """
+This module handles upload vector search functionality.
+"""
     query: str
     top_k: int = 5
     filter_upload_ids: list[str] = None  # Optional: filter by specific uploads

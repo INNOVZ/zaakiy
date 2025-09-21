@@ -144,7 +144,7 @@ class ContextConfigManager:
                     return ContextEngineeringConfig(**config_data)
 
             # Create default config if none exists
-            logging.info(f"Creating default config for org {org_id}")
+            logging.info("Creating default config for org %s", org_id)
             default_config = ContextEngineeringConfig(
                 org_id=org_id,
                 config_name=config_name
@@ -155,14 +155,14 @@ class ContextConfigManager:
             return default_config
 
         except Exception as e:
-            logging.error(f"Error getting config for org {org_id}: {e}")
+            logging.error("Error getting config for org %s: %s", org_id, e)
             # Return basic default config as fallback
             return ContextEngineeringConfig(org_id=org_id, config_name=config_name)
 
     async def save_config(self, config: ContextEngineeringConfig) -> bool:
         """Save context engineering configuration with proper datetime handling"""
         try:
-            logging.info(f"Saving config for org {config.org_id}")
+            logging.info("Saving config for org %s", config.org_id)
 
             # Ensure timestamps are datetime objects
             now = datetime.utcnow()
@@ -327,7 +327,7 @@ class ContextConfigManager:
 
             return True
         except (ValueError, TypeError) as e:
-            logging.error(f"Error setting field {key} to {value}: {e}")
+            logging.error("Error setting field %s to %s: %s", key, value, e)
             return False
 
     async def update_config(
@@ -338,8 +338,7 @@ class ContextConfigManager:
     ) -> bool:
         """Update specific configuration parameters"""
         try:
-            logging.info(
-                f"Updating config for org {org_id} with updates: {updates}")
+            logging.info("Updating config for org %s with updates: %s", org_id, updates)
 
             # Get current config
             current_config = await self.get_config(org_id, config_name)

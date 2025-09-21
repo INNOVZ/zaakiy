@@ -1,5 +1,4 @@
 import os
-import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,23 +33,23 @@ async def lifespan(app: FastAPI):
         if not validation["valid"]:
             logger.error(f"Configuration validation failed: {validation['errors']}")
             raise ValueError("Invalid configuration")
-        
+     
         if validation["warnings"]:
             for warning in validation["warnings"]:
                 logger.warning(f"Configuration warning: {warning}")
-        
+
         logger.info("Configuration validated successfully")
     except Exception as e:
         logger.error(f"Startup validation failed: {e}")
         raise
-    
+
     # Start background services
     logger.info("Starting background worker...")
     start_background_worker()
-    
+
     logger.info("ZaaKy AI Platform started successfully")
     yield
-    
+
     # Shutdown
     logger.info("Shutting down ZaaKy AI Platform...")
     stop_background_worker()
@@ -126,7 +125,7 @@ app.include_router(public_chat.router, prefix="/api/public", tags=["public"])
 def root():
     """Root endpoint with system information"""
     return {
-        "message": "ZaaKy AI Platform API",
+        "message": "ZaaKi AI Platform API",
         "version": settings.app.app_version,
         "environment": settings.app.environment,
         "status": "operational",

@@ -6,6 +6,7 @@ Script to configure Supabase storage bucket for private access
 import os
 from dotenv import load_dotenv
 from supabase import create_client
+import requests
 
 load_dotenv()
 
@@ -84,7 +85,6 @@ def test_authenticated_access(supabase):
                 print(f"   URL: {signed_url['signedURL'][:60]}...")
 
                 # Test accessing the file with service role key
-                import requests
                 headers = {
                     'Authorization': f'Bearer {os.getenv("SUPABASE_SERVICE_ROLE_KEY")}',
                     'apikey': os.getenv("SUPABASE_SERVICE_ROLE_KEY")

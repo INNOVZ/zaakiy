@@ -11,6 +11,7 @@ from pinecone import Pinecone
 from PyPDF2 import PdfReader
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from supabase import create_client
 from services.web_scraper import scrape_url_text
 
@@ -168,14 +169,13 @@ def split_into_chunks(text: str) -> list:
     if not text.strip():
         return []
 
-    splitter = CharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        separator="\n"
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,       # slightly smaller works better
+        chunk_overlap=100,
+        separators=["\n\n", "\n", ".", "?", "!", " "]
     )
     chunks = splitter.split_text(text)
     return [chunk for chunk in chunks if chunk.strip()]
-
 
 def get_embeddings_for_chunks(chunks: list) -> list:
     if not chunks:

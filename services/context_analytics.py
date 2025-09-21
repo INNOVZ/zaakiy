@@ -214,8 +214,13 @@ class ContextAnalytics:
 
             return {
                 "trends_available": True,
-                "response_time_change": self._calculate_percentage_change(prev_avg_response, current_avg_response),
-                "quality_change": self._calculate_percentage_change(prev_avg_quality, current_avg_quality),
+                "response_time_change": self._calculate_percentage_change(
+                    prev_avg_response, 
+                    current_avg_response
+                ),
+                "quality_change": self._calculate_percentage_change(
+                    prev_avg_quality, current_avg_quality
+                ),
                 "volume_change": self._calculate_percentage_change(len(prev_data), len(current_data))
             }
 
