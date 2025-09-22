@@ -1,30 +1,38 @@
-import os
 import httpx
-from dotenv import load_dotenv
+import logging
 from supabase import create_client, Client
+from config.settings import get_database_config
 
-# Load environment variables
-load_dotenv()
+logger = logging.getLogger(__name__)
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+# Get configuration
+db_config = get_database_config()
 
-# Validate required environment variables
-if not SUPABASE_URL:
+# Validate required configuration
+if not db_config.supabase_url:
     raise ValueError("SUPABASE_URL environment variable is required")
-if not SUPABASE_SERVICE_ROLE_KEY:
+if not db_config.supabase_service_key:
     raise ValueError(
         "SUPABASE_SERVICE_ROLE_KEY environment variable is required")
 
-# Create both clients for different use cases
+logger.info("Initializing Supabase clients with centralized configuration")
+
+# Create headers for HTTP client
 headers = {
-    "apikey": SUPABASE_SERVICE_ROLE_KEY,
-    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+    "apikey": db_config.supabase_service_key,
+    "Authorization": f"Bearer {db_config.supabase_service_key}",
     "Content-Type": "application/json",
 }
 
 # HTTP client for REST API calls
-client = httpx.AsyncClient(base_url=f"{SUPABASE_URL}/rest/v1", headers=headers)
+client = httpx.AsyncClient(
+    base_url=f"{db_config.supabase_url}/rest/v1",
+    headers=headers,
+    timeout=30.0
+)
 
 # Supabase client for ORM-style operations
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+supabase: Client = create_client(
+    db_config.supabase_url, db_config.supabase_service_key)
+
+logger.info("Supabase clients initialized successfully")

@@ -4,10 +4,15 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import openai
+# Import singleton
 from pinecone import Pinecone
 from supabase import create_client, Client
 from services.context_config import context_config_manager
+from services.client_manager import client_manager
 from services.context_analytics import context_analytics, ContextMetrics
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class ChatServiceError(Exception):
@@ -40,17 +45,16 @@ class ChatService:
 
         # Initialize clients with error handling
         try:
-            self.openai_client = openai.OpenAI(
-                api_key=os.getenv("OPENAI_API_KEY"))
-            pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-            self.index = pc.Index(os.getenv("PINECONE_INDEX"))
+            self.openai_client = client_manager.openai
+            self.index = client_manager.pinecone_index
+            self.supabase = client_manager.supabase
 
-            # Initialize Supabase for conversation management
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-            self.supabase: Client = create_client(supabase_url, supabase_key)
+            logger.info(
+                "✅ ChatService initialized with shared clients for org %s", org_id)
+
         except Exception as e:
-            logging.error(f"Failed to initialize ChatService: {e}")
+            logging.error(
+                "Failed to initialize ChatService with shared clients: %s", str(e))
             raise ChatServiceError(
                 f"Service initialization failed: {e}") from e
 

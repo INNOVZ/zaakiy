@@ -1,278 +1,485 @@
+"""
+Centralized configuration management with validation and type safety
+"""
 import os
-from typing import Dict, Any, List
-from pydantic import BaseModel, Field
+import logging
+from typing import Dict, List, Any
+from dataclasses import dataclass
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
-
-class DatabaseSettings(BaseModel):
-    """Database configuration settings"""
-    supabase_url: str = Field(..., description="Supabase project URL")
-    supabase_service_key: str = Field(...,
-                                      description="Supabase service role key")
-    supabase_jwt_secret: str = Field(..., description="Supabase JWT secret")
-    supabase_project_id: str = Field(..., description="Supabase project ID")
-
-    def __init__(self, **data):
-        # Auto-populate from environment if not provided
-        data.setdefault('supabase_url', os.getenv("SUPABASE_URL", ""))
-        data.setdefault('supabase_service_key', os.getenv(
-            "SUPABASE_SERVICE_ROLE_KEY", ""))
-        data.setdefault('supabase_jwt_secret',
-                        os.getenv("SUPABASE_JWT_SECRET", ""))
-        data.setdefault('supabase_project_id',
-                        os.getenv("SUPABASE_PROJECT_ID", ""))
-        super().__init__(**data)
+logger = logging.getLogger(__name__)
 
 
-class AISettings(BaseModel):
-    """AI service configuration settings"""
-    openai_api_key: str = Field(..., description="OpenAI API key")
-    pinecone_api_key: str = Field(..., description="Pinecone API key")
-    pinecone_index: str = Field(..., description="Pinecone index name")
+@dataclass
+class DatabaseConfig:
+    """Database configuration with validation"""
+    supabase_url: str
+    supabase_service_key: str
+    supabase_jwt_secret: str
+    supabase_project_id: str
 
-    # Model defaults
-    default_embedding_model: str = Field(default="text-embedding-3-small")
-    default_chat_model: str = Field(default="gpt-4")
-    max_tokens_default: int = Field(default=1000)
-    temperature_default: float = Field(default=0.7)
+    def validate(self) -> Dict[str, Any]:
+        """Validate database configuration with strict requirements"""
+        errors = []
+        warnings = []
 
-    def __init__(self, **data):
-        data.setdefault('openai_api_key', os.getenv("OPENAI_API_KEY", ""))
-        data.setdefault('pinecone_api_key', os.getenv("PINECONE_API_KEY", ""))
-        data.setdefault('pinecone_index', os.getenv("PINECONE_INDEX", ""))
-        super().__init__(**data)
+        # CRITICAL: These are required for basic functionality
+        if not self.supabase_url:
+            errors.append(
+                "SUPABASE_URL is REQUIRED - server cannot function without it")
+        elif not self.supabase_url.startswith('https://'):
+            warnings.append("SUPABASE_URL should use HTTPS")
 
+        if not self.supabase_service_key:
+            errors.append(
+                "SUPABASE_SERVICE_ROLE_KEY is REQUIRED - "
+                "database operations will fail")
+        elif len(self.supabase_service_key) < 50:
+            warnings.append("SUPABASE_SERVICE_ROLE_KEY seems too short")
 
-class SecuritySettings(BaseModel):
-    """Security configuration settings"""
-    cors_origins: List[str] = Field(default=["http://localhost:3000"])
-    rate_limit_requests: int = Field(default=100)
-    rate_limit_window: int = Field(default=60)  # seconds
-    max_upload_size: int = Field(default=10485760)  # 10MB
-    allowed_file_types: List[str] = Field(default=["pdf", "json", "txt"])
+        if not self.supabase_jwt_secret:
+            errors.append(
+                "SUPABASE_JWT_SECRET is REQUIRED - authentication will fail")
 
-    def __init__(self, **data):
-        data.setdefault('rate_limit_requests', int(
-            os.getenv("RATE_LIMIT_REQUESTS", "100")))
-        data.setdefault('rate_limit_window', int(
-            os.getenv("RATE_LIMIT_WINDOW", "60")))
-        data.setdefault('max_upload_size', int(
-            os.getenv("MAX_UPLOAD_SIZE", "10485760")))
-        super().__init__(**data)
+        # Project ID is less critical, but recommended
+        if not self.supabase_project_id:
+            warnings.append(
+                "SUPABASE_PROJECT_ID is missing - some features may not work")
 
-
-class PerformanceSettings(BaseModel):
-    """Performance and optimization settings"""
-    max_concurrent_requests: int = Field(default=50)
-    request_timeout: int = Field(default=30)
-    cache_ttl: int = Field(default=3600)  # 1 hour
-    background_worker_interval: int = Field(default=30)
-
-    # Context engineering defaults
-    max_context_length: int = Field(default=4000)
-    max_retrieval_count: int = Field(default=20)
-    max_conversation_history: int = Field(default=10)
-
-    def __init__(self, **data):
-        data.setdefault('max_concurrent_requests', int(
-            os.getenv("MAX_CONCURRENT_REQUESTS", "50")))
-        data.setdefault('request_timeout', int(
-            os.getenv("REQUEST_TIMEOUT", "30")))
-        data.setdefault('cache_ttl', int(os.getenv("CACHE_TTL", "3600")))
-        data.setdefault('background_worker_interval', int(
-            os.getenv("WORKER_INTERVAL", "30")))
-        super().__init__(**data)
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings
+        }
 
 
-class ApplicationSettings(BaseModel):
-    """Main application settings"""
-    app_name: str = Field(default="ZaaKy AI Platform")
-    app_version: str = Field(default="2.1.0")  # Updated version
-    environment: str = Field(default="development")
-    debug: bool = Field(default=False)
-    api_base_url: str = Field(default="http://localhost:8001")
+@dataclass
+class AIServiceConfig:
+    """AI service configuration with validation"""
+    openai_api_key: str
+    pinecone_api_key: str
+    pinecone_index: str
+    default_model: str = "gpt-4"
+    default_temperature: float = 0.7
+    max_tokens: int = 1000
+    embedding_model: str = "text-embedding-3-small"
 
-    # Feature flags
-    enable_analytics: bool = Field(default=True)
-    enable_caching: bool = Field(default=True)
-    enable_rate_limiting: bool = Field(default=True)
+    def validate(self) -> Dict[str, Any]:
+        """Validate AI service configuration with strict requirements"""
+        errors = []
+        warnings = []
 
-    def __init__(self, **data):
-        data.setdefault('environment', os.getenv("ENVIRONMENT", "development"))
-        data.setdefault('debug', os.getenv("DEBUG", "false").lower() == "true")
-        data.setdefault('api_base_url', os.getenv(
-            "API_BASE_URL", "http://localhost:8001"))
-        data.setdefault('enable_analytics', os.getenv(
-            "ENABLE_ANALYTICS", "true").lower() == "true")
-        data.setdefault('enable_caching', os.getenv(
-            "ENABLE_CACHING", "true").lower() == "true")
-        data.setdefault('enable_rate_limiting', os.getenv(
-            "ENABLE_RATE_LIMITING", "true").lower() == "true")
-        super().__init__(**data)
+        # CRITICAL: These are required for AI functionality
+        if not self.openai_api_key:
+            errors.append(
+                "OPENAI_API_KEY is REQUIRED - AI features will not work")
+        elif not self.openai_api_key.startswith('sk-'):
+            errors.append(
+                "OPENAI_API_KEY format is invalid - must start with 'sk-'")
+
+        if not self.pinecone_api_key:
+            errors.append(
+                "PINECONE_API_KEY is REQUIRED - vector operations will fail")
+
+        if not self.pinecone_index:
+            errors.append(
+                "PINECONE_INDEX is REQUIRED - document search will not work")
+
+        # These are warnings, not errors
+        if not 0.0 <= self.default_temperature <= 2.0:
+            warnings.append("Temperature should be between 0.0 and 2.0")
+
+        if self.max_tokens < 100 or self.max_tokens > 4000:
+            warnings.append("max_tokens should be between 100 and 4000")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings
+        }
 
 
-class Settings:
-    """Main settings class combining all configuration"""
+@dataclass
+class SecurityConfig:
+    """Security configuration with validation"""
+    cors_origins: List[str]
+    allowed_hosts: List[str]
+    rate_limit_requests: int = 100
+    rate_limit_window: int = 60
+    enable_auth_validation: bool = True
+
+    def validate(self) -> Dict[str, Any]:
+        """Validate security configuration"""
+        errors = []
+        warnings = []
+
+        if "*" in self.cors_origins:
+            warnings.append(
+                "CORS allows all origins - "
+                "consider restricting in production")
+
+        if not self.allowed_hosts:
+            warnings.append("No allowed hosts specified")
+
+        if self.rate_limit_requests > 1000:
+            warnings.append("Rate limit seems very high")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings
+        }
+
+
+@dataclass
+class AppConfig:
+    """Application configuration with validation"""
+    app_name: str = "ZaaKy AI Platform"
+    app_version: str = "2.1.0"
+    environment: str = "development"
+    debug: bool = False
+    log_level: str = "INFO"
+    enable_analytics: bool = True
+    enable_caching: bool = True
+    api_base_url: str = "http://localhost:8001"
+
+    def validate(self) -> Dict[str, Any]:
+        """Validate application configuration"""
+        errors = []
+        warnings = []
+
+        valid_environments = ["development", "staging", "production"]
+        if self.environment not in valid_environments:
+            errors.append(
+                f"Environment must be one of: {valid_environments}")
+
+        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if self.log_level not in valid_log_levels:
+            errors.append(f"Log level must be one of: {valid_log_levels}")
+
+        if self.environment == "production" and self.debug:
+            warnings.append("Debug mode enabled in production")
+
+        if not self.api_base_url.startswith(('http://', 'https://')):
+            warnings.append(
+                "API_BASE_URL should include protocol (http/https)")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings
+        }
+
+
+@dataclass
+class PerformanceConfig:
+    """Performance configuration with validation"""
+    max_concurrent_requests: int = 100
+    request_timeout: int = 30
+    connection_pool_size: int = 20
+    enable_compression: bool = True
+    worker_interval_seconds: int = 30
+
+    def validate(self) -> Dict[str, Any]:
+        """Validate performance configuration"""
+        errors = []
+        warnings = []
+
+        if self.max_concurrent_requests < 10:
+            warnings.append("max_concurrent_requests seems low")
+        elif self.max_concurrent_requests > 1000:
+            warnings.append("max_concurrent_requests seems very high")
+
+        if self.request_timeout < 5:
+            warnings.append("request_timeout seems very low")
+        elif self.request_timeout > 120:
+            warnings.append("request_timeout seems very high")
+
+        if self.worker_interval_seconds < 10:
+            warnings.append("worker_interval_seconds might be too frequent")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings
+        }
+
+
+class ConfigurationManager:
+    """Centralized configuration manager with comprehensive validation"""
 
     def __init__(self):
-        try:
-            self.database = DatabaseSettings()
-            self.ai = AISettings()
-            self.security = SecuritySettings()
-            self.performance = PerformanceSettings()
-            self.app = ApplicationSettings()
-        except Exception as e:
-            print(f"❌ Settings initialization failed: {e}")
-            raise
+        self.database = DatabaseConfig(
+            supabase_url=os.getenv("SUPABASE_URL", ""),
+            supabase_service_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""),
+            supabase_jwt_secret=os.getenv("SUPABASE_JWT_SECRET", ""),
+            supabase_project_id=os.getenv("SUPABASE_PROJECT_ID", "")
+        )
+
+        self.ai_service = AIServiceConfig(
+            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+            pinecone_api_key=os.getenv("PINECONE_API_KEY", ""),
+            pinecone_index=os.getenv("PINECONE_INDEX", ""),
+            default_model=os.getenv("DEFAULT_AI_MODEL", "gpt-4"),
+            default_temperature=float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
+            max_tokens=int(os.getenv("DEFAULT_MAX_TOKENS", "1000")),
+            embedding_model=os.getenv(
+                "EMBEDDING_MODEL", "text-embedding-3-small")
+        )
+
+        cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+        allowed_hosts = os.getenv("ALLOWED_HOSTS", "").split(",")
+
+        self.security = SecurityConfig(
+            cors_origins=[origin.strip() for origin in cors_origins],
+            allowed_hosts=[host.strip()
+                           for host in allowed_hosts if host.strip()],
+            rate_limit_requests=int(os.getenv("RATE_LIMIT_REQUESTS", "100")),
+            rate_limit_window=int(os.getenv("RATE_LIMIT_WINDOW", "60")),
+            enable_auth_validation=os.getenv(
+                "ENABLE_AUTH_VALIDATION", "true").lower() == "true"
+        )
+
+        self.app = AppConfig(
+            app_name=os.getenv("APP_NAME", "ZaaKy AI Platform"),
+            app_version=os.getenv("APP_VERSION", "2.1.0"),
+            environment=os.getenv("ENVIRONMENT", "development"),
+            debug=os.getenv("DEBUG", "false").lower() == "true",
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            enable_analytics=os.getenv(
+                "ENABLE_ANALYTICS", "true").lower() == "true",
+            enable_caching=os.getenv(
+                "ENABLE_CACHING", "true").lower() == "true",
+            api_base_url=os.getenv("API_BASE_URL", "http://localhost:8001")
+        )
+
+        self.performance = PerformanceConfig(
+            max_concurrent_requests=int(
+                os.getenv("MAX_CONCURRENT_REQUESTS", "100")),
+            request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
+            connection_pool_size=int(os.getenv("CONNECTION_POOL_SIZE", "20")),
+            enable_compression=os.getenv(
+                "ENABLE_COMPRESSION", "true").lower() == "true",
+            worker_interval_seconds=int(
+                os.getenv("WORKER_INTERVAL_SECONDS", "30"))
+        )
 
     def validate_all(self) -> Dict[str, Any]:
-        """Validate all settings and return validation results"""
-        validation_results = {
-            "valid": True,
-            "errors": [],
-            "warnings": []
-        }
+        """Validate all configuration sections"""
+        all_errors = []
+        all_warnings = []
 
-        # Check required environment variables
-        required_vars = [
-            "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET",
-            "OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_INDEX"
+        configs = [
+            ("database", self.database),
+            ("ai_service", self.ai_service),
+            ("security", self.security),
+            ("app", self.app),
+            ("performance", self.performance)
         ]
 
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-        if missing_vars:
-            validation_results["valid"] = False
-            validation_results["errors"].append(
-                f"Missing required environment variables: {missing_vars}")
+        for name, config in configs:
+            validation = config.validate()
 
-        # FIXED: Access the actual field values, not FieldInfo objects
-        # Validate URL formats
-        supabase_url_value = getattr(self.database, 'supabase_url', '')
-        if supabase_url_value and not supabase_url_value.startswith(("http://", "https://")):
-            validation_results["valid"] = False
-            validation_results["errors"].append(
-                "SUPABASE_URL must be a valid URL")
+            if validation["errors"]:
+                all_errors.extend(
+                    [f"{name}.{error}" for error in validation["errors"]])
 
-        # Check performance settings
-        max_context_length = getattr(self.performance, 'max_context_length', 0)
-        if max_context_length > 8000:
-            validation_results["warnings"].append(
-                "Max context length is very high, may impact performance")
+            if validation["warnings"]:
+                all_warnings.extend(
+                    [f"{name}.{warning}" for warning in validation["warnings"]])
 
-        max_concurrent_requests = getattr(
-            self.performance, 'max_concurrent_requests', 0)
-        if max_concurrent_requests > 100:
-            validation_results["warnings"].append(
-                "High concurrent request limit may impact stability")
+        return {
+            "valid": len(all_errors) == 0,
+            "errors": all_errors,
+            "warnings": all_warnings,
+            "sections_validated": len(configs)
+        }
 
-        return validation_results
+    def get_env_var(self, key: str, default: Any = None,
+                    required: bool = False) -> Any:
+        """Get environment variable with validation"""
+        value = os.getenv(key, default)
 
-    def get_model_config(self, tier: str = "balanced") -> Dict[str, Any]:
-        """Get model configuration based on tier"""
-        configs = {
-            "fast": {
-                "model": "gpt-3.5-turbo",
-                "max_tokens": 800,
-                "temperature": 0.7,
-                "timeout": 3000
+        if required and value is None:
+            raise ValueError(
+                f"Required environment variable {key} is not set")
+
+        return value
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary (excluding sensitive data)"""
+        return {
+            "app": {
+                "name": self.app.app_name,
+                "version": self.app.app_version,
+                "environment": self.app.environment,
+                "debug": self.app.debug,
+                "log_level": self.app.log_level
             },
-            "balanced": {
-                "model": "gpt-4",
-                "max_tokens": self.ai.max_tokens_default,
-                "temperature": self.ai.temperature_default,
-                "timeout": 5000
+            "features": {
+                "analytics_enabled": self.app.enable_analytics,
+                "caching_enabled": self.app.enable_caching,
+                "compression_enabled": self.performance.enable_compression
             },
-            "premium": {
-                "model": "gpt-4-turbo",
-                "max_tokens": 1500,
-                "temperature": 0.6,
-                "timeout": 8000
-            },
-            "enterprise": {
-                "model": "gpt-4-turbo",
-                "max_tokens": 2000,
-                "temperature": 0.5,
-                "timeout": 10000
+            "limits": {
+                "max_concurrent_requests": (
+                    self.performance.max_concurrent_requests),
+                "request_timeout": self.performance.request_timeout,
+                "rate_limit_requests": self.security.rate_limit_requests
             }
         }
-        return configs.get(tier, configs["balanced"])
 
 
-# Global settings instance with error handling
-try:
-    settings = Settings()
-except Exception as e:
-    print(f"❌ Failed to initialize settings: {e}")
-    print("💡 Please check your .env file and ensure all required variables are set")
-    raise
+# Global configuration instance
+settings = ConfigurationManager()
 
 
-# Environment validation function
 def validate_environment() -> None:
-    """Validate that all required environment variables are set"""
-    required_vars = [
-        "SUPABASE_URL",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SUPABASE_JWT_SECRET",
-        "OPENAI_API_KEY",
-        "PINECONE_API_KEY",
-        "PINECONE_INDEX"
+    """Validate environment configuration on startup with proper guardrails"""
+    validation = settings.validate_all()
+
+    # Critical API keys that MUST be present
+    critical_keys = [
+        ("SUPABASE_URL", settings.database.supabase_url),
+        ("SUPABASE_SERVICE_ROLE_KEY", settings.database.supabase_service_key),
+        ("SUPABASE_JWT_SECRET", settings.database.supabase_jwt_secret),
+        ("OPENAI_API_KEY", settings.ai_service.openai_api_key),
+        ("PINECONE_API_KEY", settings.ai_service.pinecone_api_key),
+        ("PINECONE_INDEX", settings.ai_service.pinecone_index)
     ]
 
-    missing = [var for var in required_vars if not os.getenv(var)]
+    # Check for missing critical keys
+    missing_critical = []
+    for key_name, key_value in critical_keys:
+        if not key_value or key_value.strip() == "":
+            missing_critical.append(key_name)
 
-    if missing:
-        print(
-            f"❌ Missing required environment variables: {', '.join(missing)}")
-        print("💡 Please add these to your .env file:")
-        for var in missing:
-            print(f"   {var}=your_value_here")
-        raise ValueError(
-            f"Missing required environment variables: {', '.join(missing)}")
+    # STOP SERVER if critical keys are missing
+    if missing_critical:
+        missing_list = chr(10).join(f'  - {key}' for key in missing_critical)
+        env_examples = chr(10).join(
+            f'{key}=your_value_here' for key in missing_critical)
 
-    print("✅ All required environment variables are configured")
+        error_msg = f"""
+❌ CRITICAL ERROR: Missing required environment variables!
+
+The following variables are REQUIRED for the server to function:
+{missing_list}
+
+Please add these to your .env file:
+{env_examples}
+
+SERVER CANNOT START WITHOUT THESE KEYS!
+"""
+        logger.error(error_msg)
+        print(error_msg)  # Also print to console for visibility
+        raise SystemExit(1)  # Exit immediately, don't let server start
+
+    # Check other validation errors
+    if not validation["valid"]:
+        error_list = "\n".join(validation["errors"])
+        error_msg = f"Configuration validation failed:\n{error_list}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Log warnings but allow server to continue
+    if validation["warnings"]:
+        for warning in validation["warnings"]:
+            logger.warning("Configuration warning: %s", warning)
+
+    logger.info(
+        "✅ All critical environment variables validated successfully "
+        "(%s sections)",
+        validation['sections_validated']
+    )
 
 
-# Convenience functions for getting specific settings
-def get_database_url() -> str:
-    """Get database URL"""
-    return settings.database.supabase_url
-
-
-def get_api_keys() -> Dict[str, str]:
-    """Get all API keys"""
-    return {
-        "openai": settings.ai.openai_api_key,
-        "pinecone": settings.ai.pinecone_api_key,
-        "supabase": settings.database.supabase_service_key
+def validate_api_key_formats() -> Dict[str, bool]:
+    """Validate API key formats without making API calls"""
+    results = {
+        "openai": False,
+        "pinecone": False,
+        "supabase": False
     }
 
-# Fix the is_production() function at the bottom of the file
+    # Validate OpenAI API key format
+    if settings.ai_service.openai_api_key.startswith('sk-'):
+        results["openai"] = True
+        logger.info("✅ OpenAI API key format validated")
+    else:
+        logger.error("❌ OpenAI API key format invalid")
+
+    # Validate Supabase URL and key exist
+    if (settings.database.supabase_url.startswith('https://') and
+            len(settings.database.supabase_service_key) > 50):
+        results["supabase"] = True
+        logger.info("✅ Supabase configuration validated")
+    else:
+        logger.error("❌ Supabase configuration invalid")
+
+    # Validate Pinecone API key exists
+    if len(settings.ai_service.pinecone_api_key) > 10:
+        results["pinecone"] = True
+        logger.info("✅ Pinecone API key validated")
+    else:
+        logger.error("❌ Pinecone API key invalid")
+
+    return results
+
+
+def get_database_config() -> DatabaseConfig:
+    """Get database configuration"""
+    return settings.database
+
+
+def get_ai_config() -> AIServiceConfig:
+    """Get AI service configuration"""
+    return settings.ai_service
+
+
+def get_security_config() -> SecurityConfig:
+    """Get security configuration"""
+    return settings.security
+
+
+def get_app_config() -> AppConfig:
+    """Get application configuration"""
+    return settings.app
+
+
+def get_performance_config() -> PerformanceConfig:
+    """Get performance configuration"""
+    return settings.performance
 
 
 def is_production() -> bool:
     """Check if running in production environment"""
-    # FIXED: Get the actual string value, not the FieldInfo object
     environment_value = getattr(settings.app, 'environment', 'development')
     return environment_value.lower() == "production"
 
+
 def is_debug_mode() -> bool:
     """Check if debug mode is enabled"""
-    return settings.app.debug
+    return getattr(settings.app, 'debug', False)
 
 
 def get_cors_origins() -> List[str]:
     """Get CORS origins list"""
-    return settings.security.cors_origins
+    return getattr(settings.security, 'cors_origins', ["http://localhost:3000"])
 
 
 def get_performance_limits() -> Dict[str, int]:
     """Get performance configuration"""
     return {
-        "max_concurrent_requests": settings.performance.max_concurrent_requests,
-        "request_timeout": settings.performance.request_timeout,
-        "max_context_length": settings.performance.max_context_length,
-        "max_retrieval_count": settings.performance.max_retrieval_count
+        "max_concurrent_requests": getattr(
+            settings.performance, 'max_concurrent_requests', 50),
+        "request_timeout": getattr(
+            settings.performance, 'request_timeout', 30),
+        "connection_pool_size": getattr(
+            settings.performance, 'connection_pool_size', 20),
+        "rate_limit_requests": getattr(
+            settings.security, 'rate_limit_requests', 100)
     }

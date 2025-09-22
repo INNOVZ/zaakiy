@@ -2,14 +2,19 @@ import os
 import uuid
 from typing import List, Dict, Any
 import logging
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from datetime import datetime
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from pydantic import BaseModel
 from pinecone import Pinecone
 from supabase import create_client
 from services.supabase_auth import verify_jwt_token
 from services.user_service import get_user_with_org
+from services.vector_management import vector_management_service
+from utils.logging_config import LogContext, PerformanceLogger, get_logger, log_api_request, log_api_response
 
 router = APIRouter()
+logger = get_logger("uploads")
+
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
@@ -189,6 +194,112 @@ async def batch_delete_uploads(upload_ids: List[str], org_id: str) -> Dict[str, 
     except Exception as e:
         logging.error(f"Batch delete failed: {e}")
         return {"success": [], "failed": upload_ids, "error": str(e)}
+
+
+@router.post("/{upload_id}/verify-deletion")
+async def verify_upload_deletion(upload_id: str, user=Depends(verify_jwt_token)):
+    """Verify that upload vectors were completely deleted"""
+    try:
+        user_data = await get_user_with_org(user["user_id"])
+        org_id = user_data["org_id"]
+        namespace = f"org-{org_id}"
+
+        with LogContext(upload_id=upload_id, org_id=org_id):
+            logger.info(f"Verifying deletion for upload {upload_id}")
+
+            verification_result = await vector_management_service.verify_deletion(
+                upload_id, namespace
+            )
+
+            return {
+                "upload_id": upload_id,
+                "namespace": namespace,
+                "verification": verification_result,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+    except Exception as e:
+        logger.error(f"Deletion verification failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Verification failed"
+        ) from e
+
+
+@router.post("/cleanup-orphaned")
+async def cleanup_orphaned_vectors(
+    days_old: int = 7,
+    user=Depends(verify_jwt_token)
+):
+    """Clean up orphaned vectors that no longer have corresponding uploads"""
+    try:
+        user_data = await get_user_with_org(user["user_id"])
+        org_id = user_data["org_id"]
+
+        with LogContext(org_id=org_id, days_old=days_old):
+            logger.info(f"Starting orphaned vector cleanup for org {org_id}")
+
+            cleanup_stats = await vector_management_service.cleanup_orphaned_vectors(
+                org_id, days_old
+            )
+
+            return {
+                "success": True,
+                "org_id": org_id,
+                "cleanup_stats": cleanup_stats,
+                "parameters": {"days_old": days_old},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+    except Exception as e:
+        logger.error(f"Orphaned vector cleanup failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Cleanup failed"
+        ) from e
+
+# Helper functions
+
+
+async def _batch_delete_storage_files(upload_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Delete files from storage for multiple uploads"""
+    storage_results = {
+        "successful": [],
+        "failed": [],
+        "skipped": []
+    }
+
+    for upload_record in upload_records:
+        if upload_record["type"] in ["pdf", "json"] and upload_record["source"]:
+            try:
+                supabase.storage.from_("uploads").remove(
+                    [upload_record["source"]])
+                storage_results["successful"].append(upload_record["id"])
+                logger.info(
+                    f"Deleted storage file for upload {upload_record['id']}")
+            except Exception as e:
+                storage_results["failed"].append({
+                    "upload_id": upload_record["id"],
+                    "error": str(e)
+                })
+                logger.warning(
+                    f"Failed to delete storage file for upload {upload_record['id']}: {e}")
+        else:
+            storage_results["skipped"].append(upload_record["id"])
+
+    return storage_results
+
+
+async def _delete_single_storage_file(upload_record: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete a single file from storage"""
+    try:
+        supabase.storage.from_("uploads").remove([upload_record["source"]])
+        logger.info(f"Deleted storage file: {upload_record['source']}")
+        return {"success": True, "file_path": upload_record["source"]}
+    except Exception as e:
+        logger.warning(f"Failed to delete storage file: {e}")
+        return {"success": False, "error": str(e), "file_path": upload_record["source"]}
+
 
 @router.post("/pdf")
 async def upload_pdf(

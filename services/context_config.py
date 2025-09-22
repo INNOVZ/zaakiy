@@ -128,7 +128,7 @@ class ContextConfigManager:
     async def get_config(self, org_id: str, config_name: str = "default") -> ContextEngineeringConfig:
         """Get context engineering configuration for an organization"""
         try:
-            logging.info(f"Getting context config for org {org_id}")
+            logging.info("Getting context config for org %s", org_id)
 
             # Get existing config
             response = self.supabase.table("context_engineering_configs").select("*").eq(
@@ -136,12 +136,24 @@ class ContextConfigManager:
             ).eq("config_name", config_name).execute()
 
             if response.data and len(response.data) > 0:
-                config_data = response.data[0]
-                # Extract the actual config from config_data field if it's nested
-                if isinstance(config_data.get('config_data'), dict):
-                    return ContextEngineeringConfig(**config_data['config_data'])
-                else:
-                    return ContextEngineeringConfig(**config_data)
+                config_row = response.data[0]
+
+            # FIXED: Always use config_data JSON blob for configuration
+            if 'config_data' in config_row and isinstance(config_row['config_data'], dict):
+                config_data = config_row['config_data']
+
+                # Ensure required fields are present (fallback to top-level if needed)
+                config_data.setdefault(
+                    'org_id', config_row.get('org_id', org_id))
+                config_data.setdefault(
+                    'config_name', config_row.get('config_name', config_name))
+
+                return ContextEngineeringConfig(**config_data)
+            else:
+                # Fallback: use top-level fields (for backward compatibility)
+                logging.warning(
+                    "No config_data found for org %s, using top-level fields", org_id)
+                return ContextEngineeringConfig(**config_row)
 
             # Create default config if none exists
             logging.info("Creating default config for org %s", org_id)
@@ -185,11 +197,15 @@ class ContextConfigManager:
                     config_dict[key] = value.isoformat()
 
             config_data = {
+                # Top-level metadata for queries/indexing
                 "org_id": config.org_id,
                 "config_name": config.config_name,
-                "config_data": config_dict,
                 "created_at": config.created_at.isoformat() if isinstance(config.created_at, datetime) else config.created_at,
-                "updated_at": now.isoformat()
+                "updated_at": now.isoformat(),
+
+                # All configuration details in JSON blob
+                "config_data": config_dict
+                
             }
 
             # Upsert configuration
@@ -200,12 +216,12 @@ class ContextConfigManager:
 
             success = bool(response.data)
             logging.info(
-                f"Config save result for org {config.org_id}: {success}")
+                "Config save result for org %s: %s", config.org_id, success)
             return success
 
         except Exception as e:
             logging.error(
-                f"Error saving context config for org {config.org_id}: {e}")
+                "Error saving context config for org %s: %s", config.org_id, e)
             return False
 
     def _get_valid_fields(self) -> Set[str]:
@@ -358,7 +374,7 @@ class ContextConfigManager:
 
             if invalid_fields:
                 logging.warning(
-                    f"Ignoring invalid fields in updates: {invalid_fields}")
+                    "Ignoring invalid fields in updates: %s", invalid_fields)
 
             if not valid_updates:
                 logging.warning("No valid updates provided")
@@ -378,12 +394,12 @@ class ContextConfigManager:
             # Save updated config
             success = await self.save_config(current_config)
             logging.info(
-                f"Config update result for org {org_id}: {success} ({success_count}/{len(valid_updates)} fields updated)")
+                "Config update result for org %s: %s (%s/%s fields updated)", org_id, success, success_count, len(valid_updates))
             return success
 
         except Exception as e:
             logging.error(
-                f"Error updating context config for org {org_id}: {e}")
+                "Error updating context config for org %s: %s", org_id, e)
             return False
 
     def get_model_config(self, tier: ModelTier) -> Dict[str, Any]:
@@ -492,7 +508,7 @@ class ContextConfigManager:
             }
 
         except Exception as e:
-            logging.error(f"Error getting performance recommendations: {e}")
+            logging.error("Error getting performance recommendations: %s", e)
             return {"recommendations": [], "confidence": 0}
 
 

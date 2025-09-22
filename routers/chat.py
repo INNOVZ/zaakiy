@@ -17,6 +17,8 @@ from services.user_service import get_user_with_org
 from services.chat_service import ChatService
 from services.context_analytics import context_analytics
 from services.context_config import context_config_manager
+from utils.error_handlers import ErrorHandler, handle_errors
+from utils.exceptions import ValidationError, DatabaseError
 
 load_dotenv()
 
@@ -175,6 +177,7 @@ async def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
 
 
 @router.post("/chatbots")
+@handle_errors(context="create_chatbot")
 async def create_chatbot(
     request: CreateChatbotRequest,
     user=Depends(verify_jwt_token)
@@ -183,6 +186,12 @@ async def create_chatbot(
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
+
+         # Validate request data
+        if not request.name or len(request.name.strip()) < 2:
+            raise ValidationError(
+                "Chatbot name must be at least 2 characters long")
+
 
         # Generate chatbot ID
         chatbot_id = str(uuid.uuid4())
@@ -261,15 +270,15 @@ FALLBACK: {request.fallback_message}
                 detail=f"Database error: {error_msg}"
             )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[ERROR] Create chatbot failed: {e}")
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create chatbot: {str(e)}"
-        ) from e
+    except ValidationError:
+        raise  # Re-raise validation errors
+    except ConnectionError as e:
+        ErrorHandler.log_and_raise(
+            DatabaseError,
+            "Failed to create chatbot due to database connection issue",
+            context="create_chatbot",
+            original_exception=e
+        )
 
 
 @router.put("/chatbots/{chatbot_id}")
