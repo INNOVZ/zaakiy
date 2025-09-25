@@ -1,20 +1,13 @@
 import os
 import uuid
-from typing import List, Dict, Any
-import logging
-from datetime import datetime
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
+from supabase import create_client
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from pinecone import Pinecone
-from supabase import create_client
 from services.supabase_auth import verify_jwt_token
 from services.user_service import get_user_with_org
-from services.vector_management import vector_management_service
-from utils.logging_config import LogContext, PerformanceLogger, get_logger, log_api_request, log_api_response
 
 router = APIRouter()
-logger = get_logger("uploads")
-
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
@@ -27,55 +20,41 @@ index = pc.Index(os.getenv("PINECONE_INDEX"))
 
 
 class URLIngestRequest(BaseModel):
-    """
-This module handles vector data ingestion from URLs.
-"""
+    """Request model for ingesting a URL."""
+
     url: str
 
 
 class UpdateRequest(BaseModel):
-    """
-This module handles upload vector update functionality.
-"""
+    """Request model for updating an upload with a new URL."""
+
     url: str
 
 
 class SearchRequest(BaseModel):
-    """
-This module handles upload vector search functionality.
-"""
+    """Request model for searching uploads."""
+
     query: str
     top_k: int = 5
     filter_upload_ids: list[str] = None  # Optional: filter by specific uploads
 
 
 def delete_vectors_from_pinecone(upload_id: str, namespace: str):
-    """Delete all vectors associated with an upload from Pinecone - IMPROVED VERSION"""
+    """Delete all vectors associated with an upload from Pinecone"""
     try:
-        logging.info(
-            f"Starting vector deletion for upload {upload_id} in namespace {namespace}")
-
-        # Method 1: Try deletion by metadata filter (most efficient)
-        try:
-            delete_response = index.delete(
-                filter={"upload_id": upload_id},
-                namespace=namespace
-            )
-            logging.info(
-                f"Deleted vectors using filter for upload {upload_id}: {delete_response}")
-            return
-        except Exception as filter_error:
-            logging.warning(
-                f"Filter-based deletion failed, falling back to query method: {filter_error}")
-
-        # Method 2: Fallback to query-based deletion
+        # First, get all vector IDs for this upload
         vector_ids = []
-        batch_size = 1000
 
-        # Use sparse vector query instead of dummy dense vector (more efficient)
-        try:
-            # Try to get vector IDs without dummy vector
+        # Use a dummy vector for metadata-only query
+        dummy_vector = [0.0] * 1536  # OpenAI embeddings are 1536 dimensions
+
+        # Query in batches to handle large numbers of vectors
+        batch_size = 1000
+        has_more = True
+
+        while has_more:
             query_result = index.query(
+                vector=dummy_vector,
                 filter={"upload_id": upload_id},
                 namespace=namespace,
                 top_k=batch_size,
@@ -86,219 +65,25 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
             batch_ids = [match.id for match in query_result.matches]
             vector_ids.extend(batch_ids)
 
-        except Exception as query_error:
-            logging.warning(
-                f"Efficient query failed, using dummy vector: {query_error}")
-
-            # Last resort: use dummy vector approach (but with smaller dimension check)
-            try:
-                # Get index stats to determine dimension
-                stats = index.describe_index_stats()
-                dimension = 1536  # Default OpenAI dimension
-
-                dummy_vector = [0.0] * dimension
-
-                has_more = True
-                while has_more:
-                    query_result = index.query(
-                        vector=dummy_vector,
-                        filter={"upload_id": upload_id},
-                        namespace=namespace,
-                        top_k=batch_size,
-                        include_metadata=False,
-                        include_values=False
-                    )
-
-                    batch_ids = [match.id for match in query_result.matches]
-                    vector_ids.extend(batch_ids)
-                    has_more = len(batch_ids) == batch_size
-
-            except Exception as dummy_error:
-                logging.error(f"All deletion methods failed: {dummy_error}")
-                raise
+            # If we got fewer results than batch_size, we're done
+            has_more = len(batch_ids) == batch_size
 
         if vector_ids:
-            # Delete vectors in optimal batches
+            # Delete vectors in batches (Pinecone has limits on batch operations)
             delete_batch_size = 100
-            total_deleted = 0
-
             for i in range(0, len(vector_ids), delete_batch_size):
                 batch = vector_ids[i:i + delete_batch_size]
-                try:
-                    delete_result = index.delete(
-                        ids=batch, namespace=namespace)
-                    total_deleted += len(batch)
-                    logging.info(
-                        f"Deleted batch {i//delete_batch_size + 1}: {len(batch)} vectors")
-                except Exception as batch_error:
-                    logging.error(
-                        f"Failed to delete batch {i//delete_batch_size + 1}: {batch_error}")
-                    # Continue with other batches
+                index.delete(ids=batch, namespace=namespace)
 
-            logging.info(
-                f"Successfully deleted {total_deleted} vectors from Pinecone for upload {upload_id}")
+            print(
+                f"[Info] Deleted {len(vector_ids)} vectors from Pinecone for upload {upload_id}")
         else:
-            logging.info(
-                f"No vectors found in Pinecone for upload {upload_id}")
+            print(
+                f"[Info] No vectors found in Pinecone for upload {upload_id}")
 
     except Exception as e:
-        logging.error(
-            f"Critical error in vector deletion for upload {upload_id}: {e}")
+        print(f"[Error] Failed to delete vectors from Pinecone: {e}")
         # Don't raise exception - we still want to continue with other operations
-        # But log it for monitoring
-
-
-async def batch_delete_uploads(upload_ids: List[str], org_id: str) -> Dict[str, Any]:
-    """Efficiently delete multiple uploads in batch"""
-    try:
-        namespace = f"org-{org_id}"
-        results = {"success": [], "failed": []}
-
-        # Get all upload records first
-        upload_records = supabase.table("uploads").select("*").in_(
-            "id", upload_ids
-        ).eq("org_id", org_id).execute()
-
-        if not upload_records.data:
-            return {"success": [], "failed": upload_ids, "error": "No uploads found"}
-
-        # Delete vectors for all uploads in batch
-        for upload_record in upload_records.data:
-            upload_id = upload_record["id"]
-            try:
-                delete_vectors_from_pinecone(upload_id, namespace)
-
-                # Delete file from storage if applicable
-                if upload_record["type"] in ["pdf", "json"] and upload_record["source"]:
-                    try:
-                        supabase.storage.from_("uploads").remove(
-                            [upload_record["source"]])
-                    except Exception as storage_error:
-                        logging.warning(
-                            f"Storage deletion failed for {upload_id}: {storage_error}")
-
-                results["success"].append(upload_id)
-
-            except Exception as e:
-                logging.error(f"Failed to delete upload {upload_id}: {e}")
-                results["failed"].append(upload_id)
-
-        # Delete database records for successful deletions
-        if results["success"]:
-            supabase.table("uploads").delete().in_(
-                "id", results["success"]
-            ).eq("org_id", org_id).execute()
-
-        return results
-
-    except Exception as e:
-        logging.error(f"Batch delete failed: {e}")
-        return {"success": [], "failed": upload_ids, "error": str(e)}
-
-
-@router.post("/{upload_id}/verify-deletion")
-async def verify_upload_deletion(upload_id: str, user=Depends(verify_jwt_token)):
-    """Verify that upload vectors were completely deleted"""
-    try:
-        user_data = await get_user_with_org(user["user_id"])
-        org_id = user_data["org_id"]
-        namespace = f"org-{org_id}"
-
-        with LogContext(upload_id=upload_id, org_id=org_id):
-            logger.info(f"Verifying deletion for upload {upload_id}")
-
-            verification_result = await vector_management_service.verify_deletion(
-                upload_id, namespace
-            )
-
-            return {
-                "upload_id": upload_id,
-                "namespace": namespace,
-                "verification": verification_result,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-
-    except Exception as e:
-        logger.error(f"Deletion verification failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Verification failed"
-        ) from e
-
-
-@router.post("/cleanup-orphaned")
-async def cleanup_orphaned_vectors(
-    days_old: int = 7,
-    user=Depends(verify_jwt_token)
-):
-    """Clean up orphaned vectors that no longer have corresponding uploads"""
-    try:
-        user_data = await get_user_with_org(user["user_id"])
-        org_id = user_data["org_id"]
-
-        with LogContext(org_id=org_id, days_old=days_old):
-            logger.info(f"Starting orphaned vector cleanup for org {org_id}")
-
-            cleanup_stats = await vector_management_service.cleanup_orphaned_vectors(
-                org_id, days_old
-            )
-
-            return {
-                "success": True,
-                "org_id": org_id,
-                "cleanup_stats": cleanup_stats,
-                "parameters": {"days_old": days_old},
-                "timestamp": datetime.utcnow().isoformat()
-            }
-
-    except Exception as e:
-        logger.error(f"Orphaned vector cleanup failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Cleanup failed"
-        ) from e
-
-# Helper functions
-
-
-async def _batch_delete_storage_files(upload_records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Delete files from storage for multiple uploads"""
-    storage_results = {
-        "successful": [],
-        "failed": [],
-        "skipped": []
-    }
-
-    for upload_record in upload_records:
-        if upload_record["type"] in ["pdf", "json"] and upload_record["source"]:
-            try:
-                supabase.storage.from_("uploads").remove(
-                    [upload_record["source"]])
-                storage_results["successful"].append(upload_record["id"])
-                logger.info(
-                    f"Deleted storage file for upload {upload_record['id']}")
-            except Exception as e:
-                storage_results["failed"].append({
-                    "upload_id": upload_record["id"],
-                    "error": str(e)
-                })
-                logger.warning(
-                    f"Failed to delete storage file for upload {upload_record['id']}: {e}")
-        else:
-            storage_results["skipped"].append(upload_record["id"])
-
-    return storage_results
-
-
-async def _delete_single_storage_file(upload_record: Dict[str, Any]) -> Dict[str, Any]:
-    """Delete a single file from storage"""
-    try:
-        supabase.storage.from_("uploads").remove([upload_record["source"]])
-        logger.info(f"Deleted storage file: {upload_record['source']}")
-        return {"success": True, "file_path": upload_record["source"]}
-    except Exception as e:
-        logger.warning(f"Failed to delete storage file: {e}")
-        return {"success": False, "error": str(e), "file_path": upload_record["source"]}
 
 
 @router.post("/pdf")
@@ -306,6 +91,16 @@ async def upload_pdf(
     file: UploadFile = File(...),
     user=Depends(verify_jwt_token)
 ):
+    """
+    Upload a PDF file to Supabase storage and insert its record into the database.
+
+    Args:
+        file (UploadFile): The PDF file to be uploaded.
+        user: The authenticated user, verified via JWT token.
+
+    Returns:
+        dict: A dictionary containing the upload ID, file path, and a success message.
+    """
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
@@ -347,6 +142,11 @@ async def upload_json(
     file: UploadFile = File(...),
     user=Depends(verify_jwt_token)
 ):
+    """
+    Upload a JSON file to Supabase storage and insert its record into the database.
+
+
+    """
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
@@ -358,8 +158,7 @@ async def upload_json(
         # Upload to Supabase Storage
         file_content = await file.read()
         try:
-            storage_result = supabase.storage.from_(
-                "uploads").upload(supabase_path, file_content)
+            storage_result = supabase.storage.from_("uploads").upload(supabase_path, file_content)
         except Exception as e:
             raise HTTPException(
                 status_code=400, detail=f"Storage upload failed: {str(e)}") from e
@@ -394,6 +193,16 @@ async def ingest_url(
     request: URLIngestRequest,
     user=Depends(verify_jwt_token)
 ):
+    """
+    Ingest a URL by adding it to the Supabase database for processing.
+
+    Args:
+        request (URLIngestRequest): The request containing the URL to ingest.
+        user: The authenticated user, verified via JWT token.
+
+    Returns:
+        dict: A dictionary containing the upload ID and a success message.
+    """
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]

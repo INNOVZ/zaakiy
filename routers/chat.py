@@ -1,7 +1,7 @@
 """
 This module handles chat requests and responses.
 
-Contains functions for creating and managing chat, chat conversation, performing analytics, and configuring context.
+Contains functions for creating and managing chat, conversation and configuring context.
 """
 import os
 import uuid
@@ -517,7 +517,7 @@ async def chat_conversation(
         error_time = int(
             (datetime.utcnow() - start_time).total_seconds() * 1000)
         print(f"[ERROR] Chat conversation failed after {error_time}ms: {e}")
-      
+             
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}") from e
 
