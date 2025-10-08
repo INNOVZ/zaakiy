@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from .services.storage.supabase_client import supabase
-from .routers import search, org, users, uploads, auth, chat, public_chat, monitoring, cache
+from .routers import org, users, uploads, auth, chat, public_chat, monitoring, cache
 from .services.shared.worker_scheduler import start_background_worker, stop_background_worker
 from .services.shared import get_client_manager
 from .config.settings import settings, validate_environment
@@ -227,7 +227,6 @@ app.include_router(org.router, prefix="/api/org", tags=["organizations"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(search.router, prefix="/api/search", tags=["search"])
 app.include_router(public_chat.router, prefix="/api/public", tags=["public"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
