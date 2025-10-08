@@ -3,117 +3,38 @@ chat.py -This module handles chat requests and responses.
 
 Contains functions for creating and managing chat, conversation and configuring context.
 """
-import os
 import uuid
 import traceback
 from datetime import datetime
-from typing import List, Optional
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from supabase import create_client, Client
+from ..models import (
+    ChatRequest,
+    ChatResponse,
+    CreateChatbotRequest,
+    UpdateChatbotRequest,
+    FeedbackRequest,
+    ContextConfigRequest
+)
+from typing import Optional
 from ..services.auth import verify_jwt_token, get_user_with_org
 from ..services.chat.chat_service import ChatService
 from ..services.analytics.context_analytics import context_analytics
 from ..services.analytics.context_config import context_config_manager
+from ..services.storage.supabase_client import get_supabase_client
 from ..utils.error_handlers import handle_errors
 from ..utils.exceptions import ValidationError
 from ..utils.error_context import ErrorContextManager
 from ..utils.error_monitoring import error_monitor
+from ..utils.error_context_manager import SafeErrorContext
+from ..utils.rate_limiter import rate_limit, get_rate_limit_config
 
 load_dotenv()
 
-# Initialize Supabase client
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
+# Get centralized Supabase client
+supabase = get_supabase_client()
 
 router = APIRouter()
-
-
-class ChatRequest(BaseModel):
-    """
-This module handles chat basemodel.
-
-Contains functions for creating and managing chat requests.
-"""
-    message: str
-    chatbot_id: Optional[str] = None
-    conversation_id: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    """
-This module handles chat response.
-
-Contains functions for generating and formatting chat responses.
-"""
-    response: str
-    sources: List[str] = []
-    product_links: List[dict] = []
-    chatbot_config: dict
-    conversation_id: str
-    message_id: Optional[str] = None
-    processing_time_ms: int = 0
-    context_quality: dict = {}
-
-
-class CreateChatbotRequest(BaseModel):
-    """
-This module handles chatbot configuration.
-
-Contains functions for creating and managing chatbots.
-"""
-    name: str
-    description: Optional[str] = None
-    color_hex: Optional[str] = "#3B82F6"
-    tone: Optional[str] = "helpful"
-    behavior: Optional[str] = "Be helpful and informative"
-    system_prompt: Optional[str] = None
-    greeting_message: Optional[str] = "Hello! How can I help you today?"
-    fallback_message: Optional[str] = "I'm sorry, I don't have information about that."
-    ai_model_config: Optional[dict] = None
-    is_active: Optional[bool] = True
-    avatar_url: Optional[str] = None
-
-
-class UpdateChatbotRequest(BaseModel):
-    """
-This module handles chatbot updates.
-
-Contains functions for updating chatbot configurations and settings.
-"""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    color_hex: Optional[str] = None
-    tone: Optional[str] = None
-    behavior: Optional[str] = None
-    system_prompt: Optional[str] = None
-    greeting_message: Optional[str] = None
-    fallback_message: Optional[str] = None
-    ai_model_config: Optional[dict] = None
-    is_active: Optional[bool] = None
-    avatar_url: Optional[str] = None
-
-
-class FeedbackRequest(BaseModel):
-    """
-This module handles user authentication and session management.
-
-Contains functions for login, logout, and token validation.
-"""
-    message_id: str
-    rating: int  # 1 for thumbs up, -1 for thumbs down
-    feedback_text: Optional[str] = None
-
-
-class ContextConfigRequest(BaseModel):
-    """
-This module handles context configuration.
-
-Contains Class for context config.
-"""
-    config_updates: dict
 
 # ==========================================
 # HELPER FUNCTIONS
@@ -174,7 +95,7 @@ async def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
             "greeting_message": "Hello! How can I help you today?",
             "fallback_message": "I'm experiencing some technical difficulties. Please try again."
         }
-   
+
 # ==========================================
 # CHATBOT MANAGEMENT ENDPOINTS
 # ==========================================
@@ -195,7 +116,6 @@ async def create_chatbot(
         if not request.name or len(request.name.strip()) < 2:
             raise ValidationError(
                 "Chatbot name must be at least 2 characters long")
-
 
         # Generate chatbot ID
         chatbot_id = str(uuid.uuid4())
@@ -369,15 +289,54 @@ async def delete_chatbot(
 
 
 @router.get("/chatbots")
-async def list_chatbots(user=Depends(verify_jwt_token)):
-    """List organization's chatbots"""
+async def list_chatbots(
+    page: int = 1,
+    page_size: int = 50,
+    status: str = None,
+    user=Depends(verify_jwt_token)
+):
+    """
+    List organization's chatbots with pagination
+
+    Args:
+        page: Page number (1-indexed)
+        page_size: Number of items per page (max 100)
+        status: Filter by status (active, inactive)
+    """
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
-        response = supabase.table("chatbots").select("*").eq(
-            "org_id", org_id
-        ).order("created_at", desc=True).execute()
+        # Validate pagination parameters
+        if page < 1:
+            raise HTTPException(status_code=400, detail="Page must be >= 1")
+
+        if page_size < 1 or page_size > 100:
+            raise HTTPException(
+                status_code=400, detail="Page size must be between 1 and 100")
+
+        # Calculate offset
+        offset = (page - 1) * page_size
+
+        # Build query
+        query = supabase.table("chatbots").select(
+            "*", count="exact"
+        ).eq("org_id", org_id)
+
+        # Apply status filter if provided
+        if status:
+            allowed_statuses = ["active", "inactive"]
+            if status not in allowed_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Status must be one of: {', '.join(allowed_statuses)}"
+                )
+            query = query.eq("chain_status", status)
+
+        # Apply pagination and ordering
+        response = query.order("created_at", desc=True).range(
+            offset, offset + page_size - 1
+        ).execute()
 
         chatbots = response.data or []
 
@@ -386,12 +345,36 @@ async def list_chatbots(user=Depends(verify_jwt_token)):
             if "model_config" in chatbot:
                 chatbot["ai_model_config"] = chatbot["model_config"]
 
-        print(f"[SUCCESS] Listed {len(chatbots)} chatbots for org {org_id}")
-        return {"chatbots": chatbots}
+        # Get total count
+        total_count = response.count if hasattr(
+            response, 'count') else len(chatbots)
 
+        # Calculate pagination metadata
+        total_pages = (total_count + page_size - 1) // page_size
+        has_next = page < total_pages
+        has_prev = page > 1
+
+        print(
+            f"[SUCCESS] Listed {len(chatbots)} chatbots for org {org_id} (page {page}/{total_pages})")
+
+        return {
+            "chatbots": chatbots,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "has_next": has_next,
+                "has_prev": has_prev
+            }
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[ERROR] List chatbots failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch chatbots") from e
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch chatbots") from e
 
 
 @router.get("/chatbots/{chatbot_id}")
@@ -420,7 +403,8 @@ async def get_chatbot(chatbot_id: str, user=Depends(verify_jwt_token)):
         raise
     except Exception as e:
         print(f"[ERROR] Get chatbot failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch chatbot") from e
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch chatbot") from e
 
 
 @router.post("/chatbots/{chatbot_id}/activate")
@@ -467,6 +451,7 @@ async def activate_chatbot(
 
 
 @router.post("/conversation")
+@rate_limit(**get_rate_limit_config("chat"))
 @handle_errors(context="chat_conversation", service="chat_router")
 async def chat_conversation(
     request: ChatRequest,
@@ -474,19 +459,19 @@ async def chat_conversation(
 ):
     """Main chat endpoint with enhanced context engineering"""
     start_time = datetime.utcnow()
-    
-    # Set request context for error tracking
-    request_id = f"req_{int(datetime.utcnow().timestamp())}"
-    ErrorContextManager.set_request_context(
-        request_id=request_id,
-        user_id=user["user_id"],
-        operation="chat_conversation"
-    )
 
     try:
+        # Set request context for error tracking INSIDE try block
+        request_id = f"req_{int(datetime.utcnow().timestamp())}"
+        ErrorContextManager.set_request_context(
+            request_id=request_id,
+            user_id=user["user_id"],
+            operation="chat_conversation"
+        )
+
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
-        
+
         # Update context with org_id
         ErrorContextManager.set_request_context(org_id=org_id)
 
@@ -535,7 +520,7 @@ async def chat_conversation(
     except Exception as e:
         error_time = int(
             (datetime.utcnow() - start_time).total_seconds() * 1000)
-        
+
         # Record error in monitoring system
         error_monitor.record_error(
             error_type=type(e).__name__,
@@ -543,11 +528,12 @@ async def chat_conversation(
             service="chat_router",
             category="api_endpoint"
         )
-        
+
         print(f"[ERROR] Chat conversation failed after {error_time}ms: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}") from e
-    
+        raise HTTPException(
+            status_code=500, detail=f"Chat failed: {str(e)}") from e
+
     finally:
         # Clear request context
         ErrorContextManager.clear_context()
@@ -555,25 +541,74 @@ async def chat_conversation(
 
 @router.get("/conversations")
 async def list_conversations(
-    limit: int = 20,
+    page: int = 1,
+    page_size: int = 20,
+    chatbot_id: str = None,
     user=Depends(verify_jwt_token)
 ):
-    """List recent conversations with enhanced metadata"""
+    """
+    List conversations with pagination and filtering
+
+    Args:
+        page: Page number (1-indexed)
+        page_size: Number of items per page (max 100)
+        chatbot_id: Filter by specific chatbot
+    """
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
-        # Get dummy config for service initialization
-        chatbot_config = {"name": "Assistant", "org_id": org_id}
-        chat_service = ChatService(
-            org_id=org_id, chatbot_config=chatbot_config)
+        # Validate pagination parameters
+        if page < 1:
+            raise HTTPException(status_code=400, detail="Page must be >= 1")
 
-        conversations = await chat_service.get_recent_conversations(limit=limit)
+        if page_size < 1 or page_size > 100:
+            raise HTTPException(
+                status_code=400, detail="Page size must be between 1 and 100")
+
+        # Calculate offset
+        offset = (page - 1) * page_size
+
+        # Build query
+        query = supabase.table("conversations").select(
+            "*", count="exact"
+        ).eq("org_id", org_id)
+
+        # Apply chatbot filter if provided
+        if chatbot_id:
+            query = query.eq("chatbot_id", chatbot_id)
+
+        # Apply pagination and ordering
+        result = query.order("updated_at", desc=True).range(
+            offset, offset + page_size - 1
+        ).execute()
+
+        # Get total count
+        total_count = result.count if hasattr(
+            result, 'count') else len(result.data)
+
+        # Calculate pagination metadata
+        total_pages = (total_count + page_size - 1) // page_size
+        has_next = page < total_pages
+        has_prev = page > 1
 
         print(
-            f"[SUCCESS] Listed {len(conversations)} conversations for org {org_id}")
-        return {"conversations": conversations}
+            f"[SUCCESS] Listed {len(result.data)} conversations for org {org_id} (page {page}/{total_pages})")
 
+        return {
+            "conversations": result.data,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "has_next": has_next,
+                "has_prev": has_prev
+            }
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[ERROR] List conversations failed: {e}")
         raise HTTPException(
@@ -709,7 +744,8 @@ async def get_performance_insights(user=Depends(verify_jwt_token)):
         }
 
     except (ConnectionError, TimeoutError) as e:
-        print(f"[ERROR] Database connection error in performance insights: {e}")
+        print(
+            f"[ERROR] Database connection error in performance insights: {e}")
         raise HTTPException(
             status_code=503, detail="Service temporarily unavailable") from e
     except (KeyError, ValueError) as e:
@@ -723,6 +759,7 @@ async def get_performance_insights(user=Depends(verify_jwt_token)):
         raise HTTPException(
             status_code=500, detail=f"Failed to get performance insights: {str(e)}") from e
 
+
 @router.get("/analytics/context")
 async def get_context_analytics(
     days: int = 7,
@@ -732,10 +769,10 @@ async def get_context_analytics(
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
-        
+
         # Use the existing context_analytics instance
         analytics_data = await context_analytics.get_query_analysis(org_id, "", days)
-        
+
         return {
             "success": True,
             "analytics": analytics_data,
@@ -749,6 +786,7 @@ async def get_context_analytics(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+
 @router.post("/analytics/query-optimization")
 async def analyze_query_optimization(
     request: dict,
@@ -758,12 +796,12 @@ async def analyze_query_optimization(
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
-        
+
         query = request.get("query", "")
-        
+
         # Use existing context analytics
         analysis = await context_analytics.get_query_analysis(org_id, query, 30)
-        
+
         return {
             "original_query": query,
             "enhanced_query": f"Enhanced: {query}",  # Simple enhancement
@@ -773,7 +811,7 @@ async def analyze_query_optimization(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-    
+
 # ==========================================
 # HEALTH CHECK
 # ==========================================

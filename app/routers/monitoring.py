@@ -1,83 +1,171 @@
 """
-Monitoring and health check endpoints
-"""
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException
-from ..services.auth import verify_jwt_token
-from ..utils.error_monitoring import error_monitor
-from ..utils.error_context import ErrorContextManager
-from ..services.shared import get_client_manager
+Monitoring endpoints for system health and performance
 
-logger = logging.getLogger(__name__)
+Provides endpoints to monitor connection pools, query performance,
+and system resources.
+"""
+from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+from ..services.auth import verify_jwt_token
+from ..services.storage.supabase_client import get_connection_stats as get_supabase_stats
+from ..services.storage.pinecone_client import get_connection_stats as get_pinecone_stats
+from ..utils.query_optimizer import query_monitor
+
 router = APIRouter()
 
 
-@router.get("/health")
-async def health_check():
-    """Basic health check endpoint"""
+@router.get("/connection-pools")
+async def get_connection_pool_stats(user=Depends(verify_jwt_token)):
+    """
+    Get connection pool statistics for all database clients
+
+    Requires authentication to prevent information disclosure
+    """
     try:
-        # Check critical services
-        health_status = {
-            "status": "healthy",
+        supabase_stats = get_supabase_stats()
+        pinecone_stats = get_pinecone_stats()
+
+        return {
             "timestamp": datetime.utcnow().isoformat(),
-            "services": {
-                "database": "unknown",
-                "vector_db": "unknown",
-                "ai_service": "unknown"
+            "supabase": {
+                "pool_size": supabase_stats.get("pool_size", 0),
+                "total_connections": supabase_stats.get("total_connections", 0),
+                "active_connections": supabase_stats.get("active_connections", 0),
+                "failed_connections": supabase_stats.get("failed_connections", 0),
+                "utilization": round(
+                    supabase_stats.get("active_connections", 0) /
+                    max(supabase_stats.get("pool_size", 1), 1) * 100,
+                    2
+                )
+            },
+            "pinecone": {
+                "pool_size": pinecone_stats.get("pool_size", 0),
+                "total_connections": pinecone_stats.get("total_connections", 0),
+                "active_connections": pinecone_stats.get("active_connections", 0),
+                "failed_connections": pinecone_stats.get("failed_connections", 0),
+                "utilization": round(
+                    pinecone_stats.get("active_connections", 0) /
+                    max(pinecone_stats.get("pool_size", 1), 1) * 100,
+                    2
+                )
+            },
+            "health": {
+                "supabase": "healthy" if supabase_stats.get("failed_connections", 0) == 0 else "degraded",
+                "pinecone": "healthy" if pinecone_stats.get("failed_connections", 0) == 0 else "degraded"
             }
         }
-        
-        # Check database connection
-        try:
-            client_manager = get_client_manager()
-            if client_manager.supabase:
-                # Simple query to test connection
-                response = client_manager.supabase.table("organizations").select("id").limit(1).execute()
-                health_status["services"]["database"] = "healthy"
-            else:
-                health_status["services"]["database"] = "unavailable"
-        except Exception as e:
-            health_status["services"]["database"] = f"error: {str(e)}"
-            health_status["status"] = "degraded"
-        
-        # Check vector database
-        try:
-            if client_manager.pinecone_index:
-                # Simple query to test connection
-                client_manager.pinecone_index.query(
-                    vector=[0.0] * 1536,  # Dummy vector
-                    top_k=1,
-                    include_metadata=False
-                )
-                health_status["services"]["vector_db"] = "healthy"
-            else:
-                health_status["services"]["vector_db"] = "unavailable"
-        except Exception as e:
-            health_status["services"]["vector_db"] = f"error: {str(e)}"
-            health_status["status"] = "degraded"
-        
-        # Check AI service
-        try:
-            if client_manager.openai:
-                # Simple test call
-                response = client_manager.openai.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": "test"}],
-                    max_tokens=1
-                )
-                health_status["services"]["ai_service"] = "healthy"
-            else:
-                health_status["services"]["ai_service"] = "unavailable"
-        except Exception as e:
-            health_status["services"]["ai_service"] = f"error: {str(e)}"
-            health_status["status"] = "degraded"
-        
-        return health_status
-        
+
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get connection pool stats: {str(e)}"
+        )
+
+
+@router.get("/query-performance")
+async def get_query_performance(user=Depends(verify_jwt_token)):
+    """
+    Get query performance statistics
+
+    Requires authentication to prevent information disclosure
+    """
+    try:
+        stats = query_monitor.get_stats()
+
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "queries": {
+                "total": stats.get("total_queries", 0),
+                "failed": stats.get("failed_queries", 0),
+                "slow": stats.get("slow_queries", 0)
+            },
+            "performance": {
+                "avg_duration_ms": round(stats.get("avg_duration_ms", 0), 2),
+                "max_duration_ms": round(stats.get("max_duration_ms", 0), 2),
+                "min_duration_ms": round(stats.get("min_duration_ms", 0), 2)
+            },
+            "health": {
+                "status": "healthy" if stats.get("slow_queries", 0) < 10 else "degraded",
+                "slow_query_threshold_ms": 1000
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get query performance: {str(e)}"
+        )
+
+
+@router.post("/query-performance/reset")
+async def reset_query_performance(user=Depends(verify_jwt_token)):
+    """
+    Reset query performance statistics
+
+    Requires authentication
+    """
+    try:
+        query_monitor.reset_stats()
+
+        return {
+            "success": True,
+            "message": "Query performance statistics reset",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset query performance: {str(e)}"
+        )
+
+
+@router.get("/system-health")
+async def get_system_health():
+    """
+    Get overall system health status
+
+    Public endpoint for health checks (no auth required)
+    """
+    try:
+        # Get connection pool stats
+        supabase_stats = get_supabase_stats()
+        pinecone_stats = get_pinecone_stats()
+
+        # Get query stats
+        query_stats = query_monitor.get_stats()
+
+        # Determine overall health
+        supabase_healthy = supabase_stats.get("failed_connections", 0) == 0
+        pinecone_healthy = pinecone_stats.get("failed_connections", 0) == 0
+        queries_healthy = query_stats.get("slow_queries", 0) < 10
+
+        overall_healthy = supabase_healthy and pinecone_healthy and queries_healthy
+
+        return {
+            "status": "healthy" if overall_healthy else "degraded",
+            "timestamp": datetime.utcnow().isoformat(),
+            "components": {
+                "database": "healthy" if supabase_healthy else "degraded",
+                "vector_store": "healthy" if pinecone_healthy else "degraded",
+                "query_performance": "healthy" if queries_healthy else "degraded"
+            },
+            "metrics": {
+                "supabase_pool_utilization": round(
+                    supabase_stats.get("active_connections", 0) /
+                    max(supabase_stats.get("pool_size", 1), 1) * 100,
+                    2
+                ),
+                "pinecone_pool_utilization": round(
+                    pinecone_stats.get("active_connections", 0) /
+                    max(pinecone_stats.get("pool_size", 1), 1) * 100,
+                    2
+                ),
+                "avg_query_time_ms": round(query_stats.get("avg_duration_ms", 0), 2)
+            }
+        }
+
+    except Exception as e:
         return {
             "status": "unhealthy",
             "timestamp": datetime.utcnow().isoformat(),
@@ -85,230 +173,91 @@ async def health_check():
         }
 
 
-@router.get("/health/detailed")
-async def detailed_health_check(user=Depends(verify_jwt_token)):
-    """Detailed health check with system metrics"""
-    try:
-        # Get error monitoring health
-        error_health = error_monitor.get_health_status()
-        
-        # Get system metrics
-        system_metrics = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "error_monitoring": error_health,
-            "services": {
-                "database": await _check_database_health(),
-                "vector_db": await _check_vector_db_health(),
-                "ai_service": await _check_ai_service_health(),
-                "scraping": await _check_scraping_health()
-            }
-        }
-        
-        # Determine overall health
-        overall_status = "healthy"
-        for service, status in system_metrics["services"].items():
-            if status.get("status") == "unhealthy":
-                overall_status = "unhealthy"
-            elif status.get("status") == "degraded" and overall_status == "healthy":
-                overall_status = "degraded"
-        
-        system_metrics["overall_status"] = overall_status
-        
-        return system_metrics
-        
-    except Exception as e:
-        logger.error(f"Detailed health check failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+@router.get("/alerts")
+async def get_system_alerts(user=Depends(verify_jwt_token)):
+    """
+    Get system alerts based on thresholds
 
-
-@router.get("/errors/metrics")
-async def get_error_metrics(
-    service: str = None,
-    hours: int = 24,
-    user=Depends(verify_jwt_token)
-):
-    """Get error metrics for monitoring dashboard"""
+    Requires authentication
+    """
     try:
-        metrics = error_monitor.get_error_metrics(service=service, hours=hours)
-        
-        # Convert to serializable format
-        serializable_metrics = []
-        for metric in metrics:
-            serializable_metrics.append({
-                "error_type": metric.error_type,
-                "count": metric.count,
-                "first_occurrence": metric.first_occurrence.isoformat(),
-                "last_occurrence": metric.last_occurrence.isoformat(),
-                "severity": metric.severity,
-                "service": metric.service,
-                "category": metric.category
+        alerts = []
+
+        # Check connection pool utilization
+        supabase_stats = get_supabase_stats()
+        pinecone_stats = get_pinecone_stats()
+
+        supabase_util = (
+            supabase_stats.get("active_connections", 0) /
+            max(supabase_stats.get("pool_size", 1), 1) * 100
+        )
+
+        if supabase_util > 80:
+            alerts.append({
+                "severity": "warning",
+                "component": "supabase",
+                "message": f"Supabase connection pool utilization high: {supabase_util:.1f}%",
+                "recommendation": "Consider increasing SUPABASE_POOL_SIZE"
             })
-        
-        return {
-            "metrics": serializable_metrics,
-            "summary": {
-                "total_errors": sum(m["count"] for m in serializable_metrics),
-                "unique_error_types": len(serializable_metrics),
-                "time_range_hours": hours,
-                "service_filter": service
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to get error metrics: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get error metrics: {str(e)}")
 
-
-@router.get("/errors/alerts")
-async def get_active_alerts(user=Depends(verify_jwt_token)):
-    """Get currently active alerts"""
-    try:
-        alerts = error_monitor.get_active_alerts()
-        
-        # Convert to serializable format
-        serializable_alerts = [alert.to_dict() for alert in alerts]
-        
-        return {
-            "alerts": serializable_alerts,
-            "summary": {
-                "total_alerts": len(serializable_alerts),
-                "critical_alerts": len([a for a in serializable_alerts if a["level"] == "critical"]),
-                "error_alerts": len([a for a in serializable_alerts if a["level"] == "error"]),
-                "warning_alerts": len([a for a in serializable_alerts if a["level"] == "warning"])
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to get alerts: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get alerts: {str(e)}")
-
-
-@router.post("/errors/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: str, user=Depends(verify_jwt_token)):
-    """Resolve an active alert"""
-    try:
-        error_monitor.resolve_alert(alert_id)
-        return {"message": f"Alert {alert_id} resolved successfully"}
-        
-    except Exception as e:
-        logger.error(f"Failed to resolve alert {alert_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to resolve alert: {str(e)}")
-
-
-async def _check_database_health() -> Dict[str, Any]:
-    """Check database health and performance"""
-    try:
-        client_manager = get_client_manager()
-        if not client_manager.supabase:
-            return {"status": "unavailable", "message": "Supabase client not initialized"}
-        
-        start_time = datetime.utcnow()
-        
-        # Test basic query
-        response = client_manager.supabase.table("organizations").select("id").limit(1).execute()
-        
-        response_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-        
-        return {
-            "status": "healthy",
-            "response_time_ms": round(response_time, 2),
-            "connection": "active"
-        }
-        
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "connection": "failed"
-        }
-
-
-async def _check_vector_db_health() -> Dict[str, Any]:
-    """Check vector database health and performance"""
-    try:
-        client_manager = get_client_manager()
-        if not client_manager.pinecone_index:
-            return {"status": "unavailable", "message": "Pinecone index not initialized"}
-        
-        start_time = datetime.utcnow()
-        
-        # Test basic query
-        response = client_manager.pinecone_index.query(
-            vector=[0.0] * 1536,  # Dummy vector
-            top_k=1,
-            include_metadata=False
+        pinecone_util = (
+            pinecone_stats.get("active_connections", 0) /
+            max(pinecone_stats.get("pool_size", 1), 1) * 100
         )
-        
-        response_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-        
+
+        if pinecone_util > 80:
+            alerts.append({
+                "severity": "warning",
+                "component": "pinecone",
+                "message": f"Pinecone connection pool utilization high: {pinecone_util:.1f}%",
+                "recommendation": "Consider increasing PINECONE_POOL_SIZE"
+            })
+
+        # Check query performance
+        query_stats = query_monitor.get_stats()
+
+        if query_stats.get("slow_queries", 0) > 10:
+            alerts.append({
+                "severity": "warning",
+                "component": "queries",
+                "message": f"High number of slow queries: {query_stats.get('slow_queries', 0)}",
+                "recommendation": "Review slow query logs and add database indexes"
+            })
+
+        if query_stats.get("avg_duration_ms", 0) > 500:
+            alerts.append({
+                "severity": "info",
+                "component": "queries",
+                "message": f"Average query time elevated: {query_stats.get('avg_duration_ms', 0):.0f}ms",
+                "recommendation": "Consider query optimization"
+            })
+
+        # Check failed connections
+        if supabase_stats.get("failed_connections", 0) > 0:
+            alerts.append({
+                "severity": "error",
+                "component": "supabase",
+                "message": f"Failed connections detected: {supabase_stats.get('failed_connections', 0)}",
+                "recommendation": "Check database connectivity and credentials"
+            })
+
+        if pinecone_stats.get("failed_connections", 0) > 0:
+            alerts.append({
+                "severity": "error",
+                "component": "pinecone",
+                "message": f"Failed connections detected: {pinecone_stats.get('failed_connections', 0)}",
+                "recommendation": "Check Pinecone API status and credentials"
+            })
+
         return {
-            "status": "healthy",
-            "response_time_ms": round(response_time, 2),
-            "connection": "active"
+            "timestamp": datetime.utcnow().isoformat(),
+            "alert_count": len(alerts),
+            "alerts": alerts,
+            "status": "ok" if len(alerts) == 0 else "alerts_present"
         }
-        
+
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "connection": "failed"
-        }
-
-
-async def _check_ai_service_health() -> Dict[str, Any]:
-    """Check AI service health and performance"""
-    try:
-        client_manager = get_client_manager()
-        if not client_manager.openai:
-            return {"status": "unavailable", "message": "OpenAI client not initialized"}
-        
-        start_time = datetime.utcnow()
-        
-        # Test basic completion
-        response = client_manager.openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=1
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get system alerts: {str(e)}"
         )
-        
-        response_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-        
-        return {
-            "status": "healthy",
-            "response_time_ms": round(response_time, 2),
-            "model": "gpt-3.5-turbo",
-            "connection": "active"
-        }
-        
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "connection": "failed"
-        }
-
-
-async def _check_scraping_health() -> Dict[str, Any]:
-    """Check scraping service health"""
-    try:
-        # Check if scraping services are available
-        from services.scraping.web_scraper import SecureWebScraper
-        
-        scraper = SecureWebScraper()
-        
-        return {
-            "status": "healthy",
-            "message": "Scraping service available",
-            "features": {
-                "ssrf_protection": True,
-                "rate_limiting": True,
-                "robots_txt": True
-            }
-        }
-        
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "message": "Scraping service unavailable"
-        }

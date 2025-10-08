@@ -1,14 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from ..models import UpdateUserRequest
 from ..services.auth import verify_jwt_token, CurrentUser
 from ..services.storage.supabase_client import client
 
 router = APIRouter()
-
-
-class UpdateUserRequest(BaseModel):
-    """Request model for updating user details"""
-    full_name: str
 
 
 @router.post("/init")
@@ -60,10 +55,9 @@ async def update_user(
     except Exception as e:
         print(f"[ERROR] Update user failed: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Failed to update user: {str(e)}"
         ) from e
-
 
 
 @router.get("/profile")

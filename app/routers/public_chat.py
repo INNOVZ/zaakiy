@@ -1,37 +1,22 @@
 import html
 import os
-from typing import Optional, List
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from supabase import create_client, Client
 from dotenv import load_dotenv
+from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
+from ..services.storage.supabase_client import get_supabase_client
+from ..utils.rate_limiter import rate_limit, get_rate_limit_config
 
 load_dotenv()
 
-# Initialize Supabase client (same as chat.py)
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
+# Get centralized Supabase client
+supabase = get_supabase_client()
 
 router = APIRouter()
 
 
-class PublicChatRequest(BaseModel):
-    message: str
-    chatbot_id: str
-    session_id: Optional[str] = None
-    user_identifier: Optional[str] = None
-
-
-class PublicChatResponse(BaseModel):
-    response: str
-    product_links: List[dict] = []
-    chatbot: dict
-    session_id: str
-
-
 @router.post("/chat", response_model=PublicChatResponse)
+@rate_limit(**get_rate_limit_config("public_chat"))
 async def public_chat(request: PublicChatRequest):
     """Public chat endpoint for embedded chatbots"""
     try:

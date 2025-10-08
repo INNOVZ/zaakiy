@@ -3,9 +3,8 @@ URL sanitization utilities for secure logging
 Prevents exposure of sensitive information in logs
 """
 
-import re
+from typing import Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from typing import Set, Optional
 
 class URLSanitizer:
     """Sanitize URLs for safe logging without exposing sensitive information"""

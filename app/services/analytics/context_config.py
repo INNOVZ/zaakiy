@@ -4,9 +4,9 @@ from enum import Enum
 import logging
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
-from supabase import create_client, Client
 from dotenv import load_dotenv
 from ..shared.cache_service import cache_service
+from ..storage.supabase_client import get_supabase_client
 
 # Load environment variables
 load_dotenv()
@@ -122,23 +122,22 @@ class ContextEngineeringConfig(BaseModel):
             datetime: lambda v: v.isoformat() if isinstance(v, datetime) else v
         }
 
+
 class ContextConfigManager:
     """Manager for context engineering configurations"""
 
     def __init__(self):
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        self.supabase: Client = create_client(supabase_url, supabase_key)
+        self.supabase = get_supabase_client()
 
     async def get_config(self, org_id: str, config_name: str = "default") -> ContextEngineeringConfig:
         """Get context engineering configuration for an organization with Redis caching"""
         try:
             logging.info("Getting context config for org %s", org_id)
-            
+
             # Check cache first
             cache_key = f"context_config:{org_id}:{config_name}"
             cached_config = cache_service.get(cache_key)
-            
+
             if cached_config:
                 logging.info("Cache hit for context config: %s", cache_key)
                 return ContextEngineeringConfig(**cached_config)
@@ -162,23 +161,26 @@ class ContextConfigManager:
                         'config_name', config_row.get('config_name', config_name))
 
                     config_obj = ContextEngineeringConfig(**config_data)
-                    
+
                     # Cache the config with TTL from config itself
-                    ttl_seconds = config_obj.cache_ttl_minutes * 60 if config_obj.enable_caching else 300
+                    ttl_seconds = config_obj.cache_ttl_minutes * \
+                        60 if config_obj.enable_caching else 300
                     cache_service.set(cache_key, config_data, ttl_seconds)
-                    logging.info("Cached context config: %s (TTL: %ds)", cache_key, ttl_seconds)
-                    
+                    logging.info(
+                        "Cached context config: %s (TTL: %ds)", cache_key, ttl_seconds)
+
                     return config_obj
                 else:
                     # Fallback: use top-level fields (for backward compatibility)
                     logging.warning(
                         "No config_data found for org %s, using top-level fields", org_id)
                     config_obj = ContextEngineeringConfig(**config_row)
-                    
+
                     # Cache the fallback config
-                    ttl_seconds = config_obj.cache_ttl_minutes * 60 if config_obj.enable_caching else 300
+                    ttl_seconds = config_obj.cache_ttl_minutes * \
+                        60 if config_obj.enable_caching else 300
                     cache_service.set(cache_key, config_row, ttl_seconds)
-                    
+
                     return config_obj
             else:
                 # Create default config if none exists
@@ -190,12 +192,14 @@ class ContextConfigManager:
 
                 # Save to database
                 await self.save_config(default_config)
-                
+
                 # Cache the new default config
                 cache_key = f"context_config:{org_id}:{config_name}"
-                ttl_seconds = default_config.cache_ttl_minutes * 60 if default_config.enable_caching else 300
-                cache_service.set(cache_key, default_config.dict(), ttl_seconds)
-                
+                ttl_seconds = default_config.cache_ttl_minutes * \
+                    60 if default_config.enable_caching else 300
+                cache_service.set(
+                    cache_key, default_config.dict(), ttl_seconds)
+
                 return default_config
 
         except Exception as e:
@@ -237,7 +241,7 @@ class ContextConfigManager:
 
                 # All configuration details in JSON blob
                 "config_data": config_dict
-                
+
             }
 
             # Upsert configuration
@@ -247,13 +251,13 @@ class ContextConfigManager:
             ).execute()
 
             success = bool(response.data)
-            
+
             if success:
                 # Invalidate cache after successful save
                 cache_key = f"context_config:{config.org_id}:{config.config_name}"
                 cache_service.delete(cache_key)
                 logging.info("Invalidated cache for config: %s", cache_key)
-            
+
             logging.info(
                 "Config save result for org %s: %s", config.org_id, success)
             return success
@@ -275,7 +279,7 @@ class ContextConfigManager:
             'rerank_model', 'enable_semantic_rerank', 'enable_hallucination_check',
             'enable_source_verification', 'confidence_threshold', 'max_response_time_ms',
             'enable_caching', 'cache_ttl_minutes', 'enable_detailed_logging',
-            'log_user_queries', 'collect_feedback', 'created_at', 'updated_at', 
+            'log_user_queries', 'collect_feedback', 'created_at', 'updated_at',
             'business_context', 'domain_knowledge', 'response_style', 'fallback_behavior'
         }
 
@@ -393,7 +397,8 @@ class ContextConfigManager:
     ) -> bool:
         """Update specific configuration parameters"""
         try:
-            logging.info("Updating config for org %s with updates: %s", org_id, updates)
+            logging.info(
+                "Updating config for org %s with updates: %s", org_id, updates)
 
             # Get current config
             current_config = await self.get_config(org_id, config_name)

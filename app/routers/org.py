@@ -1,18 +1,9 @@
-from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from ..models import UpdateOrganizationRequest
 from ..services.auth import verify_jwt_token, get_user_with_org
 from ..services.storage.supabase_client import client
 
 router = APIRouter()
-
-
-class UpdateOrganizationRequest(BaseModel):
-    """Request model for updating organization details"""
-    name: str
-    email: str
-    contact_phone: Optional[str] = None
-    business_type: Optional[str] = None
 
 
 @router.get("/info")

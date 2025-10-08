@@ -6,9 +6,7 @@ import logging
 from typing import Optional
 from threading import Lock
 import openai
-from pinecone import Pinecone
-from supabase import create_client, Client
-from supabase.client import ClientOptions  # Import ClientOptions
+from supabase import Client
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +30,6 @@ class ClientManager:
             return
 
         self._openai_client: Optional[openai.OpenAI] = None
-        self._pinecone_client: Optional[Pinecone] = None
         self._pinecone_index = None
         self._supabase_client: Optional[Client] = None
         self._initialized = True
@@ -60,15 +57,9 @@ class ClientManager:
             raise
 
         try:
-            # Initialize Pinecone client
-            pinecone_key = os.getenv("PINECONE_API_KEY")
-            pinecone_index = os.getenv("PINECONE_INDEX")
-
-            if not pinecone_key or not pinecone_index:
-                raise ValueError("Pinecone credentials not found")
-
-            self._pinecone_client = Pinecone(api_key=pinecone_key)
-            self._pinecone_index = self._pinecone_client.Index(pinecone_index)
+            # Use centralized Pinecone client
+            from ..storage.pinecone_client import get_pinecone_index
+            self._pinecone_index = get_pinecone_index()
             logger.info("✅ Pinecone client initialized")
 
         except Exception as e:
@@ -76,24 +67,9 @@ class ClientManager:
             raise
 
         try:
-            # Initialize Supabase client - FIXED
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-            if not supabase_url or not supabase_key:
-                raise ValueError("Supabase credentials not found")
-
-            # Create proper ClientOptions object
-            options = ClientOptions(
-                auto_refresh_token=True,
-                persist_session=False
-            )
-
-            self._supabase_client = create_client(
-                supabase_url,
-                supabase_key,
-                options=options  # Use proper ClientOptions object
-            )
+            # Use centralized Supabase client
+            from ..storage.supabase_client import get_supabase_client
+            self._supabase_client = get_supabase_client()
             logger.info("✅ Supabase client initialized")
 
         except Exception as e:
@@ -138,7 +114,9 @@ class ClientManager:
 
         try:
             # Test Pinecone
-            self._pinecone_client.list_indexes()
+            from ..storage.pinecone_client import get_pinecone_client
+            pinecone_client = get_pinecone_client()
+            pinecone_client.list_indexes()
             health["pinecone"] = True
         except Exception as e:
             logger.warning("Pinecone health check failed: %s", str(e))

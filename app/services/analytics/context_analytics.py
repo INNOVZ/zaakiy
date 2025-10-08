@@ -5,8 +5,9 @@ from typing import Dict, List, Optional, Any
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta
 from dataclasses import dataclass
-from supabase import create_client, Client
+from ..storage.supabase_client import get_supabase_client
 # import json
+
 
 @dataclass
 class ContextMetrics:
@@ -36,21 +37,19 @@ class ContextAnalytics:
     """Advanced analytics for context engineering performance"""
 
     def __init__(self):
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        
-        if not supabase_url or not supabase_key:
-            logging.warning("Supabase credentials not found. Analytics will be disabled.")
+        try:
+            self.supabase = get_supabase_client()
+        except Exception as e:
+            logging.warning(
+                f"Failed to initialize Supabase client. Analytics disabled: {e}")
             self.supabase = None
-        else:
-            self.supabase: Client = create_client(supabase_url, supabase_key)
 
     async def log_context_metrics(self, metrics: ContextMetrics) -> bool:
         """Log comprehensive context engineering metrics"""
         if not self.supabase:
             logging.warning("Analytics disabled - Supabase not configured")
             return False
-            
+
         try:
             metrics_data = {
                 "org_id": metrics.org_id,
@@ -83,7 +82,7 @@ class ContextAnalytics:
         if not self.supabase:
             logging.warning("Analytics disabled - Supabase not configured")
             return self._empty_dashboard()
-            
+
         try:
             since_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
@@ -197,7 +196,7 @@ class ContextAnalytics:
         """Calculate trends compared to previous period"""
         if not self.supabase:
             return {"trends_available": False}
-            
+
         try:
             # Get previous period data
             prev_start = (datetime.utcnow() -
@@ -231,7 +230,7 @@ class ContextAnalytics:
             return {
                 "trends_available": True,
                 "response_time_change": self._calculate_percentage_change(
-                    prev_avg_response, 
+                    prev_avg_response,
                     current_avg_response
                 ),
                 "quality_change": self._calculate_percentage_change(
@@ -270,8 +269,6 @@ class ContextAnalytics:
             "peak_quality_hours": sorted(quality_by_time.items(),
                                          key=lambda x: statistics.mean(x[1]) if x[1] else 0, reverse=True)[:3]
         }
-
-
 
     def _generate_performance_insights(self, data: List[Dict]) -> List[Dict[str, Any]]:
         """Generate actionable performance insights"""
@@ -387,13 +384,12 @@ class ContextAnalytics:
             "generated_at": datetime.utcnow().isoformat()
         }
 
-
     async def get_query_analysis(self, org_id: str, query: str, days: int = 30) -> Dict[str, Any]:
         """Analyze similar queries and their performance"""
         if not self.supabase:
             logging.warning("Analytics disabled - Supabase not configured")
             return {"similar_queries_found": 0, "analysis": None}
-            
+
         try:
             since_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
@@ -449,7 +445,7 @@ class ContextAnalytics:
         if not self.supabase:
             logging.warning("Analytics disabled - Supabase not configured")
             return {"format": export_format, "data": [], "count": 0, "error": "Analytics disabled"}
-            
+
         try:
             response = self.supabase.table("context_analytics").select("*").eq(
                 "org_id", org_id

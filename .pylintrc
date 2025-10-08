@@ -1,0 +1,106 @@
+[MASTER]
+# Add files or directories to the blacklist
+ignore=CVS,.git,__pycache__,.venv,venv,node_modules
+
+[MESSAGES CONTROL]
+# Disable specific warnings
+disable=
+    # Relative imports are fine in our package structure
+    relative-beyond-top-level,
+    # These are often false positives
+    import-error,
+    no-name-in-module,
+    # Allow TODO comments
+    fixme,
+    # Allow short variable names in comprehensions
+    invalid-name,
+    # Allow more than 7 arguments (common in FastAPI)
+    too-many-arguments,
+    # Allow more than 15 local variables
+    too-many-locals,
+    # Allow more than 50 lines in functions (common in routers)
+    too-many-lines,
+    # Allow more than 12 branches
+    too-many-branches,
+    # Allow more than 7 public methods
+    too-few-public-methods,
+    too-many-public-methods,
+    # Allow catching broad exceptions (we handle them properly)
+    broad-except,
+    # Allow missing docstrings in some cases
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=120
+
+# Maximum number of lines in a module
+max-module-lines=1000
+
+[DESIGN]
+# Maximum number of arguments for function / method
+max-args=10
+
+# Maximum number of locals for function / method body
+max-locals=20
+
+# Maximum number of return / yield for function / method body
+max-returns=6
+
+# Maximum number of branch for function / method body
+max-branches=15
+
+# Maximum number of statements in function / method body
+max-statements=50
+
+# Maximum number of attributes for a class
+max-attributes=10
+
+[IMPORTS]
+# Allow relative imports
+allow-any-import-level=yes
+
+[TYPECHECK]
+# List of members which are set dynamically and missed by pylint inference
+generated-members=
+    # Pydantic models
+    model_*,
+    # SQLAlchemy
+    query,
+    # FastAPI
+    status_code,
+    # Supabase
+    table,
+    from_,
+    select,
+    insert,
+    update,
+    delete,
+    eq,
+    neq,
+    gt,
+    gte,
+    lt,
+    lte,
+    like,
+    ilike,
+    is_,
+    in_,
+    contains,
+    contained_by,
+    range_lt,
+    range_gt,
+    range_gte,
+    range_lte,
+    range_adjacent,
+    overlaps,
+    execute,
+    # Pinecone
+    Index,
+    query,
+    upsert,
+    delete,
+    fetch,
+    describe_index_stats

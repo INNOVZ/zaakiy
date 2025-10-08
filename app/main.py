@@ -142,7 +142,7 @@ async def health_check():
 
         health_data = {
             "status": "healthy" if db_status == "healthy" else "degraded",
-           "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.utcnow().isoformat(),
             "version": settings.app.app_version,
             "environment": settings.app.environment,
             "services": {
@@ -168,7 +168,7 @@ async def health_check():
         })
         return {
             "status": "unhealthy",
-            "timestamp": "2025-01-07T12:00:00Z",
+            "timestamp": datetime.utcnow().isoformat(),
             "error": str(e)
         }
 
@@ -208,6 +208,8 @@ async def health_check_clients():
             "error": str(e),
             "timestamp": "2025-01-07T12:00:00Z"
         }
+
+
 @app.get("/health/detailed")
 async def detailed_health():
     return {
@@ -215,10 +217,11 @@ async def detailed_health():
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
             "database": "connected",
-            "pinecone": "connected", 
+            "pinecone": "connected",
             "openai": "connected"
         }
     }
+
 
 # Route registration with logging
 logger.info("Registering API routes")
@@ -228,7 +231,8 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(public_chat.router, prefix="/api/public", tags=["public"])
-app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
+app.include_router(monitoring.router,
+                   prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
 logger.info("All API routes registered successfully")
 
