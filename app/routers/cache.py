@@ -2,7 +2,6 @@
 Cache management endpoints for Redis operations
 """
 import logging
-from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from ..services.shared.cache_service import cache_service
 from ..services.auth.middleware import get_current_user

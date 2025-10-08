@@ -16,8 +16,8 @@ from ..services.auth import verify_jwt_token, get_user_with_org
 from ..services.chat.chat_service import ChatService
 from ..services.analytics.context_analytics import context_analytics
 from ..services.analytics.context_config import context_config_manager
-from ..utils.error_handlers import ErrorHandler, handle_errors
-from ..utils.exceptions import ValidationError, DatabaseError
+from ..utils.error_handlers import handle_errors
+from ..utils.exceptions import ValidationError
 from ..utils.error_context import ErrorContextManager
 from ..utils.error_monitoring import error_monitor
 

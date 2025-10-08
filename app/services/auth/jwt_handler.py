@@ -5,7 +5,7 @@ Handles JWT token verification, validation, and user extraction from Supabase to
 """
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from jose import jwt
 from jose.exceptions import JWTError, ExpiredSignatureError
 from fastapi import Header, HTTPException

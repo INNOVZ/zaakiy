@@ -15,9 +15,7 @@ from .permissions import (
     Permission, 
     get_user_role, 
     check_user_permission,
-    require_user_permission,
-    check_org_permission,
-    require_org_permission
+    check_org_permission
 )
 from .exceptions import AuthenticationError, AuthorizationError
 
@@ -41,22 +39,19 @@ async def get_current_user(
         HTTPException: For authentication failures
     """
     try:
-        # Extract token from credentials
-        token = credentials.credentials
-        authorization = f"Bearer {token}"
-        
-        # Verify token and get user info
-        user_info = await verify_jwt_token(authorization)
-        
+        # Pass the raw token directly to verify_jwt_token
+        # Remove the reconstruction of Bearer token format
+        user_info = await verify_jwt_token(credentials.credentials)
+
         # Get full user data from database
         user_data = await get_user_by_id(user_info["user_id"])
-        
+
         if not user_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
+
         return {
             **user_info,
             "user_data": user_data
@@ -68,7 +63,6 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Authentication failed: {str(e)}"
         ) from e
-
 
 async def get_current_user_with_org(
     credentials: HTTPAuthorizationCredentials = Depends(security)

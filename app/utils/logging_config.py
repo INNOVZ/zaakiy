@@ -10,7 +10,13 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
 from contextvars import ContextVar
-from ..config.settings import get_app_config
+from app.config.settings import get_app_config
+
+# Optional import for database logging
+try:
+    from services.storage.supabase_client import supabase
+except ImportError:
+    supabase = None
 
 # Context variables for request tracking
 request_id_var: ContextVar[str] = ContextVar('request_id', default='')
@@ -101,15 +107,17 @@ class ContextFilter(logging.Filter):
 class DatabaseLogHandler(logging.Handler):
     """Custom handler to store critical logs in database"""
 
-    def __init__(self, level=logging.ERROR):
-        super().__init__(level)
-        self.supabase = None
-        self._init_supabase()
-
     def _init_supabase(self):
         """Initialize Supabase client for database logging"""
         try:
-            from services.storage.supabase_client import supabase
+            if supabase is not None:
+                self.supabase = supabase
+            else:
+                print("Supabase client not available for database logging")
+        except Exception as e:
+            print(f"Failed to initialize database logging: {e}")
+        try:
+           
             self.supabase = supabase
         except Exception as e:
             print(f"Failed to initialize database logging: {e}")
