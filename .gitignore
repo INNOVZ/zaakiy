@@ -68,7 +68,7 @@ temp/
 
 # Application specific
 uploads/
-storage/
+/storage/
 cache/
 .pytest_cache/
 .coverage
