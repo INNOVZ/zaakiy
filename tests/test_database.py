@@ -2,6 +2,7 @@
 Simple test script to check database connection and create a test upload
 """
 import os
+
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -38,8 +39,7 @@ def create_test_upload():
     """Create a test upload record"""
     try:
         # Get the first organization
-        orgs_result = supabase.table(
-            "organizations").select("*").limit(1).execute()
+        orgs_result = supabase.table("organizations").select("*").limit(1).execute()
         if not orgs_result.data:
             print("No organizations found")
             return False
@@ -53,7 +53,7 @@ def create_test_upload():
             "type": "url",
             "source": "https://example.com",
             "pinecone_namespace": f"org-{org_id}",
-            "status": "pending"
+            "status": "pending",
         }
 
         result = supabase.table("uploads").insert(test_upload).execute()

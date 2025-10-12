@@ -1,24 +1,27 @@
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
+
 from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-from .services.storage.supabase_client import supabase
-from .routers import org, users, uploads, auth, chat, public_chat, monitoring, cache
-from .services.shared.worker_scheduler import start_background_worker, stop_background_worker
-from .services.shared import get_client_manager
+from fastapi.middleware.cors import CORSMiddleware
+
 from .config.settings import settings, validate_environment
-from .utils.logging_config import setup_logging, get_logger
+from .routers import (auth, cache, chat, monitoring, onboarding, org, public_chat,
+                      uploads, users)
+from .services.shared import get_client_manager
+from .services.shared.worker_scheduler import (start_background_worker,
+                                               stop_background_worker)
+from .services.storage.supabase_client import get_supabase_client
 from .utils.error_monitoring import error_monitor
+from .utils.logging_config import get_logger, setup_logging
 
 # Load environment variables once
 load_dotenv()
 
 # Setup logging first
 setup_logging(
-    log_level=os.getenv("LOG_LEVEL", "INFO"),
-    log_file=os.getenv("LOG_FILE", None)
+    log_level=os.getenv("LOG_LEVEL", "INFO"), log_file=os.getenv("LOG_FILE", None)
 )
 
 logger = get_logger("main")
@@ -44,17 +47,16 @@ async def lifespan(fastapi_app: FastAPI):
     try:
         client_manager = get_client_manager()
         health = client_manager.health_check()
-        logger.info("Client health check completed", extra={
-            "health_status": health,
-            "all_healthy": all(health.values())
-        })
+        logger.info(
+            "Client health check completed",
+            extra={"health_status": health, "all_healthy": all(health.values())},
+        )
 
         if not all(health.values()):
-            failed_clients = [client for client,
-                              status in health.items() if not status]
+            failed_clients = [client for client, status in health.items() if not status]
             logger.warning(
                 "Some clients failed health check but server will continue",
-                extra={"failed_clients": failed_clients}
+                extra={"failed_clients": failed_clients},
             )
         else:
             logger.info("All API clients initialized successfully")
@@ -81,11 +83,14 @@ async def lifespan(fastapi_app: FastAPI):
         logger.error("Failed to start error monitoring: %s", str(e))
         # Don't fail startup for monitoring issues
 
-    logger.info("ZaaKy AI Platform started successfully", extra={
-        "version": settings.app.app_version,
-        "environment": settings.app.environment,
-        "debug_mode": settings.app.debug
-    })
+    logger.info(
+        "ZaaKy AI Platform started successfully",
+        extra={
+            "version": settings.app.app_version,
+            "environment": settings.app.environment,
+            "debug_mode": settings.app.debug,
+        },
+    )
 
     yield
 
@@ -113,7 +118,7 @@ app = FastAPI(
     version=settings.app.app_version,
     description="Advanced AI Chatbot Platform with Omnichannel Deployment",
     debug=settings.app.debug,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Configure CORS middleware using centralized config
@@ -125,10 +130,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-logger.info("FastAPI application configured", extra={
-    "cors_origins": settings.security.cors_origins,
-    "debug_mode": settings.app.debug
-})
+logger.info(
+    "FastAPI application configured",
+    extra={
+        "cors_origins": settings.security.cors_origins,
+        "debug_mode": settings.app.debug,
+    },
+)
 
 
 @app.get("/health")
@@ -136,40 +144,44 @@ async def health_check():
     """Enhanced system health check endpoint"""
     try:
         # Test database
-        db_response = supabase.table(
-            "organizations").select("id").limit(1).execute()
+        supabase = get_supabase_client()
+        db_response = supabase.table("organizations").select("id").limit(1).execute()
         db_status = "healthy" if db_response.data is not None else "unhealthy"
 
         health_data = {
             "status": "healthy" if db_status == "healthy" else "degraded",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "version": settings.app.app_version,
             "environment": settings.app.environment,
             "services": {
                 "database": db_status,
                 "vector_store": "healthy",
                 "ai_service": "healthy",
-                "background_worker": "healthy"
+                "background_worker": "healthy",
             },
-            "configuration": settings.to_dict()
+            "configuration": settings.to_dict(),
         }
 
-        logger.debug("Health check completed", extra={
-            "status": health_data["status"],
-            "services": health_data["services"]
-        })
+        logger.debug(
+            "Health check completed",
+            extra={
+                "status": health_data["status"],
+                "services": health_data["services"],
+            },
+        )
 
         return health_data
 
     except Exception as e:
-        logger.error("Health check failed: %s", str(e), extra={
-            "endpoint": "/health",
-            "error_type": type(e).__name__
-        })
+        logger.error(
+            "Health check failed: %s",
+            str(e),
+            extra={"endpoint": "/health", "error_type": type(e).__name__},
+        )
         return {
             "status": "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "error": str(e)
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": str(e),
         }
 
 
@@ -187,26 +199,27 @@ async def health_check_clients():
             "details": {
                 "openai": "API connection test",
                 "pinecone": "Vector database connection",
-                "supabase": "Main database connection"
-            }
+                "supabase": "Main database connection",
+            },
         }
 
-        logger.debug("Client health check completed", extra={
-            "client_health": health,
-            "overall_status": response_data["status"]
-        })
+        logger.debug(
+            "Client health check completed",
+            extra={"client_health": health, "overall_status": response_data["status"]},
+        )
 
         return response_data
 
     except Exception as e:
-        logger.error("Client health check failed: %s", str(e), extra={
-            "endpoint": "/health/clients",
-            "error_type": type(e).__name__
-        })
+        logger.error(
+            "Client health check failed: %s",
+            str(e),
+            extra={"endpoint": "/health/clients", "error_type": type(e).__name__},
+        )
         return {
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": "2025-01-07T12:00:00Z"
+            "timestamp": "2025-01-07T12:00:00Z",
         }
 
 
@@ -214,25 +227,25 @@ async def health_check_clients():
 async def detailed_health():
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
             "database": "connected",
             "pinecone": "connected",
-            "openai": "connected"
-        }
+            "openai": "connected",
+        },
     }
 
 
 # Route registration with logging
 logger.info("Registering API routes")
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+app.include_router(onboarding.router, tags=["onboarding"])
 app.include_router(org.router, prefix="/api/org", tags=["organizations"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(public_chat.router, prefix="/api/public", tags=["public"])
-app.include_router(monitoring.router,
-                   prefix="/api/monitoring", tags=["monitoring"])
+app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
 logger.info("All API routes registered successfully")
 
@@ -246,13 +259,16 @@ def root():
         "environment": settings.app.environment,
         "status": "operational",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
 
-    logger.debug("Root endpoint accessed", extra={
-        "version": response_data["version"],
-        "environment": response_data["environment"]
-    })
+    logger.debug(
+        "Root endpoint accessed",
+        extra={
+            "version": response_data["version"],
+            "environment": response_data["environment"],
+        },
+    )
 
     return response_data
 
@@ -260,17 +276,20 @@ def root():
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("Starting uvicorn server", extra={
-        "host": "0.0.0.0",
-        "port": 8001,
-        "reload": settings.app.debug,
-        "log_level": settings.app.log_level.lower()
-    })
+    logger.info(
+        "Starting uvicorn server",
+        extra={
+            "host": "0.0.0.0",
+            "port": 8001,
+            "reload": settings.app.debug,
+            "log_level": settings.app.log_level.lower(),
+        },
+    )
 
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8001,
         reload=settings.app.debug,
-        log_level=settings.app.log_level.lower()
+        log_level=settings.app.log_level.lower(),
     )

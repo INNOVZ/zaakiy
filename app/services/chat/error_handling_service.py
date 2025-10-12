@@ -2,10 +2,10 @@
 Error Handling Service
 Provides centralized error handling, retry logic, and exception management
 """
-import logging
 import asyncio
-from typing import Dict, Any, Optional, Callable
+import logging
 from functools import wraps
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class ErrorHandlingService:
             "max_attempts": 3,
             "base_delay": 1.0,
             "max_delay": 30.0,
-            "exponential_base": 2
+            "exponential_base": 2,
         }
 
         # Error severity mapping
@@ -44,7 +44,7 @@ class ErrorHandlingService:
             "TimeoutError": "medium",
             "ValueError": "low",
             "KeyError": "low",
-            "TypeError": "low"
+            "TypeError": "low",
         }
 
         # Error category mapping
@@ -54,7 +54,7 @@ class ErrorHandlingService:
             "TimeoutError": "network",
             "RetrievalError": "retrieval",
             "ContextError": "context_engineering",
-            "ResponseGenerationError": "response_generation"
+            "ResponseGenerationError": "response_generation",
         }
 
     def record_error(
@@ -62,7 +62,7 @@ class ErrorHandlingService:
         error: Exception,
         service: str = "chat_service",
         context: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Record error in monitoring system"""
         try:
@@ -76,35 +76,40 @@ class ErrorHandlingService:
                     severity=severity,
                     service=service,
                     category=category,
-                    context=context,
-                    metadata=metadata or {}
                 )
 
             # Also log locally
             logger.error(
                 "Error recorded: %s - %s in %s (context: %s)",
-                error_type, str(error), service, context
+                error_type,
+                str(error),
+                service,
+                context,
             )
 
         except Exception as monitor_error:
             logger.warning(
-                "Failed to record error in monitoring system: %s", monitor_error)
+                "Failed to record error in monitoring system: %s", monitor_error
+            )
 
     async def handle_with_retry(
         self,
         operation: Callable,
         *args,
         operation_name: str = "unknown_operation",
-        retryable_exceptions: tuple = (
-            ConnectionError, TimeoutError, RetryableError),
-        **kwargs
+        retryable_exceptions: tuple = (ConnectionError, TimeoutError, RetryableError),
+        **kwargs,
     ) -> Any:
         """Execute operation with retry logic"""
         last_exception = None
 
         for attempt in range(self.retry_config["max_attempts"]):
             try:
-                return await operation(*args, **kwargs) if asyncio.iscoroutinefunction(operation) else operation(*args, **kwargs)
+                return (
+                    await operation(*args, **kwargs)
+                    if asyncio.iscoroutinefunction(operation)
+                    else operation(*args, **kwargs)
+                )
 
             except retryable_exceptions as e:
                 last_exception = e
@@ -114,21 +119,24 @@ class ErrorHandlingService:
                     self.record_error(
                         error=e,
                         context=f"{operation_name}_final_attempt_failed",
-                        metadata={"attempts": attempt + 1}
+                        metadata={"attempts": attempt + 1},
                     )
                     raise
 
                 # Calculate delay with exponential backoff
                 delay = min(
-                    self.retry_config["base_delay"] *
-                    (self.retry_config["exponential_base"] ** attempt),
-                    self.retry_config["max_delay"]
+                    self.retry_config["base_delay"]
+                    * (self.retry_config["exponential_base"] ** attempt),
+                    self.retry_config["max_delay"],
                 )
 
                 logger.warning(
                     "Retrying %s after %s seconds (attempt %d/%d): %s",
-                    operation_name, delay, attempt +
-                    1, self.retry_config["max_attempts"], str(e)
+                    operation_name,
+                    delay,
+                    attempt + 1,
+                    self.retry_config["max_attempts"],
+                    str(e),
                 )
 
                 await asyncio.sleep(delay)
@@ -138,7 +146,7 @@ class ErrorHandlingService:
                 self.record_error(
                     error=e,
                     context=f"{operation_name}_non_retryable",
-                    metadata={"attempts": attempt + 1}
+                    metadata={"attempts": attempt + 1},
                 )
                 raise
 
@@ -147,7 +155,7 @@ class ErrorHandlingService:
                 self.record_error(
                     error=e,
                     context=f"{operation_name}_unknown_error",
-                    metadata={"attempts": attempt + 1}
+                    metadata={"attempts": attempt + 1},
                 )
                 raise
 
@@ -160,14 +168,14 @@ class ErrorHandlingService:
         self.record_error(
             error=error,
             context=f"database_{operation}",
-            metadata={"operation": operation}
+            metadata={"operation": operation},
         )
 
         return {
             "success": False,
             "error_type": "database_error",
             "message": "Database operation failed. Please try again.",
-            "retry_recommended": True
+            "retry_recommended": True,
         }
 
     def handle_openai_error(self, error: Exception, operation: str) -> Dict[str, Any]:
@@ -175,7 +183,7 @@ class ErrorHandlingService:
         self.record_error(
             error=error,
             context=f"openai_{operation}",
-            metadata={"operation": operation}
+            metadata={"operation": operation},
         )
 
         error_message = str(error).lower()
@@ -186,28 +194,28 @@ class ErrorHandlingService:
                 "error_type": "rate_limit",
                 "message": "API rate limit reached. Please wait a moment and try again.",
                 "retry_recommended": True,
-                "suggested_delay": 60
+                "suggested_delay": 60,
             }
         elif "quota" in error_message:
             return {
                 "success": False,
                 "error_type": "quota_exceeded",
                 "message": "API quota exceeded. Please contact support.",
-                "retry_recommended": False
+                "retry_recommended": False,
             }
         elif "authentication" in error_message or "unauthorized" in error_message:
             return {
                 "success": False,
                 "error_type": "authentication",
                 "message": "API authentication failed. Please contact support.",
-                "retry_recommended": False
+                "retry_recommended": False,
             }
         else:
             return {
                 "success": False,
                 "error_type": "api_error",
                 "message": "AI service temporarily unavailable. Please try again.",
-                "retry_recommended": True
+                "retry_recommended": True,
             }
 
     def handle_retrieval_error(self, error: Exception, query: str) -> Dict[str, Any]:
@@ -215,7 +223,7 @@ class ErrorHandlingService:
         self.record_error(
             error=error,
             context="document_retrieval",
-            metadata={"query": query[:100]}  # Truncate query for logging
+            metadata={"query": query[:100]},  # Truncate query for logging
         )
 
         return {
@@ -223,15 +231,17 @@ class ErrorHandlingService:
             "error_type": "retrieval_error",
             "message": "Knowledge retrieval failed. Using fallback approach.",
             "retry_recommended": True,
-            "fallback_available": True
+            "fallback_available": True,
         }
 
-    def handle_context_error(self, error: Exception, context_type: str) -> Dict[str, Any]:
+    def handle_context_error(
+        self, error: Exception, context_type: str
+    ) -> Dict[str, Any]:
         """Handle context engineering errors"""
         self.record_error(
             error=error,
             context=f"context_engineering_{context_type}",
-            metadata={"context_type": context_type}
+            metadata={"context_type": context_type},
         )
 
         return {
@@ -239,15 +249,15 @@ class ErrorHandlingService:
             "error_type": "context_error",
             "message": "Context processing failed. Using simplified approach.",
             "retry_recommended": True,
-            "fallback_available": True
+            "fallback_available": True,
         }
 
-    def handle_response_generation_error(self, error: Exception, model: str) -> Dict[str, Any]:
+    def handle_response_generation_error(
+        self, error: Exception, model: str
+    ) -> Dict[str, Any]:
         """Handle response generation errors"""
         self.record_error(
-            error=error,
-            context="response_generation",
-            metadata={"model": model}
+            error=error, context="response_generation", metadata={"model": model}
         )
 
         return {
@@ -255,13 +265,11 @@ class ErrorHandlingService:
             "error_type": "response_generation_error",
             "message": "Response generation failed. Please try rephrasing your question.",
             "retry_recommended": True,
-            "fallback_available": True
+            "fallback_available": True,
         }
 
     async def create_fallback_response(
-        self,
-        error_message: str,
-        include_suggestions: bool = True
+        self, error_message: str, include_suggestions: bool = True
     ) -> Dict[str, Any]:
         """Create a fallback response when errors occur"""
 
@@ -271,10 +279,11 @@ class ErrorHandlingService:
             suggestions = [
                 "Try rephrasing your question",
                 "Check if your query is specific enough",
-                "Wait a moment and try again"
+                "Wait a moment and try again",
             ]
-            base_response += "\n\nSuggestions:\n" + \
-                "\n".join(f"• {s}" for s in suggestions)
+            base_response += "\n\nSuggestions:\n" + "\n".join(
+                f"• {s}" for s in suggestions
+            )
 
         return {
             "response": base_response,
@@ -285,11 +294,14 @@ class ErrorHandlingService:
             "context_quality": {"coverage_score": 0, "relevance_score": 0},
             "config_used": "fallback",
             "is_fallback": True,
-            "error_handled": True
+            "error_handled": True,
         }
 
-    def with_error_handling(self, operation_name: str = None, service: str = "chat_service"):
+    def with_error_handling(
+        self, operation_name: str = None, service: str = "chat_service"
+    ):
         """Decorator for automatic error handling"""
+
         def decorator(func):
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
@@ -301,7 +313,7 @@ class ErrorHandlingService:
                         error=e,
                         service=service,
                         context=op_name,
-                        metadata={"function": func.__name__}
+                        metadata={"function": func.__name__},
                     )
                     raise
 
@@ -315,11 +327,12 @@ class ErrorHandlingService:
                         error=e,
                         service=service,
                         context=op_name,
-                        metadata={"function": func.__name__}
+                        metadata={"function": func.__name__},
                     )
                     raise
 
             return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+
         return decorator
 
     def get_error_statistics(self) -> Dict[str, Any]:
@@ -330,7 +343,7 @@ class ErrorHandlingService:
             "error_rate_percent": 0.0,
             "most_common_errors": [],
             "recovery_rate_percent": 0.0,
-            "average_retry_success_rate": 0.0
+            "average_retry_success_rate": 0.0,
         }
 
     def configure_retry_settings(
@@ -338,7 +351,7 @@ class ErrorHandlingService:
         max_attempts: int = None,
         base_delay: float = None,
         max_delay: float = None,
-        exponential_base: int = None
+        exponential_base: int = None,
     ) -> None:
         """Configure retry behavior"""
         if max_attempts is not None:

@@ -1,13 +1,18 @@
+import logging
 import os
 import uuid
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
-from ..models import URLIngestRequest, UpdateRequest, SearchRequest
-from ..services.auth import verify_jwt_token, get_user_with_org
-from ..services.storage.supabase_client import get_supabase_client
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+
+from ..models import SearchRequest, UpdateRequest, URLIngestRequest
+from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.storage.pinecone_client import get_pinecone_index
+from ..services.storage.supabase_client import get_supabase_client
+from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 from ..utils.validators import validate_file_size, validate_file_type
-from ..utils.rate_limiter import rate_limit, get_rate_limit_config
 from ..utils.vector_operations import efficient_delete_by_upload_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -16,13 +21,13 @@ supabase = get_supabase_client()
 index = get_pinecone_index()
 
 
-async def _update_upload_helper(
+def _update_upload_helper(
     upload_id: str,
     org_id: str,
     file_type: str,
     new_source: str,
     old_source: str = None,
-    file_content: bytes = None
+    file_content: bytes = None,
 ) -> dict:
     """
     Helper function to update an upload (reduces code duplication)
@@ -39,8 +44,13 @@ async def _update_upload_helper(
         Success response dictionary
     """
     # Fetch the existing upload record
-    upload_result = supabase.table("uploads").select(
-        "*").eq("id", upload_id).eq("org_id", org_id).execute()
+    upload_result = (
+        supabase.table("uploads")
+        .select("*")
+        .eq("id", upload_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
 
     if not upload_result.data:
         raise HTTPException(status_code=404, detail="Upload not found")
@@ -58,30 +68,40 @@ async def _update_upload_helper(
         if old_source:
             try:
                 supabase.storage.from_("uploads").remove([old_source])
-                print(f"[Info] Deleted old file from storage: {old_source}")
+                logger.info("Deleted old file from storage: %s", old_source)
             except Exception as e:
-                print(f"[Warning] Failed to delete old file from storage: {e}")
+                logger.warning("Failed to delete old file from storage: %s", e)
 
         # Upload new file to Supabase Storage
         try:
-            storage_result = supabase.storage.from_(
-                "uploads").upload(new_source, file_content)
+            storage_result = supabase.storage.from_("uploads").upload(
+                new_source, file_content
+            )
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail=f"Storage upload failed: {str(e)}") from e
+                status_code=400, detail=f"Storage upload failed: {str(e)}"
+            ) from e
 
     # Update the upload record in database
-    db_result = supabase.table("uploads").update({
-        "source": new_source,
-        "status": "pending",
-        "error_message": None,
-        "updated_at": "now()"
-    }).eq("id", upload_id).eq("org_id", org_id).execute()
+    db_result = (
+        supabase.table("uploads")
+        .update(
+            {
+                "source": new_source,
+                "status": "pending",
+                "error_message": None,
+                "updated_at": "now()",
+            }
+        )
+        .eq("id", upload_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
 
     return {
         "message": f"{file_type.upper()} updated successfully",
         "upload_id": upload_id,
-        "new_source": new_source
+        "new_source": new_source,
     }
 
 
@@ -94,28 +114,31 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
     """
     try:
         import logging
+
         logger = logging.getLogger(__name__)
 
         logger.info(
-            f"Deleting vectors for upload {upload_id} from namespace {namespace}")
+            "Deleting vectors for upload %s from namespace %s", upload_id, namespace
+        )
 
         # Use Pinecone's delete by metadata filter - much more efficient!
         # This deletes all vectors matching the filter without needing to query first
         try:
             # Try the new delete method with filter (Pinecone v3+)
             delete_response = index.delete(
-                filter={"upload_id": upload_id},
-                namespace=namespace
+                filter={"upload_id": upload_id}, namespace=namespace
             )
 
             logger.info(
-                f"Successfully deleted vectors for upload {upload_id} using metadata filter"
+                "Successfully deleted vectors for upload %s using metadata filter",
+                upload_id,
             )
 
         except (TypeError, AttributeError) as filter_error:
             # Fallback for older Pinecone versions that don't support filter in delete
             logger.warning(
-                f"Metadata filter delete not supported, falling back to query-then-delete: {filter_error}"
+                "Metadata filter delete not supported, falling back to query-then-delete: %s",
+                filter_error,
             )
 
             # Fallback: Query for IDs then delete (less efficient but works)
@@ -133,7 +156,7 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
                     namespace=namespace,
                     top_k=batch_size,
                     include_metadata=False,
-                    include_values=False
+                    include_values=False,
                 )
 
                 batch_ids = [match.id for match in query_result.matches]
@@ -146,21 +169,26 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
                 # Delete in batches
                 delete_batch_size = 100
                 for i in range(0, len(vector_ids), delete_batch_size):
-                    batch = vector_ids[i:i + delete_batch_size]
+                    batch = vector_ids[i : i + delete_batch_size]
                     index.delete(ids=batch, namespace=namespace)
 
                 logger.info(
-                    f"Deleted {len(vector_ids)} vectors for upload {upload_id} (fallback method)"
+                    "Deleted %d vectors for upload %s (fallback method)",
+                    len(vector_ids),
+                    upload_id,
                 )
             else:
-                logger.info(f"No vectors found for upload {upload_id}")
+                logger.info("No vectors found for upload %s", upload_id)
 
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error(
-            f"Failed to delete vectors from Pinecone for upload {upload_id}: {e}",
-            exc_info=True
+            "Failed to delete vectors from Pinecone for upload %s: %s",
+            upload_id,
+            e,
+            exc_info=True,
         )
         # Don't raise exception - we still want to continue with other operations
 
@@ -168,8 +196,7 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
 @router.post("/pdf")
 @rate_limit(**get_rate_limit_config("upload"))
 async def upload_pdf(
-    file: UploadFile = File(...),
-    user=Depends(verify_jwt_token)
+    file: UploadFile = File(...), user=Depends(verify_jwt_token_from_header)
 ):
     """
     Upload a PDF file to Supabase storage and insert its record into the database.
@@ -190,7 +217,7 @@ async def upload_pdf(
             raise HTTPException(status_code=400, detail="No filename provided")
 
         try:
-            validate_file_type(file.filename, ['.pdf'])
+            validate_file_type(file.filename, [".pdf"])
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -204,11 +231,8 @@ async def upload_pdf(
             raise HTTPException(status_code=400, detail=str(e))
 
         # Validate it's actually a PDF
-        if not file_content.startswith(b'%PDF'):
-            raise HTTPException(
-                status_code=400,
-                detail="File is not a valid PDF"
-            )
+        if not file_content.startswith(b"%PDF"):
+            raise HTTPException(status_code=400, detail="File is not a valid PDF")
 
         # Generate unique file path
         file_id = str(uuid.uuid4())
@@ -216,25 +240,33 @@ async def upload_pdf(
 
         # Upload to Supabase Storage
         try:
-            storage_result = supabase.storage.from_(
-                "uploads").upload(supabase_path, file_content)
+            storage_result = supabase.storage.from_("uploads").upload(
+                supabase_path, file_content
+            )
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail=f"Storage upload failed: {str(e)}") from e
+                status_code=400, detail=f"Storage upload failed: {str(e)}"
+            ) from e
 
         # Insert record directly into database
-        db_result = supabase.table("uploads").insert({
-            "org_id": org_id,
-            "type": "pdf",
-            "source": supabase_path,
-            "pinecone_namespace": f"org-{org_id}",
-            "status": "pending"
-        }).execute()
+        db_result = (
+            supabase.table("uploads")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "type": "pdf",
+                    "source": supabase_path,
+                    "pinecone_namespace": f"org-{org_id}",
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
 
         return {
             "message": "PDF uploaded successfully",
             "upload_id": db_result.data[0]["id"],
-            "path": supabase_path
+            "path": supabase_path,
         }
 
     except Exception as e:
@@ -244,8 +276,7 @@ async def upload_pdf(
 @router.post("/json")
 @rate_limit(**get_rate_limit_config("upload"))
 async def upload_json(
-    file: UploadFile = File(...),
-    user=Depends(verify_jwt_token)
+    file: UploadFile = File(...), user=Depends(verify_jwt_token_from_header)
 ):
     """
     Upload a JSON file to Supabase storage and insert its record into the database.
@@ -261,7 +292,7 @@ async def upload_json(
             raise HTTPException(status_code=400, detail="No filename provided")
 
         try:
-            validate_file_type(file.filename, ['.json'])
+            validate_file_type(file.filename, [".json"])
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -276,18 +307,13 @@ async def upload_json(
 
         # Validate it's actually valid JSON
         import json
+
         try:
-            json.loads(file_content.decode('utf-8'))
+            json.loads(file_content.decode("utf-8"))
         except json.JSONDecodeError:
-            raise HTTPException(
-                status_code=400,
-                detail="File is not valid JSON"
-            )
+            raise HTTPException(status_code=400, detail="File is not valid JSON")
         except UnicodeDecodeError:
-            raise HTTPException(
-                status_code=400,
-                detail="File encoding is not UTF-8"
-            )
+            raise HTTPException(status_code=400, detail="File encoding is not UTF-8")
 
         # Generate unique file path
         file_id = str(uuid.uuid4())
@@ -295,25 +321,33 @@ async def upload_json(
 
         # Upload to Supabase Storage
         try:
-            storage_result = supabase.storage.from_(
-                "uploads").upload(supabase_path, file_content)
+            storage_result = supabase.storage.from_("uploads").upload(
+                supabase_path, file_content
+            )
         except Exception as e:
             raise HTTPException(
-                status_code=400, detail=f"Storage upload failed: {str(e)}") from e
+                status_code=400, detail=f"Storage upload failed: {str(e)}"
+            ) from e
 
         # Insert record directly into database
-        db_result = supabase.table("uploads").insert({
-            "org_id": org_id,
-            "type": "json",
-            "source": supabase_path,
-            "pinecone_namespace": f"org-{org_id}",
-            "status": "pending"
-        }).execute()
+        db_result = (
+            supabase.table("uploads")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "type": "json",
+                    "source": supabase_path,
+                    "pinecone_namespace": f"org-{org_id}",
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
 
         return {
             "message": "JSON uploaded successfully",
             "upload_id": db_result.data[0]["id"],
-            "path": supabase_path
+            "path": supabase_path,
         }
 
         # return {
@@ -329,8 +363,7 @@ async def upload_json(
 @router.post("/url")
 @rate_limit(**get_rate_limit_config("upload"))
 async def ingest_url(
-    request: URLIngestRequest,
-    user=Depends(verify_jwt_token)
+    request: URLIngestRequest, user=Depends(verify_jwt_token_from_header)
 ):
     """
     Ingest a URL by adding it to the Supabase database for processing.
@@ -347,17 +380,23 @@ async def ingest_url(
         org_id = user_data["org_id"]
 
         # Insert URL record directly into database
-        db_result = supabase.table("uploads").insert({
-            "org_id": org_id,
-            "type": "url",
-            "source": request.url,
-            "pinecone_namespace": f"org-{org_id}",
-            "status": "pending"
-        }).execute()
+        db_result = (
+            supabase.table("uploads")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "type": "url",
+                    "source": request.url,
+                    "pinecone_namespace": f"org-{org_id}",
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
 
         return {
             "message": "URL registered for ingestion",
-            "upload_id": db_result.data[0]["id"]
+            "upload_id": db_result.data[0]["id"],
         }
 
     except Exception as e:
@@ -370,7 +409,7 @@ async def list_uploads(
     page_size: int = 20,
     status: str = None,
     type: str = None,
-    user=Depends(verify_jwt_token)
+    user=Depends(verify_jwt_token_from_header),
 ):
     """
     List uploads with pagination and filtering
@@ -391,15 +430,16 @@ async def list_uploads(
 
         if page_size < 1 or page_size > 100:
             raise HTTPException(
-                status_code=400, detail="Page size must be between 1 and 100")
+                status_code=400, detail="Page size must be between 1 and 100"
+            )
 
         # Calculate offset
         offset = (page - 1) * page_size
 
         # Build query
-        query = supabase.table("uploads").select(
-            "*", count="exact"
-        ).eq("org_id", org_id)
+        query = (
+            supabase.table("uploads").select("*", count="exact").eq("org_id", org_id)
+        )
 
         # Apply filters
         if status:
@@ -407,7 +447,7 @@ async def list_uploads(
             if status not in allowed_statuses:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Status must be one of: {', '.join(allowed_statuses)}"
+                    detail=f"Status must be one of: {', '.join(allowed_statuses)}",
                 )
             query = query.eq("status", status)
 
@@ -416,18 +456,19 @@ async def list_uploads(
             if type not in allowed_types:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Type must be one of: {', '.join(allowed_types)}"
+                    detail=f"Type must be one of: {', '.join(allowed_types)}",
                 )
             query = query.eq("type", type)
 
         # Apply pagination and ordering
-        result = query.order("created_at", desc=True).range(
-            offset, offset + page_size - 1
-        ).execute()
+        result = (
+            query.order("created_at", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
 
         # Get total count
-        total_count = result.count if hasattr(
-            result, 'count') else len(result.data)
+        total_count = result.count if hasattr(result, "count") else len(result.data)
 
         # Calculate pagination metadata
         total_pages = (total_count + page_size - 1) // page_size
@@ -442,8 +483,8 @@ async def list_uploads(
                 "total_items": total_count,
                 "total_pages": total_pages,
                 "has_next": has_next,
-                "has_prev": has_prev
-            }
+                "has_prev": has_prev,
+            },
         }
 
     except HTTPException:
@@ -453,10 +494,9 @@ async def list_uploads(
 
 
 @router.get("/{upload_id}/status")
-async def get_upload_status(upload_id: str, user=Depends(verify_jwt_token)):
+async def get_upload_status(upload_id: str, user=Depends(verify_jwt_token_from_header)):
     try:
-        result = supabase.table("uploads").select(
-            "*").eq("id", upload_id).execute()
+        result = supabase.table("uploads").select("*").eq("id", upload_id).execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Upload not found")
@@ -468,14 +508,19 @@ async def get_upload_status(upload_id: str, user=Depends(verify_jwt_token)):
 
 
 @router.delete("/{upload_id}")
-async def delete_upload(upload_id: str, user=Depends(verify_jwt_token)):
+async def delete_upload(upload_id: str, user=Depends(verify_jwt_token_from_header)):
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
         # Fetch the complete upload record
-        upload_result = supabase.table("uploads").select(
-            "*").eq("id", upload_id).eq("org_id", org_id).execute()
+        upload_result = (
+            supabase.table("uploads")
+            .select("*")
+            .eq("id", upload_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
 
         if not upload_result.data:
             raise HTTPException(status_code=404, detail="Upload not found")
@@ -492,19 +537,20 @@ async def delete_upload(upload_id: str, user=Depends(verify_jwt_token)):
         if file_type in ["pdf", "json"] and source:
             try:
                 supabase.storage.from_("uploads").remove([source])
-                print(f"[Info] Deleted file from storage: {source}")
+                logger.info("Deleted file from storage: %s", source)
             except Exception as e:
-                print(f"[Warning] Failed to delete file from storage: {e}")
+                logger.warning("Failed to delete file from storage: %s", e)
                 # Continue with database deletion even if storage deletion fails
 
         # Delete the upload record from the database
-        supabase.table("uploads").delete().eq(
-            "id", upload_id).eq("org_id", org_id).execute()
+        supabase.table("uploads").delete().eq("id", upload_id).eq(
+            "org_id", org_id
+        ).execute()
 
         return {
             "message": "Upload deleted successfully",
             "upload_id": upload_id,
-            "type": file_type
+            "type": file_type,
         }
 
     except Exception as e:
@@ -512,12 +558,17 @@ async def delete_upload(upload_id: str, user=Depends(verify_jwt_token)):
 
 
 @router.put("/{upload_id}/status")
-async def update_upload_status(upload_id: str, status: str, user=Depends(verify_jwt_token)):
+async def update_upload_status(
+    upload_id: str, status: str, user=Depends(verify_jwt_token_from_header)
+):
     try:
         # Update the upload status in the database
-        result = supabase.table("uploads").update({
-            "status": status
-        }).eq("id", upload_id).execute()
+        result = (
+            supabase.table("uploads")
+            .update({"status": status})
+            .eq("id", upload_id)
+            .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Upload not found")
@@ -532,7 +583,7 @@ async def update_upload_status(upload_id: str, status: str, user=Depends(verify_
 async def update_pdf_upload(
     upload_id: str,
     file: UploadFile = File(...),
-    user=Depends(verify_jwt_token)
+    user=Depends(verify_jwt_token_from_header),
 ):
     """Update a PDF upload with a new file"""
     try:
@@ -540,7 +591,7 @@ async def update_pdf_upload(
         org_id = user_data["org_id"]
 
         # Validate file type
-        if not file.filename or not file.filename.endswith('.pdf'):
+        if not file.filename or not file.filename.endswith(".pdf"):
             raise HTTPException(status_code=400, detail="File must be a PDF")
 
         # Generate new unique file path
@@ -557,12 +608,12 @@ async def update_pdf_upload(
             raise HTTPException(status_code=400, detail=str(e))
 
         # Use helper function to update
-        return await _update_upload_helper(
+        return _update_upload_helper(
             upload_id=upload_id,
             org_id=org_id,
             file_type="pdf",
             new_source=supabase_path,
-            file_content=file_content
+            file_content=file_content,
         )
 
     except HTTPException:
@@ -575,7 +626,7 @@ async def update_pdf_upload(
 async def update_json_upload(
     upload_id: str,
     file: UploadFile = File(...),
-    user=Depends(verify_jwt_token)
+    user=Depends(verify_jwt_token_from_header),
 ):
     """Update a JSON upload with a new file"""
     try:
@@ -583,7 +634,7 @@ async def update_json_upload(
         org_id = user_data["org_id"]
 
         # Validate file type
-        if not file.filename or not file.filename.endswith('.json'):
+        if not file.filename or not file.filename.endswith(".json"):
             raise HTTPException(status_code=400, detail="File must be JSON")
 
         # Generate new unique file path
@@ -601,18 +652,19 @@ async def update_json_upload(
 
         # Validate JSON format
         import json
+
         try:
-            json.loads(file_content.decode('utf-8'))
+            json.loads(file_content.decode("utf-8"))
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON format")
 
         # Use helper function to update
-        return await _update_upload_helper(
+        return _update_upload_helper(
             upload_id=upload_id,
             org_id=org_id,
             file_type="json",
             new_source=supabase_path,
-            file_content=file_content
+            file_content=file_content,
         )
 
     except HTTPException:
@@ -623,9 +675,7 @@ async def update_json_upload(
 
 @router.put("/{upload_id}/url")
 async def update_url_upload(
-    upload_id: str,
-    request: UpdateRequest,
-    user=Depends(verify_jwt_token)
+    upload_id: str, request: UpdateRequest, user=Depends(verify_jwt_token_from_header)
 ):
     """Update a URL upload with a new URL"""
     try:
@@ -633,12 +683,12 @@ async def update_url_upload(
         org_id = user_data["org_id"]
 
         # Use helper function to update (no file content for URLs)
-        return await _update_upload_helper(
+        return _update_upload_helper(
             upload_id=upload_id,
             org_id=org_id,
             file_type="url",
             new_source=request.url,
-            file_content=None  # URLs don't have file content
+            file_content=None,  # URLs don't have file content
         )
 
     except HTTPException:
@@ -650,8 +700,7 @@ async def update_url_upload(
 @router.post("/search")
 @rate_limit(**get_rate_limit_config("search"))
 async def search_uploads(
-    request: SearchRequest,
-    user=Depends(verify_jwt_token)
+    request: SearchRequest, user=Depends(verify_jwt_token_from_header)
 ):
     try:
         from langchain_openai import OpenAIEmbeddings
@@ -675,7 +724,7 @@ async def search_uploads(
             namespace=namespace,
             top_k=request.top_k,
             include_metadata=True,
-            filter=filter_dict if filter_dict else None
+            filter=filter_dict if filter_dict else None,
         )
 
         # Format results
@@ -687,14 +736,14 @@ async def search_uploads(
                 "content": match.metadata.get("text", ""),
                 "upload_id": match.metadata.get("upload_id"),
                 "source": match.metadata.get("source"),
-                "type": match.metadata.get("type")
+                "type": match.metadata.get("type"),
             }
             results.append(result)
 
         return {
             "query": request.query,
             "results": results,
-            "total_results": len(results)
+            "total_results": len(results),
         }
 
     except Exception as e:
@@ -702,8 +751,10 @@ async def search_uploads(
 
 
 @router.get("/{upload_id}/vectors")
-async def get_upload_vectors(upload_id: str, user=Depends(verify_jwt_token)):
-    """Debug endpoint to see what vectors exist for an upload"""
+async def get_upload_vectors(
+    upload_id: str, user=Depends(verify_jwt_token_from_header)
+):
+    """Get vector information for an upload (requires authentication)"""
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
@@ -717,22 +768,19 @@ async def get_upload_vectors(upload_id: str, user=Depends(verify_jwt_token)):
             namespace=namespace,
             top_k=100,
             include_metadata=True,
-            include_values=False
+            include_values=False,
         )
 
         vectors_info = []
         for match in query_result.matches:
-            vector_info = {
-                "id": match.id,
-                "metadata": match.metadata
-            }
+            vector_info = {"id": match.id, "metadata": match.metadata}
             vectors_info.append(vector_info)
 
         return {
             "upload_id": upload_id,
             "namespace": namespace,
             "vector_count": len(vectors_info),
-            "vectors": vectors_info
+            "vectors": vectors_info,
         }
 
     except Exception as e:
@@ -740,15 +788,20 @@ async def get_upload_vectors(upload_id: str, user=Depends(verify_jwt_token)):
 
 
 @router.post("/{upload_id}/reprocess")
-async def reprocess_upload(upload_id: str, user=Depends(verify_jwt_token)):
+async def reprocess_upload(upload_id: str, user=Depends(verify_jwt_token_from_header)):
     """Force reprocessing of an upload"""
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
         # Check if upload exists and belongs to user's org
-        upload_result = supabase.table("uploads").select(
-            "*").eq("id", upload_id).eq("org_id", org_id).execute()
+        upload_result = (
+            supabase.table("uploads")
+            .select("*")
+            .eq("id", upload_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
 
         if not upload_result.data:
             raise HTTPException(status_code=404, detail="Upload not found")
@@ -760,16 +813,14 @@ async def reprocess_upload(upload_id: str, user=Depends(verify_jwt_token)):
         delete_vectors_from_pinecone(upload_id, namespace)
 
         # Reset status to pending
-        supabase.table("uploads").update({
-            "status": "pending",
-            "error_message": None,
-            "updated_at": "now()"
-        }).eq("id", upload_id).eq("org_id", org_id).execute()
+        supabase.table("uploads").update(
+            {"status": "pending", "error_message": None, "updated_at": "now()"}
+        ).eq("id", upload_id).eq("org_id", org_id).execute()
 
         return {
             "message": "Upload queued for reprocessing",
             "upload_id": upload_id,
-            "status": "pending"
+            "status": "pending",
         }
 
     except Exception as e:
@@ -777,29 +828,28 @@ async def reprocess_upload(upload_id: str, user=Depends(verify_jwt_token)):
 
 
 @router.get("/stats")
-async def get_upload_stats(user=Depends(verify_jwt_token)):
+async def get_upload_stats(user=Depends(verify_jwt_token_from_header)):
     """Get statistics about uploads for the user's organization"""
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
         # Get upload counts by status
-        uploads = supabase.table("uploads").select(
-            "status, type").eq("org_id", org_id).execute()
+        uploads = (
+            supabase.table("uploads")
+            .select("status, type")
+            .eq("org_id", org_id)
+            .execute()
+        )
 
-        stats = {
-            "total_uploads": len(uploads.data),
-            "by_status": {},
-            "by_type": {}
-        }
+        stats = {"total_uploads": len(uploads.data), "by_status": {}, "by_type": {}}
 
         for upload in uploads.data:
             status = upload.get("status", "unknown")
             upload_type = upload.get("type", "unknown")
 
             stats["by_status"][status] = stats["by_status"].get(status, 0) + 1
-            stats["by_type"][upload_type] = stats["by_type"].get(
-                upload_type, 0) + 1
+            stats["by_type"][upload_type] = stats["by_type"].get(upload_type, 0) + 1
 
         return stats
 

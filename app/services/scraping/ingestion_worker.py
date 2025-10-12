@@ -1,21 +1,24 @@
 "# services/ingestion_worker.py\n\n"
 
-import os
 import asyncio
 import io
 import json
 import logging
-import requests
+import os
+
 import openai
+import orjson
+import requests
 from dotenv import load_dotenv
-from pinecone import Pinecone
-from PyPDF2 import PdfReader
-from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from ..storage.supabase_client import get_supabase_client
+from langchain_openai import OpenAIEmbeddings
+from PyPDF2 import PdfReader
+
 from ..storage.pinecone_client import get_pinecone_index
+from ..storage.supabase_client import get_supabase_client
+from .url_utils import (create_safe_fetch_message, create_safe_success_message,
+                        log_domain_safely)
 from .web_scraper import scrape_url_text
-from .url_utils import log_domain_safely, create_safe_fetch_message, create_safe_success_message
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -43,13 +46,12 @@ def get_authenticated_headers() -> dict:
     supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
     if not supabase_key:
-        raise ValueError(
-            "SUPABASE_SERVICE_ROLE_KEY environment variable is required")
+        raise ValueError("SUPABASE_SERVICE_ROLE_KEY environment variable is required")
 
     headers = {
-        'Authorization': f'Bearer {supabase_key}',
-        'apikey': supabase_key,
-        'Content-Type': 'application/json'
+        "Authorization": f"Bearer {supabase_key}",
+        "apikey": supabase_key,
+        "Content-Type": "application/json",
     }
     # Note: These headers contain sensitive authentication tokens
     # Never log or print these headers directly
@@ -60,14 +62,21 @@ def get_safe_headers_for_logging(headers: dict) -> dict:
     """Get headers safe for logging with sensitive values redacted"""
     safe_headers = {}
     sensitive_header_keys = {
-        'authorization', 'apikey', 'api-key', 'x-api-key',
-        'bearer', 'token', 'auth', 'secret', 'key'
+        "authorization",
+        "apikey",
+        "api-key",
+        "x-api-key",
+        "bearer",
+        "token",
+        "auth",
+        "secret",
+        "key",
     }
 
     for key, value in headers.items():
-        key_lower = key.lower().replace('-', '').replace('_', '')
+        key_lower = key.lower().replace("-", "").replace("_", "")
         if any(sensitive in key_lower for sensitive in sensitive_header_keys):
-            safe_headers[key] = '[REDACTED]'
+            safe_headers[key] = "[REDACTED]"
         else:
             safe_headers[key] = value
 
@@ -88,7 +97,7 @@ def extract_text_from_pdf_url(url: str) -> str:
 
     try:
         # Convert Supabase path to authenticated URL if needed
-        if not url.startswith('http'):
+        if not url.startswith("http"):
             url = get_supabase_storage_url(url)
 
         logger.info(create_safe_fetch_message(url))
@@ -101,16 +110,16 @@ def extract_text_from_pdf_url(url: str) -> str:
         response.raise_for_status()
 
         # Check content length before downloading
-        content_length = response.headers.get('content-length')
+        content_length = response.headers.get("content-length")
         if content_length:
             size_mb = int(content_length) / (1024 * 1024)
-            logger.info(f"PDF size: {size_mb:.2f} MB",
-                        extra={"size_mb": size_mb})
+            logger.info(f"PDF size: {size_mb:.2f} MB", extra={"size_mb": size_mb})
 
             # Enforce size limit to prevent memory exhaustion
             if size_mb > 100:
                 raise ValueError(
-                    f"PDF file too large ({size_mb:.2f} MB). Maximum size is 100 MB.")
+                    f"PDF file too large ({size_mb:.2f} MB). Maximum size is 100 MB."
+                )
 
         # Create a BytesIO buffer and write in chunks to manage memory
         pdf_buffer = io.BytesIO()
@@ -125,7 +134,8 @@ def extract_text_from_pdf_url(url: str) -> str:
                 # Enforce hard limit during download
                 if total_bytes > max_bytes:
                     raise ValueError(
-                        f"PDF download exceeded maximum size limit ({max_bytes / (1024 * 1024):.0f} MB)")
+                        f"PDF download exceeded maximum size limit ({max_bytes / (1024 * 1024):.0f} MB)"
+                    )
 
                 pdf_buffer.write(chunk)
 
@@ -141,9 +151,10 @@ def extract_text_from_pdf_url(url: str) -> str:
         first_bytes = pdf_buffer.read(4)
         pdf_buffer.seek(0)  # Reset position
 
-        if not first_bytes.startswith(b'%PDF'):
+        if not first_bytes.startswith(b"%PDF"):
             print(
-                f"[Warning] File doesn't appear to be a PDF. Content type: {response.headers.get('content-type')}")
+                f"[Warning] File doesn't appear to be a PDF. Content type: {response.headers.get('content-type')}"
+            )
             print(f"[Warning] First bytes: {first_bytes}")
             raise ValueError("File is not a valid PDF")
 
@@ -155,8 +166,7 @@ def extract_text_from_pdf_url(url: str) -> str:
         # Limit number of pages to prevent memory exhaustion
         max_pages = 1000
         if total_pages > max_pages:
-            print(
-                f"[Warning] PDF has {total_pages} pages, limiting to {max_pages}")
+            print(f"[Warning] PDF has {total_pages} pages, limiting to {max_pages}")
             total_pages = max_pages
 
         # Use a list to collect text chunks, then join once (more memory efficient)
@@ -176,7 +186,8 @@ def extract_text_from_pdf_url(url: str) -> str:
                         print(f"[Info] Processed {i+1}/{total_pages} pages...")
                     elif total_pages <= 50:
                         print(
-                            f"[Info] Extracted text from page {i+1}: {len(page_text)} chars")
+                            f"[Info] Extracted text from page {i+1}: {len(page_text)} chars"
+                        )
                 else:
                     print(f"[Warning] No text found on page {i+1}")
 
@@ -185,29 +196,30 @@ def extract_text_from_pdf_url(url: str) -> str:
                 del page_text
 
             except Exception as page_error:
-                print(
-                    f"[Warning] Error extracting text from page {i+1}: {page_error}")
+                print(f"[Warning] Error extracting text from page {i+1}: {page_error}")
                 continue
 
         # Join all text chunks
         text = "\n".join(text_chunks)
 
         print(
-            f"[Info] Total text extracted: {len(text)} characters from {pages_with_text}/{total_pages} pages")
+            f"[Info] Total text extracted: {len(text)} characters from {pages_with_text}/{total_pages} pages"
+        )
 
         if len(text.strip()) < 10:
             raise ValueError(
-                f"PDF contains insufficient text content. Only {len(text)} characters extracted from {pages_with_text} pages out of {total_pages} total pages. This might be a scanned/image-based PDF.")
+                f"PDF contains insufficient text content. Only {len(text)} characters extracted from {pages_with_text} pages out of {total_pages} total pages. This might be a scanned/image-based PDF."
+            )
 
         return text.strip()
 
     except requests.RequestException as e:
         print(
-            f"[Error] HTTP error while fetching PDF from {log_domain_safely(url)}: {e}")
-        if hasattr(e, 'response') and e.response is not None:
+            f"[Error] HTTP error while fetching PDF from {log_domain_safely(url)}: {e}"
+        )
+        if hasattr(e, "response") and e.response is not None:
             print(f"[Error] Response status: {e.response.status_code}")
-            safe_headers = get_safe_headers_for_logging(
-                dict(e.response.headers))
+            safe_headers = get_safe_headers_for_logging(dict(e.response.headers))
             print(f"[Error] Response headers: {safe_headers}")
             print(f"[Error] Response content: {e.response.text[:500]}")
         raise ValueError(f"Failed to download PDF: {str(e)}") from e
@@ -225,7 +237,7 @@ def extract_text_from_pdf_url(url: str) -> str:
         if pdf_reader is not None:
             try:
                 # Clear pages cache if it exists (suppress pylint false positive)
-                if hasattr(pdf_reader, 'pages') and hasattr(pdf_reader.pages, 'clear'):
+                if hasattr(pdf_reader, "pages") and hasattr(pdf_reader.pages, "clear"):
                     pdf_reader.pages.clear()  # pylint: disable=no-member
                 del pdf_reader
             except Exception as cleanup_error:
@@ -247,8 +259,7 @@ def extract_text_from_pdf_url(url: str) -> str:
                 del response
                 print("[Info] HTTP response closed and cleared")
             except Exception as cleanup_error:
-                print(
-                    f"[Warning] Error closing HTTP response: {cleanup_error}")
+                print(f"[Warning] Error closing HTTP response: {cleanup_error}")
 
 
 def extract_text_from_json_url(url: str) -> str:
@@ -262,7 +273,7 @@ def extract_text_from_json_url(url: str) -> str:
 
     try:
         # Convert Supabase path to authenticated URL if needed
-        if not url.startswith('http'):
+        if not url.startswith("http"):
             url = get_supabase_storage_url(url)
 
         print(f"[Info] {create_safe_fetch_message(url)}")
@@ -274,7 +285,7 @@ def extract_text_from_json_url(url: str) -> str:
         response.raise_for_status()
 
         # Check content length before downloading
-        content_length = response.headers.get('content-length')
+        content_length = response.headers.get("content-length")
         if content_length:
             size_mb = int(content_length) / (1024 * 1024)
             print(f"[Info] JSON size: {size_mb:.2f} MB")
@@ -282,7 +293,8 @@ def extract_text_from_json_url(url: str) -> str:
             # Limit JSON file size to prevent memory issues
             if size_mb > 50:
                 raise ValueError(
-                    f"JSON file too large ({size_mb:.2f} MB). Maximum size is 50 MB.")
+                    f"JSON file too large ({size_mb:.2f} MB). Maximum size is 50 MB."
+                )
 
         # Read content in chunks
         content_chunks = []
@@ -292,10 +304,10 @@ def extract_text_from_json_url(url: str) -> str:
         for chunk in response.iter_content(chunk_size=chunk_size, decode_unicode=True):
             if chunk:
                 content_chunks.append(chunk)
-                total_bytes += len(chunk.encode('utf-8'))
+                total_bytes += len(chunk.encode("utf-8"))
 
         # Join chunks
-        content = ''.join(content_chunks)
+        content = "".join(content_chunks)
 
         print(f"[Info] Successfully fetched JSON, size: {total_bytes} bytes")
 
@@ -308,22 +320,23 @@ def extract_text_from_json_url(url: str) -> str:
 
         # Extract text from various possible JSON structures
         if isinstance(data, dict):
-            if 'content' in data:
-                result = str(data['content'])
-            elif 'text' in data:
-                result = str(data['text'])
-            elif 'body' in data:
-                result = str(data['body'])
+            if "content" in data:
+                result = str(data["content"])
+            elif "text" in data:
+                result = str(data["text"])
+            elif "body" in data:
+                result = str(data["body"])
             else:
                 # Convert entire dict to text
-                result = json.dumps(data, indent=2)
+                result = orjson.dumps(data, option=orjson.OPT_INDENT_2).decode("utf-8")
         elif isinstance(data, list):
             # Join list items (limit to prevent memory issues)
             if len(data) > 10000:
                 print(
-                    f"[Warning] Large JSON array ({len(data)} items), limiting to first 10000")
+                    f"[Warning] Large JSON array ({len(data)} items), limiting to first 10000"
+                )
                 data = data[:10000]
-            result = '\n'.join(str(item) for item in data)
+            result = "\n".join(str(item) for item in data)
         else:
             result = str(data)
 
@@ -334,14 +347,16 @@ def extract_text_from_json_url(url: str) -> str:
 
     except requests.RequestException as e:
         print(
-            f"[Error] HTTP error while extracting text from JSON {log_domain_safely(url)}: {e}")
-        if hasattr(e, 'response') and e.response is not None:
+            f"[Error] HTTP error while extracting text from JSON {log_domain_safely(url)}: {e}"
+        )
+        if hasattr(e, "response") and e.response is not None:
             print(f"[Error] Response status: {e.response.status_code}")
             print(f"[Error] Response content: {e.response.text[:200]}")
         raise ValueError(f"Failed to download JSON: {str(e)}") from e
     except json.JSONDecodeError as e:
         print(
-            f"[Error] JSON decode error while extracting text from JSON {log_domain_safely(url)}: {e}")
+            f"[Error] JSON decode error while extracting text from JSON {log_domain_safely(url)}: {e}"
+        )
         raise ValueError(f"Invalid JSON format: {str(e)}") from e
     except Exception as e:
         print(f"[Error] JSON processing error: {e}")
@@ -353,8 +368,7 @@ def extract_text_from_json_url(url: str) -> str:
                 response.close()
                 print("[Info] HTTP response closed")
             except Exception as cleanup_error:
-                print(
-                    f"[Warning] Error closing HTTP response: {cleanup_error}")
+                print(f"[Warning] Error closing HTTP response: {cleanup_error}")
 
 
 def clean_text(text: str) -> str:
@@ -365,7 +379,7 @@ def clean_text(text: str) -> str:
     # Remove extra whitespace and normalize line breaks
     lines = (line.strip() for line in text.splitlines())
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    cleaned = ' '.join(chunk for chunk in chunks if chunk)
+    cleaned = " ".join(chunk for chunk in chunks if chunk)
 
     return cleaned
 
@@ -379,9 +393,7 @@ def split_into_chunks(text: str) -> list:
     cleaned_text = clean_text(text)
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=200,
-        separators=["\n\n", "\n", " ", ""]
+        chunk_size=800, chunk_overlap=200, separators=["\n\n", "\n", " ", ""]
     )
     chunks = splitter.split_text(cleaned_text)
     return [chunk for chunk in chunks if chunk.strip()]
@@ -405,14 +417,14 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
 
     # Common patterns for product URLs
     product_patterns = [
-        r'https?://[^\s]+/product[s]?/[^\s]+',
-        r'https?://[^\s]+/item[s]?/[^\s]+',
-        r'https?://[^\s]+/catalog/[^\s]+',
-        r'https?://[^\s]+/shop/[^\s]+',
-        r'https?://[^\s]+/buy/[^\s]+',
-        r'https?://[^\s]+/p/[^\s]+',
-        r'https?://[^\s]+/[a-zA-Z0-9\-]+\.html',
-        r'https?://[^\s]+/[a-zA-Z0-9\-]+\.php',
+        r"https?://[^\s]+/product[s]?/[^\s]+",
+        r"https?://[^\s]+/item[s]?/[^\s]+",
+        r"https?://[^\s]+/catalog/[^\s]+",
+        r"https?://[^\s]+/shop/[^\s]+",
+        r"https?://[^\s]+/buy/[^\s]+",
+        r"https?://[^\s]+/p/[^\s]+",
+        r"https?://[^\s]+/[a-zA-Z0-9\-]+\.html",
+        r"https?://[^\s]+/[a-zA-Z0-9\-]+\.php",
     ]
 
     # Extract URLs from text
@@ -421,7 +433,7 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
 
     for url in urls:
         # Clean URL (remove trailing punctuation)
-        url = re.sub(r'[.,;!?]+$', '', url)
+        url = re.sub(r"[.,;!?]+$", "", url)
 
         # Check if URL matches product patterns
         for pattern in product_patterns:
@@ -430,7 +442,7 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
                 break
 
         # If source_url is provided, check for relative links that might be products
-        if source_url and not url.startswith('http'):
+        if source_url and not url.startswith("http"):
             try:
                 absolute_url = urljoin(source_url, url)
                 for pattern in product_patterns:
@@ -442,7 +454,8 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
 
     # Also look for product mentions with potential links
     product_mentions = re.findall(
-        r'([A-Z][a-zA-Z\s]+(?:Cake|Product|Item|Goods|Merchandise)[a-zA-Z\s]*)', chunk)
+        r"([A-Z][a-zA-Z\s]+(?:Cake|Product|Item|Goods|Merchandise)[a-zA-Z\s]*)", chunk
+    )
 
     # If we found product mentions but no explicit links, and we have a source URL,
     # we can construct potential product page URLs
@@ -450,8 +463,8 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
         domain = urlparse(source_url).netloc
         for mention in product_mentions[:3]:  # Limit to first 3 mentions
             # Create a potential product URL based on the mention
-            product_slug = re.sub(r'[^a-zA-Z0-9\s]', '', mention.lower())
-            product_slug = re.sub(r'\s+', '-', product_slug.strip())
+            product_slug = re.sub(r"[^a-zA-Z0-9\s]", "", mention.lower())
+            product_slug = re.sub(r"\s+", "-", product_slug.strip())
             if product_slug:
                 potential_url = f"https://{domain}/product/{product_slug}"
                 product_links.append(potential_url)
@@ -459,7 +472,9 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
     return list(set(product_links))  # Remove duplicates
 
 
-def upload_to_pinecone(chunks: list, vectors: list, namespace: str, upload_id: str, source_url: str = None):
+def upload_to_pinecone(
+    chunks: list, vectors: list, namespace: str, upload_id: str, source_url: str = None
+):
     if not chunks or not vectors:
         print(f"[Warning] No chunks or vectors to upload for {upload_id}")
         return
@@ -471,7 +486,7 @@ def upload_to_pinecone(chunks: list, vectors: list, namespace: str, upload_id: s
             "chunk": chunk,
             "upload_id": upload_id,
             "source": source_url or "",
-            "chunk_index": i
+            "chunk_index": i,
         }
 
         # Extract potential product links from chunk content
@@ -485,7 +500,8 @@ def upload_to_pinecone(chunks: list, vectors: list, namespace: str, upload_id: s
         to_upsert.append((f"{upload_id}-{i}", vec, metadata))
 
     print(
-        f"[Info] Uploading {len(to_upsert)} vectors to Pinecone namespace '{namespace}'")
+        f"[Info] Uploading {len(to_upsert)} vectors to Pinecone namespace '{namespace}'"
+    )
     try:
         result = index.upsert(vectors=to_upsert, namespace=namespace)
         print(f"[Info] Pinecone upsert result: {result}")
@@ -498,8 +514,7 @@ async def process_pending_uploads():
     """Main function to process all pending uploads with authenticated storage access"""
     try:
         # Get pending uploads from Supabase
-        result = supabase.table("uploads").select(
-            "*").eq("status", "pending").execute()
+        result = supabase.table("uploads").select("*").eq("status", "pending").execute()
 
         uploads = result.data
         print(f"[Info] Found {len(uploads)} pending uploads")
@@ -512,8 +527,7 @@ async def process_pending_uploads():
                 doc_type = upload["type"]
                 namespace = upload["pinecone_namespace"]
 
-                print(
-                    f"[Info] Processing upload {upload_id} of type {doc_type}")
+                print(f"[Info] Processing upload {upload_id} of type {doc_type}")
 
                 # Extract text based on document type
                 if doc_type == "pdf":
@@ -530,8 +544,7 @@ async def process_pending_uploads():
                 if not text or len(text.strip()) < 10:
                     raise ValueError("No meaningful text content extracted")
 
-                print(
-                    f"[Info] Extracted {len(text)} characters from {doc_type}")
+                print(f"[Info] Extracted {len(text)} characters from {doc_type}")
 
                 # Process text into chunks and embeddings
                 chunks = split_into_chunks(text)
@@ -543,36 +556,39 @@ async def process_pending_uploads():
                     raise ValueError("No embeddings generated")
 
                 print(
-                    f"[Info] Generated {len(chunks)} chunks and {len(embeddings)} embeddings")
+                    f"[Info] Generated {len(chunks)} chunks and {len(embeddings)} embeddings"
+                )
 
                 # Upload to Pinecone with source URL for enhanced metadata
-                upload_to_pinecone(chunks, embeddings,
-                                   namespace, upload_id, source)
+                upload_to_pinecone(chunks, embeddings, namespace, upload_id, source)
 
                 # Update status to completed
-                supabase.table("uploads").update({
-                    "status": "completed",
-                    "error_message": None
-                }).eq("id", upload_id).execute()
+                supabase.table("uploads").update(
+                    {"status": "completed", "error_message": None}
+                ).eq("id", upload_id).execute()
 
                 print(f"[Success] Completed processing upload {upload_id}")
 
             except (ValueError, TypeError, requests.RequestException) as e:
                 error_msg = str(e)
                 print(
-                    f"[Error] Processing failed for upload {upload.get('id', 'unknown')}: {error_msg}")
+                    f"[Error] Processing failed for upload {upload.get('id', 'unknown')}: {error_msg}"
+                )
 
                 # Update status to failed
                 try:
-                    supabase.table("uploads").update({
-                        "status": "failed",
-                        "error_message": error_msg
-                    }).eq("id", upload["id"]).execute()
+                    supabase.table("uploads").update(
+                        {"status": "failed", "error_message": error_msg}
+                    ).eq("id", upload["id"]).execute()
                 except (requests.RequestException, ValueError) as update_error:
-                    print(
-                        f"[Error] Failed to update error status: {update_error}")
+                    print(f"[Error] Failed to update error status: {update_error}")
 
-    except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as e:
+    except (
+        requests.RequestException,
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+    ) as e:
         print(f"[Error] Failed to process pending uploads: {e}")
 
     # For testing purposes

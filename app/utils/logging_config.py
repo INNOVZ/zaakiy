@@ -1,15 +1,16 @@
 """
 Enhanced logging configuration with structured logging for ZaaKy AI Platform
 """
+import json
 import logging
 import logging.handlers
-import json
 import sys
 import uuid
-from datetime import datetime
-from typing import Dict, Any, Optional
-from pathlib import Path
 from contextvars import ContextVar
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 from app.config.settings import get_app_config
 
 # Optional import for database logging
@@ -19,11 +20,10 @@ except ImportError:
     supabase = None
 
 # Context variables for request tracking
-request_id_var: ContextVar[str] = ContextVar('request_id', default='')
-user_id_var: ContextVar[str] = ContextVar('user_id', default='')
-org_id_var: ContextVar[str] = ContextVar('org_id', default='')
-conversation_id_var: ContextVar[str] = ContextVar(
-    'conversation_id', default='')
+request_id_var: ContextVar[str] = ContextVar("request_id", default="")
+user_id_var: ContextVar[str] = ContextVar("user_id", default="")
+org_id_var: ContextVar[str] = ContextVar("org_id", default="")
+conversation_id_var: ContextVar[str] = ContextVar("conversation_id", default="")
 
 
 class StructuredFormatter(logging.Formatter):
@@ -34,7 +34,7 @@ class StructuredFormatter(logging.Formatter):
 
         # Base log structure
         log_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -42,7 +42,7 @@ class StructuredFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno,
             "thread": record.thread,
-            "process": record.process
+            "process": record.process,
         }
 
         # Add request context if available
@@ -64,16 +64,35 @@ class StructuredFormatter(logging.Formatter):
             log_data["exception"] = {
                 "type": record.exc_info[0].__name__ if record.exc_info[0] else None,
                 "message": str(record.exc_info[1]) if record.exc_info[1] else None,
-                "traceback": self.formatException(record.exc_info)
+                "traceback": self.formatException(record.exc_info),
             }
 
         # Add custom fields from record
         custom_fields = {}
         for key, value in record.__dict__.items():
-            if key not in ['name', 'msg', 'args', 'levelname', 'levelno', 'pathname',
-                           'filename', 'module', 'exc_info', 'exc_text', 'stack_info',
-                           'lineno', 'funcName', 'created', 'msecs', 'relativeCreated',
-                           'thread', 'threadName', 'processName', 'process', 'getMessage']:
+            if key not in [
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+                "getMessage",
+            ]:
                 custom_fields[key] = value
 
         if custom_fields:
@@ -84,10 +103,10 @@ class StructuredFormatter(logging.Formatter):
         log_data["service"] = {
             "name": "zaaky-api",
             "version": app_config.app_version,
-            "environment": app_config.environment
+            "environment": app_config.environment,
         }
 
-        return json.dumps(log_data, ensure_ascii=False)
+        return orjson.dumps(log_data).decode("utf-8")
 
 
 class ContextFilter(logging.Filter):
@@ -117,7 +136,6 @@ class DatabaseLogHandler(logging.Handler):
         except Exception as e:
             print(f"Failed to initialize database logging: {e}")
         try:
-           
             self.supabase = supabase
         except Exception as e:
             print(f"Failed to initialize database logging: {e}")
@@ -139,7 +157,7 @@ class DatabaseLogHandler(logging.Handler):
                 "user_id": user_id_var.get() or None,
                 "org_id": org_id_var.get() or None,
                 "exception_info": self.format(record) if record.exc_info else None,
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
 
             # Only log ERROR and CRITICAL to database
@@ -156,7 +174,7 @@ def setup_logging(
     log_file: Optional[str] = None,
     enable_structured: bool = True,
     enable_database_logging: bool = False,
-    service_name: str = "zaaky-api"
+    service_name: str = "zaaky-api",
 ) -> None:
     """Setup comprehensive logging configuration"""
 
@@ -183,7 +201,7 @@ def setup_logging(
     else:
         # Human-readable format for development
         console_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - [%(module)s:%(funcName)s:%(lineno)d] - %(message)s'
+            "%(asctime)s - %(name)s - %(levelname)s - [%(module)s:%(funcName)s:%(lineno)d] - %(message)s"
         )
 
     console_handler.setFormatter(console_formatter)
@@ -195,9 +213,7 @@ def setup_logging(
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         file_handler = logging.handlers.RotatingFileHandler(
-            log_file,
-            maxBytes=100 * 1024 * 1024,  # 100MB
-            backupCount=10
+            log_file, maxBytes=100 * 1024 * 1024, backupCount=10  # 100MB
         )
         file_handler.setLevel(numeric_level)
         file_handler.addFilter(context_filter)
@@ -218,7 +234,8 @@ def setup_logging(
     # Log startup message
     logger = logging.getLogger("logging")
     logger.info(
-        "Logging configured - Level: %s, Structured: %s", log_level, enable_structured)
+        "Logging configured - Level: %s, Structured: %s", log_level, enable_structured
+    )
 
 
 def configure_logger_levels() -> None:
@@ -255,7 +272,7 @@ class LogContext:
         user_id: Optional[str] = None,
         org_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
-        **extra_context
+        **extra_context,
     ):
         self.request_id = request_id or str(uuid.uuid4())
         self.user_id = user_id
@@ -304,16 +321,20 @@ class PerformanceLogger:
         self.end_time = None
 
     def __enter__(self):
-        self.start_time = datetime.utcnow()
-        self.logger.info("Starting operation: %s", self.operation, extra={
-            "operation": self.operation,
-            "event": "start",
-            "timestamp": self.start_time.isoformat()
-        })
+        self.start_time = datetime.now(timezone.utc)
+        self.logger.info(
+            "Starting operation: %s",
+            self.operation,
+            extra={
+                "operation": self.operation,
+                "event": "start",
+                "timestamp": self.start_time.isoformat(),
+            },
+        )
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.end_time = datetime.utcnow()
+        self.end_time = datetime.now(timezone.utc)
         duration = (self.end_time - self.start_time).total_seconds() * 1000
 
         log_data = {
@@ -321,17 +342,26 @@ class PerformanceLogger:
             "event": "complete",
             "duration_ms": round(duration, 2),
             "success": exc_type is None,
-            "timestamp": self.end_time.isoformat()
+            "timestamp": self.end_time.isoformat(),
         }
 
         if exc_type:
             log_data["error_type"] = exc_type.__name__
             log_data["error_message"] = str(exc_val)
             self.logger.error(
-                "Operation failed: %s (%.2fms)", self.operation, duration, extra=log_data)
+                "Operation failed: %s (%.2fms)",
+                self.operation,
+                duration,
+                extra=log_data,
+            )
         else:
             self.logger.info(
-                "Operation completed: %s (%.2fms)", self.operation, duration, extra=log_data)
+                "Operation completed: %s (%.2fms)",
+                self.operation,
+                duration,
+                extra=log_data,
+            )
+
 
 # Convenience functions for common logging patterns
 
@@ -339,25 +369,37 @@ class PerformanceLogger:
 def log_api_request(method: str, path: str, user_id: str = None, org_id: str = None):
     """Log API request with context"""
     logger = get_logger("api")
-    logger.info("API Request: %s %s", method, path, extra={
-        "event_type": "api_request",
-        "method": method,
-        "path": path,
-        "user_id": user_id,
-        "org_id": org_id
-    })
+    logger.info(
+        "API Request: %s %s",
+        method,
+        path,
+        extra={
+            "event_type": "api_request",
+            "method": method,
+            "path": path,
+            "user_id": user_id,
+            "org_id": org_id,
+        },
+    )
 
 
 def log_api_response(method: str, path: str, status_code: int, duration_ms: float):
     """Log API response with performance data"""
     logger = get_logger("api")
-    logger.info("API Response: %s %s - %s (%.2fms)", method, path, status_code, duration_ms, extra={
-        "event_type": "api_response",
-        "method": method,
-        "path": path,
-        "status_code": status_code,
-        "duration_ms": duration_ms
-    })
+    logger.info(
+        "API Response: %s %s - %s (%.2fms)",
+        method,
+        path,
+        status_code,
+        duration_ms,
+        extra={
+            "event_type": "api_response",
+            "method": method,
+            "path": path,
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+        },
+    )
 
 
 def log_chat_interaction(
@@ -365,7 +407,7 @@ def log_chat_interaction(
     conversation_id: str,
     message_type: str,
     processing_time_ms: float = None,
-    context_quality: float = None
+    context_quality: float = None,
 ):
     """Log chat interactions with analytics data"""
     logger = get_logger("chat")
@@ -374,7 +416,7 @@ def log_chat_interaction(
         "event_type": "chat_interaction",
         "org_id": org_id,
         "conversation_id": conversation_id,
-        "message_type": message_type
+        "message_type": message_type,
     }
 
     if processing_time_ms is not None:
@@ -385,30 +427,36 @@ def log_chat_interaction(
     logger.info("Chat interaction: %s", message_type, extra=log_data)
 
 
-def log_vector_operation(operation: str, upload_id: str, count: int, duration_ms: float):
+def log_vector_operation(
+    operation: str, upload_id: str, count: int, duration_ms: float
+):
     """Log vector database operations"""
     logger = get_logger("vector_db")
-    logger.info("Vector operation: %s", operation, extra={
-        "event_type": "vector_operation",
-        "operation": operation,
-        "upload_id": upload_id,
-        "vector_count": count,
-        "duration_ms": duration_ms
-    })
+    logger.info(
+        "Vector operation: %s",
+        operation,
+        extra={
+            "event_type": "vector_operation",
+            "operation": operation,
+            "upload_id": upload_id,
+            "vector_count": count,
+            "duration_ms": duration_ms,
+        },
+    )
 
 
 def log_error_with_context(
     logger: logging.Logger,
     message: str,
     error: Exception,
-    context: Dict[str, Any] = None
+    context: Dict[str, Any] = None,
 ):
     """Log errors with full context and stack trace"""
     error_data = {
         "event_type": "error",
         "error_type": type(error).__name__,
         "error_message": str(error),
-        "context": context or {}
+        "context": context or {},
     }
 
     logger.error(message, extra=error_data, exc_info=True)

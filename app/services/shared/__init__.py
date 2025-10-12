@@ -5,18 +5,19 @@ This module provides centralized access to shared services like database clients
 external APIs, and caching systems used across the application.
 """
 
-import os
 import logging
-from typing import Optional, Dict, Any
+import os
+from typing import Any, Dict, Optional
+
 import openai
 import redis
 
+from ..storage.pinecone_client import get_pinecone_index as _get_pinecone_index
+from ..storage.supabase_client import get_supabase_client as _get_supabase_client
 from .cache_service import VectorCacheService, cache_service
 from .cache_warming_service import cache_warmup_service
-from .vector_search_cache import vector_search_cache
 from .optimized_vector_search import OptimizedVectorSearch
-from ..storage.supabase_client import get_supabase_client as _get_supabase_client
-from ..storage.pinecone_client import get_pinecone_index as _get_pinecone_index
+from .vector_search_cache import vector_search_cache
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class ClientManager:
                 self.pinecone_index = _get_pinecone_index()
                 logger.info("✅ Pinecone client initialized")
             except Exception as e:
-                logger.warning(f"⚠️ Pinecone initialization failed: {e}")
+                logger.warning("⚠️ Pinecone initialization failed: %s", e)
                 self.pinecone_index = None
 
             # Initialize Supabase using centralized client
@@ -59,7 +60,7 @@ class ClientManager:
                 self.supabase = _get_supabase_client()
                 logger.info("✅ Supabase client initialized")
             except Exception as e:
-                logger.error(f"❌ Failed to initialize Supabase: {e}")
+                logger.error("❌ Failed to initialize Supabase: %s", e)
                 self.supabase = None
             else:
                 logger.warning("⚠️ Supabase configuration not found")
@@ -73,7 +74,7 @@ class ClientManager:
                     socket_connect_timeout=5,
                     socket_timeout=5,
                     retry_on_timeout=True,
-                    health_check_interval=30
+                    health_check_interval=30,
                 )
 
                 # Test connection
@@ -81,23 +82,26 @@ class ClientManager:
                 logger.info("✅ Redis client initialized")
 
                 # Initialize vector cache service
-                cache_enabled = os.getenv(
-                    "VECTOR_CACHE_ENABLED", "true").lower() == "true"
+                cache_enabled = (
+                    os.getenv("VECTOR_CACHE_ENABLED", "true").lower() == "true"
+                )
                 cache_ttl = int(os.getenv("VECTOR_CACHE_TTL", "300"))
-                cache_prefix = os.getenv(
-                    "VECTOR_CACHE_PREFIX", "zaaky:vector:")
+                cache_prefix = os.getenv("VECTOR_CACHE_PREFIX", "zaaky:vector:")
 
                 self.vector_cache = VectorCacheService(
                     redis_client=self.redis,
                     ttl_seconds=cache_ttl,
                     key_prefix=cache_prefix,
-                    enabled=cache_enabled
+                    enabled=cache_enabled,
                 )
                 logger.info(
-                    f"✅ Vector cache service initialized (TTL: {cache_ttl}s, Enabled: {cache_enabled})")
+                    "✅ Vector cache service initialized (TTL: %ss, Enabled: %s)",
+                    cache_ttl,
+                    cache_enabled,
+                )
 
             except Exception as e:
-                logger.warning(f"⚠️ Redis initialization failed: {e}")
+                logger.warning("⚠️ Redis initialization failed: %s", e)
                 self.redis = None
                 self.vector_cache = None
 
@@ -105,7 +109,7 @@ class ClientManager:
             logger.info("🎉 All clients initialized successfully")
 
         except Exception as e:
-            logger.error(f"❌ Client initialization failed: {e}")
+            logger.error("❌ Client initialization failed: %s", e)
             raise
 
     def health_check(self) -> Dict[str, bool]:
@@ -128,9 +132,7 @@ class ClientManager:
             if self.pinecone_index:
                 # Simple query test
                 self.pinecone_index.query(
-                    vector=[0.0] * 1536,
-                    top_k=1,
-                    include_metadata=False
+                    vector=[0.0] * 1536, top_k=1, include_metadata=False
                 )
                 health["pinecone"] = True
             else:
@@ -142,8 +144,7 @@ class ClientManager:
         try:
             if self.supabase:
                 # Simple query test
-                self.supabase.table("organizations").select(
-                    "id").limit(1).execute()
+                self.supabase.table("organizations").select("id").limit(1).execute()
                 health["supabase"] = True
             else:
                 health["supabase"] = False
@@ -174,6 +175,7 @@ def get_client_manager() -> ClientManager:
         _client_manager = ClientManager()
         _client_manager.initialize()
     return _client_manager
+
 
 # Legacy exports for backwards compatibility
 
@@ -234,5 +236,5 @@ __all__ = [
     "get_vector_search_cache",
     "get_cache_service",
     "vector_search_cache",
-    "cache_service"
+    "cache_service",
 ]

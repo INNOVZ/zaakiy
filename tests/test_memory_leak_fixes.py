@@ -5,11 +5,12 @@ This test suite verifies that file processing properly cleans up resources
 and doesn't leak memory when processing large files.
 """
 
-import io
 import gc
+import io
 import sys
 import tracemalloc
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
 
 
@@ -22,11 +23,11 @@ class TestMemoryLeakFixes:
 
         # Mock the requests.get to return a fake PDF
         mock_response = Mock()
-        mock_response.headers = {'content-length': '1024'}
+        mock_response.headers = {"content-length": "1024"}
         mock_response.raise_for_status = Mock()
 
         # Create a simple PDF-like content
-        pdf_content = b'%PDF-1.4\n%Test PDF'
+        pdf_content = b"%PDF-1.4\n%Test PDF"
 
         def iter_content_mock(chunk_size):
             yield pdf_content
@@ -34,13 +35,18 @@ class TestMemoryLeakFixes:
         mock_response.iter_content = iter_content_mock
         mock_response.close = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
-            with patch('app.services.scraping.ingestion_worker.PdfReader') as mock_pdf_reader:
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
+            with patch(
+                "app.services.scraping.ingestion_worker.PdfReader"
+            ) as mock_pdf_reader:
                 # Mock PDF reader to return empty pages
                 mock_pdf_reader.return_value.pages = []
 
                 try:
-                    extract_text_from_pdf_url('https://example.com/test.pdf')
+                    extract_text_from_pdf_url("https://example.com/test.pdf")
                 except ValueError:
                     # Expected - no text in PDF
                     pass
@@ -54,7 +60,7 @@ class TestMemoryLeakFixes:
 
         # Mock the requests.get to return JSON
         mock_response = Mock()
-        mock_response.headers = {'content-length': '100'}
+        mock_response.headers = {"content-length": "100"}
         mock_response.raise_for_status = Mock()
 
         json_content = '{"content": "test content"}'
@@ -65,9 +71,11 @@ class TestMemoryLeakFixes:
         mock_response.iter_content = iter_content_mock
         mock_response.close = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
-            result = extract_text_from_json_url(
-                'https://example.com/test.json')
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
+            result = extract_text_from_json_url("https://example.com/test.json")
 
             # Verify response.close() was called
             assert mock_response.close.called, "Response should be closed"
@@ -86,22 +94,27 @@ class TestMemoryLeakFixes:
             for i in range(3):
                 chunk_count += 1
                 if i == 0:
-                    yield b'%PDF-1.4\n'
+                    yield b"%PDF-1.4\n"
                 else:
-                    yield b'chunk' + str(i).encode()
+                    yield b"chunk" + str(i).encode()
 
         mock_response = Mock()
-        mock_response.headers = {'content-length': '1024'}
+        mock_response.headers = {"content-length": "1024"}
         mock_response.raise_for_status = Mock()
         mock_response.iter_content = iter_content_mock
         mock_response.close = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
-            with patch('app.services.scraping.ingestion_worker.PdfReader') as mock_pdf_reader:
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
+            with patch(
+                "app.services.scraping.ingestion_worker.PdfReader"
+            ) as mock_pdf_reader:
                 mock_pdf_reader.return_value.pages = []
 
                 try:
-                    extract_text_from_pdf_url('https://example.com/test.pdf')
+                    extract_text_from_pdf_url("https://example.com/test.pdf")
                 except ValueError:
                     pass
 
@@ -114,12 +127,15 @@ class TestMemoryLeakFixes:
 
         # Mock a response with large content-length (100MB)
         mock_response = Mock()
-        mock_response.headers = {'content-length': str(100 * 1024 * 1024)}
+        mock_response.headers = {"content-length": str(100 * 1024 * 1024)}
         mock_response.raise_for_status = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
             with pytest.raises(ValueError) as exc_info:
-                extract_text_from_json_url('https://example.com/large.json')
+                extract_text_from_json_url("https://example.com/large.json")
 
             assert "too large" in str(exc_info.value).lower()
 
@@ -135,33 +151,36 @@ class TestMemoryLeakFixes:
             yield json_content
 
         mock_response = Mock()
-        mock_response.headers = {'content-length': str(len(json_content))}
+        mock_response.headers = {"content-length": str(len(json_content))}
         mock_response.raise_for_status = Mock()
         mock_response.iter_content = iter_content_mock
         mock_response.close = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
-            result = extract_text_from_json_url(
-                'https://example.com/large_array.json')
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
+            result = extract_text_from_json_url("https://example.com/large_array.json")
 
             # Result should be limited to 10000 items
-            lines = result.split('\n')
-            assert len(
-                lines) <= 10000, f"Expected max 10000 lines, got {len(lines)}"
+            lines = result.split("\n")
+            assert len(lines) <= 10000, f"Expected max 10000 lines, got {len(lines)}"
 
     def test_cleanup_on_error(self):
         """Test that resources are cleaned up even when errors occur"""
         from app.services.scraping.ingestion_worker import extract_text_from_pdf_url
 
         mock_response = Mock()
-        mock_response.headers = {'content-length': '1024'}
-        mock_response.raise_for_status = Mock(
-            side_effect=Exception("Network error"))
+        mock_response.headers = {"content-length": "1024"}
+        mock_response.raise_for_status = Mock(side_effect=Exception("Network error"))
         mock_response.close = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
             try:
-                extract_text_from_pdf_url('https://example.com/test.pdf')
+                extract_text_from_pdf_url("https://example.com/test.pdf")
             except:
                 pass
 
@@ -176,28 +195,32 @@ class TestMemoryLeakFixes:
         tracemalloc.start()
 
         # Create a mock large PDF (10MB)
-        large_pdf_chunk = b'%PDF-1.4\n' + b'x' * (10 * 1024 * 1024)
+        large_pdf_chunk = b"%PDF-1.4\n" + b"x" * (10 * 1024 * 1024)
 
         def iter_content_mock(chunk_size):
             # Yield in chunks
             for i in range(0, len(large_pdf_chunk), chunk_size):
-                yield large_pdf_chunk[i:i+chunk_size]
+                yield large_pdf_chunk[i : i + chunk_size]
 
         mock_response = Mock()
-        mock_response.headers = {'content-length': str(len(large_pdf_chunk))}
+        mock_response.headers = {"content-length": str(len(large_pdf_chunk))}
         mock_response.raise_for_status = Mock()
         mock_response.iter_content = iter_content_mock
         mock_response.close = Mock()
 
-        with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
-            with patch('app.services.scraping.ingestion_worker.PdfReader') as mock_pdf_reader:
+        with patch(
+            "app.services.scraping.ingestion_worker.requests.get",
+            return_value=mock_response,
+        ):
+            with patch(
+                "app.services.scraping.ingestion_worker.PdfReader"
+            ) as mock_pdf_reader:
                 # Mock a page with text
                 mock_page = Mock()
                 mock_page.extract_text = Mock(return_value="Test text")
                 mock_pdf_reader.return_value.pages = [mock_page]
 
-                result = extract_text_from_pdf_url(
-                    'https://example.com/large.pdf')
+                result = extract_text_from_pdf_url("https://example.com/large.pdf")
 
                 # Force garbage collection
                 del result
@@ -233,20 +256,24 @@ class TestResourceManagement:
                 buffer_closed = True
                 super().close()
 
-        with patch('app.services.scraping.ingestion_worker.io.BytesIO', TrackedBytesIO):
+        with patch("app.services.scraping.ingestion_worker.io.BytesIO", TrackedBytesIO):
             mock_response = Mock()
-            mock_response.headers = {'content-length': '100'}
+            mock_response.headers = {"content-length": "100"}
             mock_response.raise_for_status = Mock()
-            mock_response.iter_content = lambda chunk_size: [b'%PDF-1.4\n']
+            mock_response.iter_content = lambda chunk_size: [b"%PDF-1.4\n"]
             mock_response.close = Mock()
 
-            with patch('app.services.scraping.ingestion_worker.requests.get', return_value=mock_response):
-                with patch('app.services.scraping.ingestion_worker.PdfReader') as mock_pdf_reader:
+            with patch(
+                "app.services.scraping.ingestion_worker.requests.get",
+                return_value=mock_response,
+            ):
+                with patch(
+                    "app.services.scraping.ingestion_worker.PdfReader"
+                ) as mock_pdf_reader:
                     mock_pdf_reader.return_value.pages = []
 
                     try:
-                        extract_text_from_pdf_url(
-                            'https://example.com/test.pdf')
+                        extract_text_from_pdf_url("https://example.com/test.pdf")
                     except ValueError:
                         pass
 

@@ -3,10 +3,11 @@
 Test script for delete and update functionality
 """
 
+import json
 import os
 import time
+
 import requests
-import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,10 +20,7 @@ TEST_USER_PASSWORD = "testpassword123"
 
 def login():
     """Login and get JWT token"""
-    login_data = {
-        "email": TEST_USER_EMAIL,
-        "password": TEST_USER_PASSWORD
-    }
+    login_data = {"email": TEST_USER_EMAIL, "password": TEST_USER_PASSWORD}
 
     response = requests.post(f"{BASE_URL}/auth/login", json=login_data)
     if response.status_code == 200:
@@ -40,8 +38,7 @@ def test_upload_and_delete(token):
 
     # Upload a URL
     url_data = {"url": "https://example.com"}
-    response = requests.post(
-        f"{BASE_URL}/uploads/url", json=url_data, headers=headers)
+    response = requests.post(f"{BASE_URL}/uploads/url", json=url_data, headers=headers)
 
     if response.status_code != 200:
         print(f"❌ URL upload failed: {response.text}")
@@ -54,15 +51,13 @@ def test_upload_and_delete(token):
     time.sleep(2)
 
     # Check status
-    response = requests.get(
-        f"{BASE_URL}/uploads/{upload_id}/status", headers=headers)
+    response = requests.get(f"{BASE_URL}/uploads/{upload_id}/status", headers=headers)
     if response.status_code == 200:
         status = response.json().get("status")
         print(f"📊 Upload status: {status}")
 
     # Delete the upload
-    response = requests.delete(
-        f"{BASE_URL}/uploads/{upload_id}", headers=headers)
+    response = requests.delete(f"{BASE_URL}/uploads/{upload_id}", headers=headers)
 
     if response.status_code == 200:
         print(f"✅ Upload deleted successfully")
@@ -78,8 +73,7 @@ def test_upload_and_update(token):
 
     # Upload initial URL
     url_data = {"url": "https://example.com"}
-    response = requests.post(
-        f"{BASE_URL}/uploads/url", json=url_data, headers=headers)
+    response = requests.post(f"{BASE_URL}/uploads/url", json=url_data, headers=headers)
 
     if response.status_code != 200:
         print(f"❌ Initial URL upload failed: {response.text}")
@@ -94,7 +88,8 @@ def test_upload_and_update(token):
     # Update with new URL
     new_url_data = {"url": "https://httpbin.org/json"}
     response = requests.put(
-        f"{BASE_URL}/uploads/{upload_id}/url", json=new_url_data, headers=headers)
+        f"{BASE_URL}/uploads/{upload_id}/url", json=new_url_data, headers=headers
+    )
 
     if response.status_code == 200:
         print(f"✅ URL updated successfully")
@@ -103,7 +98,8 @@ def test_upload_and_update(token):
 
         # Check status after update
         response = requests.get(
-            f"{BASE_URL}/uploads/{upload_id}/status", headers=headers)
+            f"{BASE_URL}/uploads/{upload_id}/status", headers=headers
+        )
         if response.status_code == 200:
             status = response.json().get("status")
             source = response.json().get("source")
@@ -119,13 +115,11 @@ def test_search(token):
     """Test search functionality"""
     headers = {"Authorization": f"Bearer {token}"}
 
-    search_data = {
-        "query": "example test content",
-        "top_k": 3
-    }
+    search_data = {"query": "example test content", "top_k": 3}
 
     response = requests.post(
-        f"{BASE_URL}/uploads/search", json=search_data, headers=headers)
+        f"{BASE_URL}/uploads/search", json=search_data, headers=headers
+    )
 
     if response.status_code == 200:
         results = response.json()
@@ -133,9 +127,10 @@ def test_search(token):
         print(f"🔍 Found {results.get('total_results', 0)} results")
 
         # Show first 2 results
-        for i, result in enumerate(results.get('results', [])[:2]):
+        for i, result in enumerate(results.get("results", [])[:2]):
             print(
-                f"   Result {i+1}: Score={result.get('score', 0):.3f}, Source={result.get('source', 'N/A')}")
+                f"   Result {i+1}: Score={result.get('score', 0):.3f}, Source={result.get('source', 'N/A')}"
+            )
 
         return True
     else:
@@ -155,7 +150,8 @@ def test_list_uploads(token):
 
         for upload in uploads[:3]:  # Show first 3
             print(
-                f"   Upload: {upload.get('id')} - {upload.get('type')} - {upload.get('status')}")
+                f"   Upload: {upload.get('id')} - {upload.get('type')} - {upload.get('status')}"
+            )
 
         return uploads
     else:
@@ -197,7 +193,8 @@ def main():
         print(f"\n🧹 Cleaning up test upload...")
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.delete(
-            f"{BASE_URL}/uploads/{updated_upload_id}", headers=headers)
+            f"{BASE_URL}/uploads/{updated_upload_id}", headers=headers
+        )
         if response.status_code == 200:
             print("✅ Cleanup successful")
         else:

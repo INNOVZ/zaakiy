@@ -7,8 +7,12 @@ ensuring that error context is always properly cleaned up even if exceptions occ
 
 import logging
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+from fastapi import Depends
+
+from ..services.auth import verify_jwt_token_from_header
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +22,7 @@ class ErrorContextScope:
     Context manager for error context that ensures automatic cleanup
 
     Usage:
-        async def my_endpoint(user=Depends(verify_jwt_token)):
+        async def my_endpoint(user=Depends(verify_jwt_token_from_header)):
             with ErrorContextScope(
                 request_id="req_123",
                 user_id=user["user_id"],
@@ -34,7 +38,7 @@ class ErrorContextScope:
         user_id: Optional[str] = None,
         org_id: Optional[str] = None,
         operation: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize error context scope
@@ -51,8 +55,8 @@ class ErrorContextScope:
             "user_id": user_id,
             "org_id": org_id,
             "operation": operation,
-            "timestamp": datetime.utcnow().isoformat(),
-            **kwargs
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **kwargs,
         }
         self._context_set = False
 
@@ -66,11 +70,12 @@ class ErrorContextScope:
             self._context_set = True
 
             logger.debug(
-                f"Error context set for operation: {self.context_data.get('operation')}",
-                extra={"context": self.context_data}
+                "Error context set for operation: %s",
+                self.context_data.get("operation"),
+                extra={"context": self.context_data},
             )
         except Exception as e:
-            logger.error(f"Failed to set error context: {e}")
+            logger.error("Failed to set error context: %s", e)
 
         return self
 
@@ -83,10 +88,11 @@ class ErrorContextScope:
                 ErrorContextManager.clear_context()
 
                 logger.debug(
-                    f"Error context cleared for operation: {self.context_data.get('operation')}"
+                    "Error context cleared for operation: %s",
+                    self.context_data.get("operation"),
                 )
             except Exception as e:
-                logger.error(f"Failed to clear error context: {e}")
+                logger.error("Failed to clear error context: %s", e)
 
         # Don't suppress exceptions
         return False
@@ -99,9 +105,9 @@ class ErrorContextScope:
             self.context_data.update(kwargs)
             ErrorContextManager.set_request_context(**kwargs)
 
-            logger.debug(f"Error context updated", extra={"updates": kwargs})
+            logger.debug("Error context updated", extra={"updates": kwargs})
         except Exception as e:
-            logger.error(f"Failed to update error context: {e}")
+            logger.error("Failed to update error context: %s", e)
 
 
 @contextmanager
@@ -110,7 +116,7 @@ def error_context(
     user_id: Optional[str] = None,
     org_id: Optional[str] = None,
     operation: Optional[str] = None,
-    **kwargs
+    **kwargs,
 ):
     """
     Context manager function for error context
@@ -118,7 +124,7 @@ def error_context(
     This is a functional alternative to ErrorContextScope class.
 
     Usage:
-        async def my_endpoint(user=Depends(verify_jwt_token)):
+        async def my_endpoint(user=Depends(verify_jwt_token_from_header)):
             with error_context(
                 request_id="req_123",
                 user_id=user["user_id"],
@@ -131,7 +137,7 @@ def error_context(
         user_id=user_id,
         org_id=org_id,
         operation=operation,
-        **kwargs
+        **kwargs,
     )
 
     with scope:
@@ -162,6 +168,7 @@ class SafeErrorContext:
     def _generate_request_id() -> str:
         """Generate a unique request ID"""
         import uuid
+
         return f"req_{uuid.uuid4().hex[:12]}"
 
     def __enter__(self):
@@ -178,10 +185,10 @@ class SafeErrorContext:
 
             logger.debug(
                 "Safe error context entered",
-                extra={"request_id": self.context_data.get("request_id")}
+                extra={"request_id": self.context_data.get("request_id")},
             )
         except Exception as e:
-            logger.error(f"Failed to enter safe error context: {e}")
+            logger.error("Failed to enter safe error context: %s", e)
             # Don't raise - allow operation to continue
 
         return self
@@ -196,18 +203,17 @@ class SafeErrorContext:
 
                 if exc_type:
                     logger.debug(
-                        f"Safe error context exited with exception: {exc_type.__name__}",
-                        extra={"request_id": self.context_data.get(
-                            "request_id")}
+                        "Safe error context exited with exception: %s",
+                        exc_type.__name__,
+                        extra={"request_id": self.context_data.get("request_id")},
                     )
                 else:
                     logger.debug(
                         "Safe error context exited successfully",
-                        extra={"request_id": self.context_data.get(
-                            "request_id")}
+                        extra={"request_id": self.context_data.get("request_id")},
                     )
             except Exception as cleanup_error:
-                logger.error(f"Error during context cleanup: {cleanup_error}")
+                logger.error("Error during context cleanup: %s", cleanup_error)
 
         return False
 
@@ -221,7 +227,7 @@ class SafeErrorContext:
         for key, value in self.context_data.items():
             if value is not None and not isinstance(value, (str, int, float, bool)):
                 logger.warning(
-                    f"Context value for '{key}' is not a simple type: {type(value)}"
+                    "Context value for '%s' is not a simple type: %s", key, type(value)
                 )
 
     def update(self, **kwargs):
@@ -233,7 +239,7 @@ class SafeErrorContext:
                 self.context_data.update(kwargs)
                 ErrorContextManager.set_request_context(**kwargs)
             except Exception as e:
-                logger.error(f"Failed to update safe error context: {e}")
+                logger.error("Failed to update safe error context: %s", e)
 
 
 def with_error_context(**context_kwargs):
@@ -242,62 +248,62 @@ def with_error_context(**context_kwargs):
 
     Usage:
         @with_error_context(operation="my_operation")
-        async def my_endpoint(user=Depends(verify_jwt_token)):
+        async def my_endpoint(user=Depends(verify_jwt_token_from_header)):
             # Error context is automatically managed
             pass
     """
+
     def decorator(func):
         import functools
 
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             # Extract user_id from kwargs if available
-            user = kwargs.get('user')
+            user = kwargs.get("user")
             if user and isinstance(user, dict):
-                context_kwargs.setdefault('user_id', user.get('user_id'))
+                context_kwargs.setdefault("user_id", user.get("user_id"))
 
             # Use safe error context
             with SafeErrorContext(**context_kwargs):
                 return await func(*args, **kwargs)
 
         return wrapper
+
     return decorator
 
 
-# Example usage patterns
-"""
+# Example usage patterns (kept as comments to avoid unassigned string literals)
 # Pattern 1: Using ErrorContextScope class
-async def endpoint1(user=Depends(verify_jwt_token)):
-    with ErrorContextScope(
-        request_id="req_123",
-        user_id=user["user_id"],
-        operation="endpoint1"
-    ) as ctx:
-        # Do work
-        ctx.update(org_id="org_456")  # Update context
-        return {"result": "success"}
+# async def endpoint1(user=Depends(verify_jwt_token_from_header)):
+#     with ErrorContextScope(
+#         request_id="req_123",
+#         user_id=user["user_id"],
+#         operation="endpoint1"
+#     ) as ctx:
+#         # Do work
+#         ctx.update(org_id="org_456")  # Update context
+#         return {"result": "success"}
 
 # Pattern 2: Using error_context function
-async def endpoint2(user=Depends(verify_jwt_token)):
-    with error_context(
-        user_id=user["user_id"],
-        operation="endpoint2"
-    ) as ctx:
-        # Do work
-        return {"result": "success"}
+# async def endpoint2(user=Depends(verify_jwt_token_from_header)):
+#     with error_context(
+#         user_id=user["user_id"],
+#         operation="endpoint2"
+#     ) as ctx:
+#         # Do work
+#         return {"result": "success"}
 
 # Pattern 3: Using SafeErrorContext
-async def endpoint3(user=Depends(verify_jwt_token)):
-    with SafeErrorContext(
-        user_id=user["user_id"],
-        operation="endpoint3"
-    ):
-        # Do work - context is automatically cleaned up
-        return {"result": "success"}
+# async def endpoint3(user=Depends(verify_jwt_token_from_header)):
+#     with SafeErrorContext(
+#         user_id=user["user_id"],
+#         operation="endpoint3"
+#     ):
+#         # Do work - context is automatically cleaned up
+#         return {"result": "success"}
 
 # Pattern 4: Using decorator
-@with_error_context(operation="endpoint4")
-async def endpoint4(user=Depends(verify_jwt_token)):
-    # Error context is automatically managed
-    return {"result": "success"}
-"""
+# @with_error_context(operation="endpoint4")
+# async def endpoint4(user=Depends(verify_jwt_token_from_header)):
+#     # Error context is automatically managed
+#     return {"result": "success"}

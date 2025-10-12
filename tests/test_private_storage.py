@@ -2,6 +2,7 @@
 Test script to verify private storage authentication works
 """
 import os
+
 import requests
 from dotenv import load_dotenv
 from supabase import create_client
@@ -13,8 +14,7 @@ def test_private_access():
     """Test that private files require authentication"""
     try:
         supabase = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         )
 
         # List files
@@ -37,13 +37,12 @@ def test_private_access():
         # Test 2: Authenticated access (should work)
         auth_url = f"{base_url}/storage/v1/object/uploads/{test_file}"
         headers = {
-            'Authorization': f'Bearer {os.getenv("SUPABASE_SERVICE_ROLE_KEY")}',
-            'apikey': os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            "Authorization": f'Bearer {os.getenv("SUPABASE_SERVICE_ROLE_KEY")}',
+            "apikey": os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
         }
 
         auth_response = requests.head(auth_url, headers=headers, timeout=10)
-        print(
-            f"Authenticated access: {auth_response.status_code} (should be 200)")
+        print(f"Authenticated access: {auth_response.status_code} (should be 200)")
 
         if auth_response.status_code == 200:
             print("✅ Private storage authentication working correctly!")

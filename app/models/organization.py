@@ -1,6 +1,7 @@
 """Organization and user management models."""
 
 from typing import Optional
+
 from pydantic import BaseModel, field_validator
 
 
@@ -12,7 +13,7 @@ class UpdateOrganizationRequest(BaseModel):
     contact_phone: Optional[str] = None
     business_type: Optional[str] = None
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_name(cls, v):
         """Validate organization name"""
@@ -29,7 +30,7 @@ class UpdateOrganizationRequest(BaseModel):
 
         return v
 
-    @field_validator('email')
+    @field_validator("email")
     @classmethod
     def validate_email(cls, v):
         """Validate email format"""
@@ -38,7 +39,7 @@ class UpdateOrganizationRequest(BaseModel):
 
         v = v.strip().lower()
 
-        if '@' not in v or '.' not in v.split('@')[-1]:
+        if "@" not in v or "." not in v.split("@")[-1]:
             raise ValueError("Invalid email format")
 
         if len(v) > 255:
@@ -46,7 +47,7 @@ class UpdateOrganizationRequest(BaseModel):
 
         return v
 
-    @field_validator('contact_phone')
+    @field_validator("contact_phone")
     @classmethod
     def validate_phone(cls, v):
         """Validate contact phone"""
@@ -56,7 +57,7 @@ class UpdateOrganizationRequest(BaseModel):
                 raise ValueError("Phone number too long (max 20 characters)")
         return v
 
-    @field_validator('business_type')
+    @field_validator("business_type")
     @classmethod
     def validate_business_type(cls, v):
         """Validate business type"""
@@ -72,7 +73,7 @@ class UpdateUserRequest(BaseModel):
 
     full_name: str
 
-    @field_validator('full_name')
+    @field_validator("full_name")
     @classmethod
     def validate_full_name(cls, v):
         """Validate full name"""

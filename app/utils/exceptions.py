@@ -15,49 +15,59 @@ class ZaaKyBaseException(Exception):
 
 class AuthenticationError(ZaaKyBaseException):
     """Authentication related errors"""
+
     pass
 
 
 class AuthorizationError(ZaaKyBaseException):
     """Authorization related errors"""
+
     pass
 
 
 class ValidationError(ZaaKyBaseException):
     """Data validation errors"""
+
     pass
 
 
 class ServiceUnavailableError(ZaaKyBaseException):
     """External service unavailable errors"""
+
     pass
 
 
 class DatabaseError(ZaaKyBaseException):
     """Database operation errors"""
+
     pass
 
 
 class VectorStoreError(ZaaKyBaseException):
     """Vector database errors"""
+
     pass
 
 
 class AIServiceError(ZaaKyBaseException):
     """AI/OpenAI service errors"""
+
     pass
 
 
 class ChatServiceError(ZaaKyBaseException):
     """Chat service specific errors"""
+
     pass
 
 
 class FileProcessingError(ZaaKyBaseException):
     """File upload and processing errors"""
+
     pass
 
 
 class ConfigurationError(ZaaKyBaseException):
     """Configuration and settings errors"""
+
     pass

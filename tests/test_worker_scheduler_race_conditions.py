@@ -8,7 +8,9 @@ and handles concurrent start/stop operations correctly.
 import asyncio
 import threading
 import time
+
 import pytest
+
 from app.services.shared.worker_scheduler import IngestionWorkerScheduler
 
 
@@ -288,17 +290,18 @@ class TestWorkerSchedulerStressTest:
 
         def random_operation():
             import random
+
             time.sleep(random.uniform(0.001, 0.01))
 
-            operation = random.choice(['start', 'stop', 'status', 'restart'])
+            operation = random.choice(["start", "stop", "status", "restart"])
 
-            if operation == 'start':
+            if operation == "start":
                 scheduler.start()
-            elif operation == 'stop':
+            elif operation == "stop":
                 scheduler.stop()
-            elif operation == 'status':
+            elif operation == "status":
                 scheduler.get_status()
-            elif operation == 'restart':
+            elif operation == "restart":
                 scheduler.restart()
 
         # Create many threads with random operations

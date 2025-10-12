@@ -1,15 +1,53 @@
 from fastapi import APIRouter, Depends, HTTPException
+
 from ..models import UpdateUserRequest
-from ..services.auth import verify_jwt_token, CurrentUser
-from ..services.storage.supabase_client import client
+from ..services.auth import CurrentUser, verify_jwt_token_from_header
+from ..services.storage.supabase_client import get_supabase_http_client
+
+# Constants
+USERS_ENDPOINT = "/users"
+
+# Module-level client variable for lazy loading
+_client = None
+
+
+def _get_client():
+    """Get HTTP client with lazy initialization"""
+    global _client
+    if _client is None:
+        _client = get_supabase_http_client()
+    return _client
+
+
+# Create a client property that returns the lazily loaded client
+
+
+class ClientProxy:
+    def __getattr__(self, name):
+        return getattr(_get_client(), name)
+
+    async def get(self, *args, **kwargs):
+        return await _get_client().get(*args, **kwargs)
+
+    async def post(self, *args, **kwargs):
+        return await _get_client().post(*args, **kwargs)
+
+    async def patch(self, *args, **kwargs):
+        return await _get_client().patch(*args, **kwargs)
+
+    async def delete(self, *args, **kwargs):
+        return await _get_client().delete(*args, **kwargs)
+
+
+client = ClientProxy()
 
 router = APIRouter()
 
 
 @router.post("/init")
-async def init_user(user=Depends(verify_jwt_token)):
+async def init_user(user=Depends(verify_jwt_token_from_header)):
     # Check if already exists
-    existing = await client.get("/users", params={"id": f"eq.{user['user_id']}"})
+    existing = await client.get(USERS_ENDPOINT, params={"id": f"eq.{user['user_id']}"})
     if existing.json():
         return {"message": "User already exists"}
 
@@ -18,45 +56,38 @@ async def init_user(user=Depends(verify_jwt_token)):
         "id": user["user_id"],
         "email": user["email"],
         "org_id": "org-placeholder-id",  # update this logic as needed
-        "role": "admin"  # or "user", "owner"
+        "role": "admin",  # or "user", "owner"
     }
 
-    await client.post("/users", json=new_user)
+    await client.post(USERS_ENDPOINT, json=new_user)
 
     return {"message": "User initialized"}
 
 
 @router.post("/update")
 async def update_user(
-    request: UpdateUserRequest,
-    user=Depends(verify_jwt_token)
+    request: UpdateUserRequest, user=Depends(verify_jwt_token_from_header)
 ):
     """Update user's full name"""
     try:
         user_id = user["user_id"]
         response = await client.patch(
-            f"/users?id=eq.{user_id}",
-            json={
-                "full_name": request.full_name,
-                "updated_at": "now()"
-            }
+            f"{USERS_ENDPOINT}?id=eq.{user_id}",
+            json={"full_name": request.full_name, "updated_at": "now()"},
         )
         if response.status_code not in [200, 204]:
             raise HTTPException(status_code=404, detail="User not found")
         return {
             "success": True,
             "message": "User updated successfully",
-            "user": {
-                "full_name": request.full_name
-            }
+            "user": {"full_name": request.full_name},
         }
     except HTTPException:
         raise
     except Exception as e:
         print(f"[ERROR] Update user failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update user: {str(e)}"
+            status_code=500, detail=f"Failed to update user: {str(e)}"
         ) from e
 
 
@@ -67,11 +98,11 @@ async def get_user_profile(user=CurrentUser):
         user_id = user["user_id"]
 
         response = await client.get(
-            "/users",
+            USERS_ENDPOINT,
             params={
                 "id": f"eq.{user_id}",
-                "select": "id,email,full_name,created_at,updated_at"
-            }
+                "select": "id,email,full_name,created_at,updated_at",
+            },
         )
 
         if response.status_code != 200 or not response.json():
@@ -79,16 +110,12 @@ async def get_user_profile(user=CurrentUser):
 
         user_data = response.json()[0]
 
-        return {
-            "success": True,
-            "user": user_data
-        }
+        return {"success": True, "user": user_data}
 
     except HTTPException:
         raise
     except Exception as e:
         print(f"[ERROR] Get user profile failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get user profile: {str(e)}"
+            status_code=500, detail=f"Failed to get user profile: {str(e)}"
         ) from e

@@ -1,8 +1,10 @@
 """Feedback request models."""
 
 from typing import Optional
+
 from pydantic import BaseModel, field_validator
-from ..utils.validators import validate_rating, sanitize_text_input
+
+from ..utils.validators import sanitize_text_input, validate_rating
 
 
 class FeedbackRequest(BaseModel):
@@ -12,7 +14,7 @@ class FeedbackRequest(BaseModel):
     rating: int  # 1 for thumbs up, -1 for thumbs down
     feedback_text: Optional[str] = None
 
-    @field_validator('message_id')
+    @field_validator("message_id")
     @classmethod
     def validate_message_id(cls, v):
         """Validate message ID"""
@@ -23,7 +25,7 @@ class FeedbackRequest(BaseModel):
             raise ValueError("Message ID too long")
         return v
 
-    @field_validator('rating')
+    @field_validator("rating")
     @classmethod
     def validate_rating_value(cls, v):
         """Validate rating value"""
@@ -32,13 +34,12 @@ class FeedbackRequest(BaseModel):
         except Exception as e:
             raise ValueError(str(e))
 
-    @field_validator('feedback_text')
+    @field_validator("feedback_text")
     @classmethod
     def validate_feedback(cls, v):
         """Validate feedback text"""
         if v is not None:
             v = sanitize_text_input(v, max_length=1000)
             if len(v) > 1000:
-                raise ValueError(
-                    "Feedback text too long (max 1000 characters)")
+                raise ValueError("Feedback text too long (max 1000 characters)")
         return v

@@ -1,10 +1,14 @@
 "# services/worker_scheduler.py\n\n"
 # This module manages the background worker for processing uploads using APScheduler.
 
-import threading
+import asyncio
 import logging
+import threading
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.base import SchedulerAlreadyRunningError
 from apscheduler.triggers.interval import IntervalTrigger
+
 from ..scraping.ingestion_worker import process_pending_uploads
 
 logger = logging.getLogger(__name__)
@@ -19,6 +23,9 @@ class IngestionWorkerScheduler:
     """
 
     def __init__(self):
+        # Create scheduler instance but don't assume an event loop exists in
+        # every thread that may call start(). We'll ensure a loop is available
+        # when starting.
         self.scheduler = AsyncIOScheduler()
         self.is_running = False
         self._lock = threading.Lock()
@@ -36,8 +43,8 @@ class IngestionWorkerScheduler:
         with self._lock:
             if self.is_running:
                 logger.warning(
-                    "Scheduler start() called but already running "
-                    f"(start_count: {self._start_count})"
+                    "Scheduler start() called but already running (start_count: %d)",
+                    self._start_count,
                 )
                 return
 
@@ -46,23 +53,42 @@ class IngestionWorkerScheduler:
                 self.scheduler.add_job(
                     process_pending_uploads,
                     IntervalTrigger(seconds=30),
-                    id='process_uploads',
+                    id="process_uploads",
                     replace_existing=True,
                     max_instances=1,  # Prevent concurrent job execution
-                    coalesce=True  # Combine missed runs into one
+                    coalesce=True,  # Combine missed runs into one
                 )
 
-                self.scheduler.start()
+                # Ensure current thread has an asyncio event loop. AsyncIOScheduler
+                # will call asyncio.get_event_loop() internally; when start() is
+                # called from non-main threads that don't have a loop this raises
+                # a RuntimeError. Create and set a new loop in that case.
+                try:
+                    asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                try:
+                    self.scheduler.start()
+                except SchedulerAlreadyRunningError:
+                    # Another thread may have started the scheduler; treat as started
+                    logger.warning(
+                        "SchedulerAlreadyRunningError encountered during start; treating as running"
+                    )
+                    self.is_running = True
+                    self._start_count += 1
+                    return
                 self.is_running = True
                 self._start_count += 1
 
                 logger.info(
-                    f"Ingestion worker scheduler started successfully "
-                    f"(start_count: {self._start_count})"
+                    "Ingestion worker scheduler started successfully (start_count: %d)",
+                    self._start_count,
                 )
 
             except Exception as e:
-                logger.error(f"Failed to start scheduler: {e}", exc_info=True)
+                logger.error("Failed to start scheduler: %s", e, exc_info=True)
                 self.is_running = False
                 raise
 
@@ -76,8 +102,8 @@ class IngestionWorkerScheduler:
         with self._lock:
             if not self.is_running:
                 logger.warning(
-                    "Scheduler stop() called but not running "
-                    f"(stop_count: {self._stop_count})"
+                    "Scheduler stop() called but not running (stop_count: %d)",
+                    self._stop_count,
                 )
                 return
 
@@ -88,12 +114,12 @@ class IngestionWorkerScheduler:
                 self._stop_count += 1
 
                 logger.info(
-                    f"Ingestion worker scheduler stopped successfully "
-                    f"(stop_count: {self._stop_count})"
+                    "Ingestion worker scheduler stopped successfully (stop_count: %d)",
+                    self._stop_count,
                 )
 
             except Exception as e:
-                logger.error(f"Error stopping scheduler: {e}", exc_info=True)
+                logger.error("Error stopping scheduler: %s", e, exc_info=True)
                 # Force state to False even if shutdown failed
                 self.is_running = False
                 raise
@@ -114,10 +140,14 @@ class IngestionWorkerScheduler:
                 "jobs": [
                     {
                         "id": job.id,
-                        "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None
+                        "next_run_time": job.next_run_time.isoformat()
+                        if job.next_run_time
+                        else None,
                     }
                     for job in self.scheduler.get_jobs()
-                ] if self.is_running else []
+                ]
+                if self.is_running
+                else [],
             }
 
     def restart(self):
@@ -127,7 +157,31 @@ class IngestionWorkerScheduler:
         Useful for applying configuration changes or recovering from errors.
         """
         logger.info("Restarting scheduler...")
-        self.stop()
+        # Acquire lock to perform a stop-like operation safely
+        with self._lock:
+            try:
+                if self.is_running:
+                    # Perform normal shutdown
+                    self.scheduler.shutdown(wait=True)
+                    self.is_running = False
+                    self._stop_count += 1
+                    logger.info(
+                        "Ingestion worker scheduler stopped successfully (stop_count: %d)",
+                        self._stop_count,
+                    )
+                else:
+                    # If not running, still increment stop_count to reflect an attempted stop
+                    logger.warning(
+                        "Restart requested but scheduler not running; incrementing stop_count (was: %d)",
+                        self._stop_count,
+                    )
+                    self._stop_count += 1
+            except Exception as e:
+                logger.error("Error during restart stop phase: %s", e, exc_info=True)
+                # Ensure state reflects stopped
+                self.is_running = False
+
+        # Now start the scheduler again
         self.start()
         logger.info("Scheduler restarted successfully")
 

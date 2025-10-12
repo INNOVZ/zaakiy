@@ -1,7 +1,9 @@
 """Chat request and response models."""
 
 from typing import List, Optional
+
 from pydantic import BaseModel, field_validator
+
 from ..utils.validators import validate_message_length
 
 
@@ -12,7 +14,7 @@ class ChatRequest(BaseModel):
     chatbot_id: Optional[str] = None
     conversation_id: Optional[str] = None
 
-    @field_validator('message')
+    @field_validator("message")
     @classmethod
     def validate_message(cls, v):
         """Validate message length and content"""
@@ -21,7 +23,7 @@ class ChatRequest(BaseModel):
         except Exception as e:
             raise ValueError(str(e))
 
-    @field_validator('chatbot_id')
+    @field_validator("chatbot_id")
     @classmethod
     def validate_chatbot_id(cls, v):
         """Validate chatbot_id format"""
@@ -33,7 +35,7 @@ class ChatRequest(BaseModel):
                 raise ValueError("Chatbot ID too long")
         return v
 
-    @field_validator('conversation_id')
+    @field_validator("conversation_id")
     @classmethod
     def validate_conversation_id(cls, v):
         """Validate conversation_id format"""

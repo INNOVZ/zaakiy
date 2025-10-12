@@ -4,16 +4,12 @@ Tests for pagination utilities
 Ensures pagination works correctly and prevents memory issues
 """
 import pytest
-from app.utils.pagination import (
-    PaginationParams,
-    PaginationMeta,
-    validate_pagination_params,
-    create_pagination_meta,
-    encode_cursor,
-    decode_cursor,
-    CursorPaginationParams
-)
 from fastapi import HTTPException
+
+from app.utils.pagination import (CursorPaginationParams, PaginationMeta,
+                                  PaginationParams, create_pagination_meta,
+                                  decode_cursor, encode_cursor,
+                                  validate_pagination_params)
 
 
 class TestPaginationParams:
@@ -151,8 +147,7 @@ class TestValidatePaginationParams:
     def test_exceeds_max_page_size(self):
         """Exceeding max page size should raise HTTPException"""
         with pytest.raises(HTTPException) as exc_info:
-            validate_pagination_params(
-                page=1, page_size=150, max_page_size=100)
+            validate_pagination_params(page=1, page_size=150, max_page_size=100)
         assert exc_info.value.status_code == 400
 
 
@@ -264,7 +259,7 @@ class TestPaginationPerformance:
 
         start = time.time()
         for i in range(10000):
-            params = PaginationParams(page=i+1, page_size=20)
+            params = PaginationParams(page=i + 1, page_size=20)
             _ = params.offset
         duration = time.time() - start
 

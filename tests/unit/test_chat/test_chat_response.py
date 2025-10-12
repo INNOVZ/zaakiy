@@ -2,11 +2,13 @@
 """
 Test script to debug chat response issues
 """
-from services.chat.chat_service import ChatService
 import asyncio
 import os
 import sys
+
 from dotenv import load_dotenv
+
+from app.services.chat.chat_service import ChatService
 
 # Load environment variables
 load_dotenv()
@@ -26,13 +28,12 @@ async def test_chat_response():
         "tone": "helpful",
         "behavior": "Be helpful and informative",
         "greeting_message": "Hello! How can I help you?",
-        "fallback_message": "I'm sorry, I don't have information about that."
+        "fallback_message": "I'm sorry, I don't have information about that.",
     }
 
     print("🔧 Initializing ChatService...")
     try:
-        chat_service = ChatService(
-            org_id=org_id, chatbot_config=chatbot_config)
+        chat_service = ChatService(org_id=org_id, chatbot_config=chatbot_config)
         print("✅ ChatService initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize ChatService: {e}")
@@ -47,9 +48,7 @@ async def test_chat_response():
 
     try:
         result = await chat_service.chat(
-            message=test_message,
-            session_id=session_id,
-            chatbot_id=chatbot_config["id"]
+            message=test_message, session_id=session_id, chatbot_id=chatbot_config["id"]
         )
 
         print("\n✅ Response generated successfully!")
@@ -60,15 +59,16 @@ async def test_chat_response():
         print(f"🔧 Config used: {result.get('config_used', 'unknown')}")
 
         # Check if response is meaningful
-        if len(result['response']) < 10:
+        if len(result["response"]) < 10:
             print("⚠️  WARNING: Response seems too short")
 
-        if "I apologize" in result['response'] or "I don't have" in result['response']:
+        if "I apologize" in result["response"] or "I don't have" in result["response"]:
             print("⚠️  WARNING: Response seems like a fallback message")
 
     except Exception as e:
         print(f"❌ Error generating response: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -77,7 +77,7 @@ async def test_context_config():
     print("\n🔧 Testing context configuration...")
 
     try:
-        from services.analytics.context_config import context_config_manager
+        from app.services.analytics.context_config import context_config_manager
 
         org_id = "550e8400-e29b-41d4-a716-446655440000"  # Valid UUID format
         config = await context_config_manager.get_config(org_id)
@@ -86,13 +86,15 @@ async def test_context_config():
         print(f"📋 Config name: {config.config_name}")
         print(f"🎯 Model tier: {config.model_tier}")
         print(
-            f"📊 Retrieval counts: {config.initial_retrieval_count} -> {config.final_context_chunks}")
+            f"📊 Retrieval counts: {config.initial_retrieval_count} -> {config.final_context_chunks}"
+        )
         print(f"🔍 Query rewriting: {config.enable_query_rewriting}")
         print(f"🛡️  Hallucination check: {config.enable_hallucination_check}")
 
     except Exception as e:
         print(f"❌ Error loading context config: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -101,7 +103,7 @@ async def test_client_connections():
     print("\n🔧 Testing API client connections...")
 
     try:
-        from services.shared.client_manager import client_manager
+        from app.services.shared.client_manager import client_manager
 
         health = client_manager.health_check()
 
@@ -116,6 +118,7 @@ async def test_client_connections():
     except Exception as e:
         print(f"❌ Error checking client health: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -135,6 +138,7 @@ async def main():
 
     print("\n" + "=" * 50)
     print("🏁 Test completed")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

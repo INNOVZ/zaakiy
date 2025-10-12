@@ -1,6 +1,7 @@
 """Public chat models for embedded chatbots."""
 
-from typing import Optional, List
+from typing import List, Optional
+
 from pydantic import BaseModel, field_validator
 
 
@@ -12,7 +13,7 @@ class PublicChatRequest(BaseModel):
     session_id: Optional[str] = None
     user_identifier: Optional[str] = None
 
-    @field_validator('message')
+    @field_validator("message")
     @classmethod
     def validate_message(cls, v):
         """Validate message length and content"""
@@ -29,7 +30,7 @@ class PublicChatRequest(BaseModel):
 
         return v
 
-    @field_validator('chatbot_id')
+    @field_validator("chatbot_id")
     @classmethod
     def validate_chatbot_id(cls, v):
         """Validate chatbot_id format"""
@@ -46,7 +47,7 @@ class PublicChatRequest(BaseModel):
 
         return v
 
-    @field_validator('session_id')
+    @field_validator("session_id")
     @classmethod
     def validate_session_id(cls, v):
         """Validate session_id format"""
@@ -56,7 +57,7 @@ class PublicChatRequest(BaseModel):
                 raise ValueError("Session ID too long")
         return v
 
-    @field_validator('user_identifier')
+    @field_validator("user_identifier")
     @classmethod
     def validate_user_identifier(cls, v):
         """Validate user_identifier"""

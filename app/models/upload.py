@@ -1,8 +1,10 @@
 """Upload and search request models."""
 
-from typing import Optional, List
+from typing import List, Optional
+
 from pydantic import BaseModel, field_validator
-from ..utils.validators import validate_url, validate_top_k
+
+from ..utils.validators import validate_top_k, validate_url
 
 
 class URLIngestRequest(BaseModel):
@@ -10,7 +12,7 @@ class URLIngestRequest(BaseModel):
 
     url: str
 
-    @field_validator('url')
+    @field_validator("url")
     @classmethod
     def validate_url_format(cls, v):
         """Validate URL format and security"""
@@ -25,7 +27,7 @@ class UpdateRequest(BaseModel):
 
     url: str
 
-    @field_validator('url')
+    @field_validator("url")
     @classmethod
     def validate_url_format(cls, v):
         """Validate URL format and security"""
@@ -42,7 +44,7 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     filter_upload_ids: Optional[List[str]] = None
 
-    @field_validator('query')
+    @field_validator("query")
     @classmethod
     def validate_query(cls, v):
         """Validate search query"""
@@ -59,7 +61,7 @@ class SearchRequest(BaseModel):
 
         return v
 
-    @field_validator('top_k')
+    @field_validator("top_k")
     @classmethod
     def validate_top_k_value(cls, v):
         """Validate top_k parameter"""
@@ -68,7 +70,7 @@ class SearchRequest(BaseModel):
         except Exception as e:
             raise ValueError(str(e))
 
-    @field_validator('filter_upload_ids')
+    @field_validator("filter_upload_ids")
     @classmethod
     def validate_upload_ids(cls, v):
         """Validate upload IDs list"""

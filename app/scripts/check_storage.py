@@ -4,6 +4,7 @@ Script to check and configure Supabase storage bucket permissions
 """
 
 import os
+
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -54,8 +55,7 @@ def check_bucket_config():
             # Try to create the bucket
             print("\n🔧 Attempting to create uploads bucket...")
             try:
-                result = supabase.storage.create_bucket(
-                    "uploads", {"public": True})
+                result = supabase.storage.create_bucket("uploads", {"public": True})
                 print(f"✅ Bucket created successfully: {result}")
             except (KeyError, AttributeError, TypeError, ValueError, OSError) as e:
                 print(f"❌ Failed to create bucket: {e}")
@@ -81,17 +81,24 @@ def test_file_access():
 
             # Get public URL
             try:
-                public_url = supabase.storage.from_(
-                    "uploads").get_public_url(test_file)
+                public_url = supabase.storage.from_("uploads").get_public_url(test_file)
                 print(f"   Public URL for {test_file}:")
                 print(f"   {public_url}")
 
                 # Test if URL is accessible
                 import requests
+
                 response = requests.head(public_url, timeout=10)
                 print(f"   URL Status: {response.status_code}")
 
-            except (KeyError, AttributeError, TypeError, ValueError, ImportError, OSError) as e:
+            except (
+                KeyError,
+                AttributeError,
+                TypeError,
+                ValueError,
+                ImportError,
+                OSError,
+            ) as e:
                 print(f"   ❌ Error getting public URL: {e}")
         else:
             print("   No files found to test")

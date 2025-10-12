@@ -4,18 +4,22 @@ Monitoring endpoints for system health and performance
 Provides endpoints to monitor connection pools, query performance,
 and system resources.
 """
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
-from datetime import datetime
-from ..services.auth import verify_jwt_token
-from ..services.storage.supabase_client import get_connection_stats as get_supabase_stats
-from ..services.storage.pinecone_client import get_connection_stats as get_pinecone_stats
+
+from ..services.auth import verify_jwt_token_from_header
+from ..services.storage.pinecone_client import \
+    get_connection_stats as get_pinecone_stats
+from ..services.storage.supabase_client import \
+    get_connection_stats as get_supabase_stats
 from ..utils.query_optimizer import query_monitor
 
 router = APIRouter()
 
 
 @router.get("/connection-pools")
-async def get_connection_pool_stats(user=Depends(verify_jwt_token)):
+async def get_connection_pool_stats(user=Depends(verify_jwt_token_from_header)):
     """
     Get connection pool statistics for all database clients
 
@@ -26,17 +30,18 @@ async def get_connection_pool_stats(user=Depends(verify_jwt_token)):
         pinecone_stats = get_pinecone_stats()
 
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "supabase": {
                 "pool_size": supabase_stats.get("pool_size", 0),
                 "total_connections": supabase_stats.get("total_connections", 0),
                 "active_connections": supabase_stats.get("active_connections", 0),
                 "failed_connections": supabase_stats.get("failed_connections", 0),
                 "utilization": round(
-                    supabase_stats.get("active_connections", 0) /
-                    max(supabase_stats.get("pool_size", 1), 1) * 100,
-                    2
-                )
+                    supabase_stats.get("active_connections", 0)
+                    / max(supabase_stats.get("pool_size", 1), 1)
+                    * 100,
+                    2,
+                ),
             },
             "pinecone": {
                 "pool_size": pinecone_stats.get("pool_size", 0),
@@ -44,26 +49,30 @@ async def get_connection_pool_stats(user=Depends(verify_jwt_token)):
                 "active_connections": pinecone_stats.get("active_connections", 0),
                 "failed_connections": pinecone_stats.get("failed_connections", 0),
                 "utilization": round(
-                    pinecone_stats.get("active_connections", 0) /
-                    max(pinecone_stats.get("pool_size", 1), 1) * 100,
-                    2
-                )
+                    pinecone_stats.get("active_connections", 0)
+                    / max(pinecone_stats.get("pool_size", 1), 1)
+                    * 100,
+                    2,
+                ),
             },
             "health": {
-                "supabase": "healthy" if supabase_stats.get("failed_connections", 0) == 0 else "degraded",
-                "pinecone": "healthy" if pinecone_stats.get("failed_connections", 0) == 0 else "degraded"
-            }
+                "supabase": "healthy"
+                if supabase_stats.get("failed_connections", 0) == 0
+                else "degraded",
+                "pinecone": "healthy"
+                if pinecone_stats.get("failed_connections", 0) == 0
+                else "degraded",
+            },
         }
 
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get connection pool stats: {str(e)}"
+            status_code=500, detail=f"Failed to get connection pool stats: {str(e)}"
         )
 
 
 @router.get("/query-performance")
-async def get_query_performance(user=Depends(verify_jwt_token)):
+async def get_query_performance(user=Depends(verify_jwt_token_from_header)):
     """
     Get query performance statistics
 
@@ -73,32 +82,33 @@ async def get_query_performance(user=Depends(verify_jwt_token)):
         stats = query_monitor.get_stats()
 
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "queries": {
                 "total": stats.get("total_queries", 0),
                 "failed": stats.get("failed_queries", 0),
-                "slow": stats.get("slow_queries", 0)
+                "slow": stats.get("slow_queries", 0),
             },
             "performance": {
                 "avg_duration_ms": round(stats.get("avg_duration_ms", 0), 2),
                 "max_duration_ms": round(stats.get("max_duration_ms", 0), 2),
-                "min_duration_ms": round(stats.get("min_duration_ms", 0), 2)
+                "min_duration_ms": round(stats.get("min_duration_ms", 0), 2),
             },
             "health": {
-                "status": "healthy" if stats.get("slow_queries", 0) < 10 else "degraded",
-                "slow_query_threshold_ms": 1000
-            }
+                "status": "healthy"
+                if stats.get("slow_queries", 0) < 10
+                else "degraded",
+                "slow_query_threshold_ms": 1000,
+            },
         }
 
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get query performance: {str(e)}"
+            status_code=500, detail=f"Failed to get query performance: {str(e)}"
         )
 
 
 @router.post("/query-performance/reset")
-async def reset_query_performance(user=Depends(verify_jwt_token)):
+async def reset_query_performance(user=Depends(verify_jwt_token_from_header)):
     """
     Reset query performance statistics
 
@@ -110,13 +120,12 @@ async def reset_query_performance(user=Depends(verify_jwt_token)):
         return {
             "success": True,
             "message": "Query performance statistics reset",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to reset query performance: {str(e)}"
+            status_code=500, detail=f"Failed to reset query performance: {str(e)}"
         )
 
 
@@ -144,37 +153,39 @@ async def get_system_health():
 
         return {
             "status": "healthy" if overall_healthy else "degraded",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "components": {
                 "database": "healthy" if supabase_healthy else "degraded",
                 "vector_store": "healthy" if pinecone_healthy else "degraded",
-                "query_performance": "healthy" if queries_healthy else "degraded"
+                "query_performance": "healthy" if queries_healthy else "degraded",
             },
             "metrics": {
                 "supabase_pool_utilization": round(
-                    supabase_stats.get("active_connections", 0) /
-                    max(supabase_stats.get("pool_size", 1), 1) * 100,
-                    2
+                    supabase_stats.get("active_connections", 0)
+                    / max(supabase_stats.get("pool_size", 1), 1)
+                    * 100,
+                    2,
                 ),
                 "pinecone_pool_utilization": round(
-                    pinecone_stats.get("active_connections", 0) /
-                    max(pinecone_stats.get("pool_size", 1), 1) * 100,
-                    2
+                    pinecone_stats.get("active_connections", 0)
+                    / max(pinecone_stats.get("pool_size", 1), 1)
+                    * 100,
+                    2,
                 ),
-                "avg_query_time_ms": round(query_stats.get("avg_duration_ms", 0), 2)
-            }
+                "avg_query_time_ms": round(query_stats.get("avg_duration_ms", 0), 2),
+            },
         }
 
     except Exception as e:
         return {
             "status": "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "error": str(e)
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": str(e),
         }
 
 
 @router.get("/alerts")
-async def get_system_alerts(user=Depends(verify_jwt_token)):
+async def get_system_alerts(user=Depends(verify_jwt_token_from_header)):
     """
     Get system alerts based on thresholds
 
@@ -188,76 +199,89 @@ async def get_system_alerts(user=Depends(verify_jwt_token)):
         pinecone_stats = get_pinecone_stats()
 
         supabase_util = (
-            supabase_stats.get("active_connections", 0) /
-            max(supabase_stats.get("pool_size", 1), 1) * 100
+            supabase_stats.get("active_connections", 0)
+            / max(supabase_stats.get("pool_size", 1), 1)
+            * 100
         )
 
         if supabase_util > 80:
-            alerts.append({
-                "severity": "warning",
-                "component": "supabase",
-                "message": f"Supabase connection pool utilization high: {supabase_util:.1f}%",
-                "recommendation": "Consider increasing SUPABASE_POOL_SIZE"
-            })
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "component": "supabase",
+                    "message": f"Supabase connection pool utilization high: {supabase_util:.1f}%",
+                    "recommendation": "Consider increasing SUPABASE_POOL_SIZE",
+                }
+            )
 
         pinecone_util = (
-            pinecone_stats.get("active_connections", 0) /
-            max(pinecone_stats.get("pool_size", 1), 1) * 100
+            pinecone_stats.get("active_connections", 0)
+            / max(pinecone_stats.get("pool_size", 1), 1)
+            * 100
         )
 
         if pinecone_util > 80:
-            alerts.append({
-                "severity": "warning",
-                "component": "pinecone",
-                "message": f"Pinecone connection pool utilization high: {pinecone_util:.1f}%",
-                "recommendation": "Consider increasing PINECONE_POOL_SIZE"
-            })
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "component": "pinecone",
+                    "message": f"Pinecone connection pool utilization high: {pinecone_util:.1f}%",
+                    "recommendation": "Consider increasing PINECONE_POOL_SIZE",
+                }
+            )
 
         # Check query performance
         query_stats = query_monitor.get_stats()
 
         if query_stats.get("slow_queries", 0) > 10:
-            alerts.append({
-                "severity": "warning",
-                "component": "queries",
-                "message": f"High number of slow queries: {query_stats.get('slow_queries', 0)}",
-                "recommendation": "Review slow query logs and add database indexes"
-            })
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "component": "queries",
+                    "message": f"High number of slow queries: {query_stats.get('slow_queries', 0)}",
+                    "recommendation": "Review slow query logs and add database indexes",
+                }
+            )
 
         if query_stats.get("avg_duration_ms", 0) > 500:
-            alerts.append({
-                "severity": "info",
-                "component": "queries",
-                "message": f"Average query time elevated: {query_stats.get('avg_duration_ms', 0):.0f}ms",
-                "recommendation": "Consider query optimization"
-            })
+            alerts.append(
+                {
+                    "severity": "info",
+                    "component": "queries",
+                    "message": f"Average query time elevated: {query_stats.get('avg_duration_ms', 0):.0f}ms",
+                    "recommendation": "Consider query optimization",
+                }
+            )
 
         # Check failed connections
         if supabase_stats.get("failed_connections", 0) > 0:
-            alerts.append({
-                "severity": "error",
-                "component": "supabase",
-                "message": f"Failed connections detected: {supabase_stats.get('failed_connections', 0)}",
-                "recommendation": "Check database connectivity and credentials"
-            })
+            alerts.append(
+                {
+                    "severity": "error",
+                    "component": "supabase",
+                    "message": f"Failed connections detected: {supabase_stats.get('failed_connections', 0)}",
+                    "recommendation": "Check database connectivity and credentials",
+                }
+            )
 
         if pinecone_stats.get("failed_connections", 0) > 0:
-            alerts.append({
-                "severity": "error",
-                "component": "pinecone",
-                "message": f"Failed connections detected: {pinecone_stats.get('failed_connections', 0)}",
-                "recommendation": "Check Pinecone API status and credentials"
-            })
+            alerts.append(
+                {
+                    "severity": "error",
+                    "component": "pinecone",
+                    "message": f"Failed connections detected: {pinecone_stats.get('failed_connections', 0)}",
+                    "recommendation": "Check Pinecone API status and credentials",
+                }
+            )
 
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "alert_count": len(alerts),
             "alerts": alerts,
-            "status": "ok" if len(alerts) == 0 else "alerts_present"
+            "status": "ok" if len(alerts) == 0 else "alerts_present",
         }
 
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get system alerts: {str(e)}"
+            status_code=500, detail=f"Failed to get system alerts: {str(e)}"
         )

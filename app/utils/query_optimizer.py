@@ -4,11 +4,11 @@ Database query optimization utilities
 Provides helpers to prevent N+1 queries, optimize joins,
 and add query performance monitoring.
 """
-import time
 import logging
-from typing import List, Dict, Any, Optional, Callable
-from functools import wraps
+import time
 from contextlib import contextmanager
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,27 +48,25 @@ class QueryPerformanceMonitor:
                         "query_name": query_name,
                         "duration_ms": duration_ms,
                         "params": query_params,
-                        "error": str(error) if error else None
-                    }
+                        "error": str(error) if error else None,
+                    },
                 )
 
             # Store stats
-            self.query_stats.append({
-                "query_name": query_name,
-                "duration_ms": duration_ms,
-                "params": query_params,
-                "success": error is None,
-                "timestamp": time.time()
-            })
+            self.query_stats.append(
+                {
+                    "query_name": query_name,
+                    "duration_ms": duration_ms,
+                    "params": query_params,
+                    "success": error is None,
+                    "timestamp": time.time(),
+                }
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get query performance statistics"""
         if not self.query_stats:
-            return {
-                "total_queries": 0,
-                "avg_duration_ms": 0,
-                "slow_queries": 0
-            }
+            return {"total_queries": 0, "avg_duration_ms": 0, "slow_queries": 0}
 
         durations = [s["duration_ms"] for s in self.query_stats]
 
@@ -77,8 +75,10 @@ class QueryPerformanceMonitor:
             "avg_duration_ms": sum(durations) / len(durations),
             "max_duration_ms": max(durations),
             "min_duration_ms": min(durations),
-            "slow_queries": sum(1 for d in durations if d > self.slow_query_threshold_ms),
-            "failed_queries": sum(1 for s in self.query_stats if not s["success"])
+            "slow_queries": sum(
+                1 for d in durations if d > self.slow_query_threshold_ms
+            ),
+            "failed_queries": sum(1 for s in self.query_stats if not s["success"]),
         }
 
     def reset_stats(self):
@@ -99,19 +99,25 @@ def monitor_query(query_name: str):
         async def get_uploads(user_id: str):
             return supabase.table("uploads").select("*").execute()
     """
+
     def decorator(func: Callable):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            with query_monitor.monitor_query(query_name, {"args": args, "kwargs": kwargs}):
+            with query_monitor.monitor_query(
+                query_name, {"args": args, "kwargs": kwargs}
+            ):
                 return await func(*args, **kwargs)
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
-            with query_monitor.monitor_query(query_name, {"args": args, "kwargs": kwargs}):
+            with query_monitor.monitor_query(
+                query_name, {"args": args, "kwargs": kwargs}
+            ):
                 return func(*args, **kwargs)
 
         # Return appropriate wrapper based on function type
         import asyncio
+
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
         else:
@@ -141,8 +147,9 @@ class QueryOptimizer:
 
         # Validate field names (prevent injection)
         import re
+
         for field in fields:
-            if not re.match(r'^[a-zA-Z0-9_]+$', field):
+            if not re.match(r"^[a-zA-Z0-9_]+$", field):
                 raise ValueError(f"Invalid field name: {field}")
 
         return ",".join(fields)
@@ -164,7 +171,7 @@ class QueryOptimizer:
         cleaned = {k: v for k, v in filters.items() if v is not None}
 
         # Validate if it's a metadata filter
-        if any(key in cleaned for key in ['upload_id', 'org_id', 'type']):
+        if any(key in cleaned for key in ["upload_id", "org_id", "type"]):
             return validate_metadata_filter(cleaned)
 
         return cleaned
@@ -182,13 +189,19 @@ class QueryOptimizer:
         """
         # For Supabase/PostgreSQL, ensure we're using indexed columns
         indexed_columns = {
-            'org_id', 'user_id', 'created_at', 'updated_at',
-            'status', 'type', 'chatbot_id', 'upload_id'
+            "org_id",
+            "user_id",
+            "created_at",
+            "updated_at",
+            "status",
+            "type",
+            "chatbot_id",
+            "upload_id",
         }
 
         # Prioritize indexed columns in filters
-        if 'filters' in query_params:
-            filters = query_params['filters']
+        if "filters" in query_params:
+            filters = query_params["filters"]
             # Sort filters to put indexed columns first
             sorted_filters = {}
             for col in indexed_columns:
@@ -197,7 +210,7 @@ class QueryOptimizer:
             for col, val in filters.items():
                 if col not in indexed_columns:
                     sorted_filters[col] = val
-            query_params['filters'] = sorted_filters
+            query_params["filters"] = sorted_filters
 
         return query_params
 
@@ -207,10 +220,7 @@ class BatchQueryHelper:
 
     @staticmethod
     async def fetch_related_batch(
-        table: str,
-        foreign_key: str,
-        ids: List[str],
-        supabase_client
+        table: str, foreign_key: str, ids: List[str], supabase_client
     ) -> Dict[str, List[Dict]]:
         """
         Fetch related records in batch to prevent N+1 queries
@@ -231,9 +241,12 @@ class BatchQueryHelper:
         unique_ids = list(set(ids))
 
         # Batch fetch (Supabase supports 'in' operator)
-        result = supabase_client.table(table).select("*").in_(
-            foreign_key, unique_ids
-        ).execute()
+        result = (
+            supabase_client.table(table)
+            .select("*")
+            .in_(foreign_key, unique_ids)
+            .execute()
+        )
 
         # Group by foreign key
         grouped = {}
@@ -247,9 +260,7 @@ class BatchQueryHelper:
 
     @staticmethod
     def batch_process(
-        items: List[Any],
-        batch_size: int = 100,
-        processor: Callable = None
+        items: List[Any], batch_size: int = 100, processor: Callable = None
     ) -> List[Any]:
         """
         Process items in batches to prevent memory issues
@@ -265,7 +276,7 @@ class BatchQueryHelper:
         results = []
 
         for i in range(0, len(items), batch_size):
-            batch = items[i:i + batch_size]
+            batch = items[i : i + batch_size]
 
             if processor:
                 batch_result = processor(batch)
@@ -282,7 +293,7 @@ def optimize_supabase_query(
     filters: Optional[Dict[str, Any]] = None,
     order_by: Optional[str] = None,
     limit: Optional[int] = None,
-    offset: Optional[int] = None
+    offset: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Build optimized Supabase query parameters

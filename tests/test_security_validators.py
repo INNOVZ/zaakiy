@@ -4,15 +4,10 @@ Security validation tests for input validators
 Tests SSRF protection, injection prevention, and input sanitization
 """
 import pytest
-from app.utils.validators import (
-    validate_url,
-    validate_upload_id,
-    validate_namespace,
-    validate_org_id,
-    validate_metadata_filter,
-    validate_json_safe,
-    ValidationError
-)
+
+from app.utils.validators import (ValidationError, validate_json_safe,
+                                  validate_metadata_filter, validate_namespace,
+                                  validate_org_id, validate_upload_id, validate_url)
 
 
 class TestURLValidation:
@@ -250,13 +245,7 @@ class TestJSONSafeValidation:
 
     def test_nested_structure_allowed(self):
         """Nested structures within depth limit should be allowed"""
-        data = {
-            "level1": {
-                "level2": {
-                    "level3": ["a", "b", "c"]
-                }
-            }
-        }
+        data = {"level1": {"level2": {"level3": ["a", "b", "c"]}}}
         assert validate_json_safe(data)
 
     def test_too_deep_blocked(self):

@@ -3,17 +3,21 @@ Input validation utilities for the ZaaKy AI Platform
 Provides reusable validators for common input types
 """
 import re
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
+
 from pydantic import validator
 
 
 class ValidationError(Exception):
     """Custom validation error"""
+
     pass
 
 
-def validate_message_length(message: str, min_length: int = 1, max_length: int = 4000) -> str:
+def validate_message_length(
+    message: str, min_length: int = 1, max_length: int = 4000
+) -> str:
     """
     Validate message length to prevent token overflow and empty messages
 
@@ -34,12 +38,10 @@ def validate_message_length(message: str, min_length: int = 1, max_length: int =
     stripped = message.strip()
 
     if len(stripped) < min_length:
-        raise ValidationError(
-            f"Message must be at least {min_length} characters")
+        raise ValidationError(f"Message must be at least {min_length} characters")
 
     if len(stripped) > max_length:
-        raise ValidationError(
-            f"Message too long (max {max_length} characters)")
+        raise ValidationError(f"Message too long (max {max_length} characters)")
 
     return stripped
 
@@ -77,7 +79,7 @@ def validate_url(url: str, allow_localhost: bool = False) -> str:
         raise ValidationError(f"Invalid URL format: {str(e)}")
 
     # Check scheme - only allow http/https
-    if parsed.scheme not in ['http', 'https']:
+    if parsed.scheme not in ["http", "https"]:
         raise ValidationError("URL must use http or https protocol")
 
     # Get hostname
@@ -86,33 +88,43 @@ def validate_url(url: str, allow_localhost: bool = False) -> str:
         raise ValidationError("URL must have a valid hostname")
 
     # Check for suspicious patterns BEFORE DNS resolution
-    if '@' in url:
+    if "@" in url:
         raise ValidationError("URLs with authentication are not allowed")
 
-    if '..' in url:
+    if ".." in url:
         raise ValidationError("URLs with path traversal are not allowed")
 
     # Block URLs with encoded characters that could bypass filters
     suspicious_patterns = [
-        '%00', '%0a', '%0d',  # Null bytes and newlines
-        '%2e%2e',  # Encoded ..
-        '%2f%2f',  # Encoded //
-        'file://', 'ftp://', 'gopher://', 'data://',  # Dangerous schemes
-        'javascript:', 'vbscript:',  # Script injection
+        "%00",
+        "%0a",
+        "%0d",  # Null bytes and newlines
+        "%2e%2e",  # Encoded ..
+        "%2f%2f",  # Encoded //
+        "file://",
+        "ftp://",
+        "gopher://",
+        "data://",  # Dangerous schemes
+        "javascript:",
+        "vbscript:",  # Script injection
     ]
     url_lower = url.lower()
     for pattern in suspicious_patterns:
         if pattern in url_lower:
-            raise ValidationError(
-                f"URL contains suspicious pattern: {pattern}")
+            raise ValidationError(f"URL contains suspicious pattern: {pattern}")
 
     # Check for localhost/private IPs (unless explicitly allowed)
     if not allow_localhost:
         # Block localhost names
         localhost_names = [
-            'localhost', 'localhost.localdomain',
-            '127.0.0.1', '0.0.0.0', '::1', '0:0:0:0:0:0:0:1',
-            '[::1]', '[0:0:0:0:0:0:0:1]'
+            "localhost",
+            "localhost.localdomain",
+            "127.0.0.1",
+            "0.0.0.0",
+            "::1",
+            "0:0:0:0:0:0:0:1",
+            "[::1]",
+            "[0:0:0:0:0:0:0:1]",
         ]
         if hostname.lower() in localhost_names:
             raise ValidationError("Localhost URLs are not allowed")
@@ -131,28 +143,33 @@ def validate_url(url: str, allow_localhost: bool = False) -> str:
                     # Check if IP is private, loopback, link-local, or reserved
                     if ip_obj.is_private:
                         raise ValidationError(
-                            f"URL resolves to private IP address: {ip_str}")
+                            f"URL resolves to private IP address: {ip_str}"
+                        )
 
                     if ip_obj.is_loopback:
                         raise ValidationError(
-                            f"URL resolves to loopback address: {ip_str}")
+                            f"URL resolves to loopback address: {ip_str}"
+                        )
 
                     if ip_obj.is_link_local:
                         raise ValidationError(
-                            f"URL resolves to link-local address: {ip_str}")
+                            f"URL resolves to link-local address: {ip_str}"
+                        )
 
                     if ip_obj.is_reserved:
                         raise ValidationError(
-                            f"URL resolves to reserved IP address: {ip_str}")
+                            f"URL resolves to reserved IP address: {ip_str}"
+                        )
 
                     # Block cloud metadata endpoints
                     metadata_ips = [
-                        '169.254.169.254',  # AWS, Azure, GCP metadata
-                        'fd00:ec2::254',     # AWS IPv6 metadata
+                        "169.254.169.254",  # AWS, Azure, GCP metadata
+                        "fd00:ec2::254",  # AWS IPv6 metadata
                     ]
                     if ip_str in metadata_ips:
                         raise ValidationError(
-                            f"URL resolves to cloud metadata endpoint: {ip_str}")
+                            f"URL resolves to cloud metadata endpoint: {ip_str}"
+                        )
 
                 except ValueError:
                     # Not a valid IP address, skip
@@ -167,8 +184,7 @@ def validate_url(url: str, allow_localhost: bool = False) -> str:
 
         # Additional hostname checks
         # Block common internal/private TLDs
-        blocked_tlds = ['.local', '.internal',
-                        '.private', '.corp', '.home', '.lan']
+        blocked_tlds = [".local", ".internal", ".private", ".corp", ".home", ".lan"]
         hostname_lower = hostname.lower()
         for tld in blocked_tlds:
             if hostname_lower.endswith(tld):
@@ -176,11 +192,12 @@ def validate_url(url: str, allow_localhost: bool = False) -> str:
 
         # Block IP addresses in hostname (both IPv4 and IPv6)
         try:
-            ip_obj = ipaddress.ip_address(hostname.strip('[]'))
+            ip_obj = ipaddress.ip_address(hostname.strip("[]"))
             # If we get here, hostname is an IP address
             if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
                 raise ValidationError(
-                    "Direct IP addresses to private networks are not allowed")
+                    "Direct IP addresses to private networks are not allowed"
+                )
         except ValueError:
             # Not an IP address, which is fine
             pass
@@ -189,9 +206,9 @@ def validate_url(url: str, allow_localhost: bool = False) -> str:
     if parsed.port:
         # Block commonly dangerous ports
         blocked_ports = [
-            22,    # SSH
-            23,    # Telnet
-            25,    # SMTP
+            22,  # SSH
+            23,  # Telnet
+            25,  # SMTP
             3306,  # MySQL
             5432,  # PostgreSQL
             6379,  # Redis
@@ -225,15 +242,13 @@ def validate_chatbot_name(name: str, min_length: int = 2, max_length: int = 100)
     stripped = name.strip()
 
     if len(stripped) < min_length:
-        raise ValidationError(
-            f"Chatbot name must be at least {min_length} characters")
+        raise ValidationError(f"Chatbot name must be at least {min_length} characters")
 
     if len(stripped) > max_length:
-        raise ValidationError(
-            f"Chatbot name too long (max {max_length} characters)")
+        raise ValidationError(f"Chatbot name too long (max {max_length} characters)")
 
     # Check for valid characters (alphanumeric, spaces, and common punctuation)
-    if not re.match(r'^[a-zA-Z0-9\s\-_.,!?]+$', stripped):
+    if not re.match(r"^[a-zA-Z0-9\s\-_.,!?]+$", stripped):
         raise ValidationError("Chatbot name contains invalid characters")
 
     return stripped
@@ -258,7 +273,7 @@ def validate_hex_color(color: str) -> str:
     color = color.strip()
 
     # Check format
-    if not re.match(r'^#[0-9A-Fa-f]{6}$', color):
+    if not re.match(r"^#[0-9A-Fa-f]{6}$", color):
         raise ValidationError("Color must be a valid hex code (e.g., #FF0000)")
 
     return color.upper()
@@ -309,13 +324,13 @@ def validate_file_type(filename: str, allowed_types: list) -> str:
     filename = filename.strip()
 
     # Get extension
-    extension = filename.lower().split('.')[-1] if '.' in filename else ''
+    extension = filename.lower().split(".")[-1] if "." in filename else ""
 
     if not extension:
         raise ValidationError("File must have an extension")
 
     # Normalize allowed types
-    normalized_allowed = [t.lower().lstrip('.') for t in allowed_types]
+    normalized_allowed = [t.lower().lstrip(".") for t in allowed_types]
 
     if extension not in normalized_allowed:
         raise ValidationError(
@@ -340,8 +355,7 @@ def validate_rating(rating: int) -> int:
         ValidationError: If rating is invalid
     """
     if rating not in [1, -1]:
-        raise ValidationError(
-            "Rating must be 1 (thumbs up) or -1 (thumbs down)")
+        raise ValidationError("Rating must be 1 (thumbs up) or -1 (thumbs down)")
 
     return rating
 
@@ -435,11 +449,12 @@ def sanitize_text_input(text: str, max_length: Optional[int] = None) -> str:
         return ""
 
     # Remove null bytes
-    text = text.replace('\x00', '')
+    text = text.replace("\x00", "")
 
     # Remove control characters except newlines and tabs
-    text = ''.join(char for char in text if char ==
-                   '\n' or char == '\t' or ord(char) >= 32)
+    text = "".join(
+        char for char in text if char == "\n" or char == "\t" or ord(char) >= 32
+    )
 
     # Trim if needed
     if max_length and len(text) > max_length:
@@ -471,9 +486,10 @@ def validate_upload_id(upload_id: str) -> str:
         raise ValidationError("Upload ID must be between 1 and 100 characters")
 
     # Only allow alphanumeric, hyphens, and underscores (UUID-safe)
-    if not re.match(r'^[a-zA-Z0-9\-_]+$', upload_id):
+    if not re.match(r"^[a-zA-Z0-9\-_]+$", upload_id):
         raise ValidationError(
-            "Upload ID can only contain letters, numbers, hyphens, and underscores")
+            "Upload ID can only contain letters, numbers, hyphens, and underscores"
+        )
 
     return upload_id
 
@@ -501,12 +517,13 @@ def validate_namespace(namespace: str) -> str:
         raise ValidationError("Namespace must be between 1 and 200 characters")
 
     # Only allow alphanumeric, hyphens, underscores, and dots
-    if not re.match(r'^[a-zA-Z0-9\-_.]+$', namespace):
+    if not re.match(r"^[a-zA-Z0-9\-_.]+$", namespace):
         raise ValidationError(
-            "Namespace can only contain letters, numbers, hyphens, underscores, and dots")
+            "Namespace can only contain letters, numbers, hyphens, underscores, and dots"
+        )
 
     # Prevent path traversal
-    if '..' in namespace or namespace.startswith('.') or namespace.endswith('.'):
+    if ".." in namespace or namespace.startswith(".") or namespace.endswith("."):
         raise ValidationError("Invalid namespace format")
 
     return namespace
@@ -532,13 +549,13 @@ def validate_org_id(org_id: str) -> str:
 
     # Check length
     if len(org_id) < 1 or len(org_id) > 100:
-        raise ValidationError(
-            "Organization ID must be between 1 and 100 characters")
+        raise ValidationError("Organization ID must be between 1 and 100 characters")
 
     # Only allow alphanumeric, hyphens, and underscores
-    if not re.match(r'^[a-zA-Z0-9\-_]+$', org_id):
+    if not re.match(r"^[a-zA-Z0-9\-_]+$", org_id):
         raise ValidationError(
-            "Organization ID can only contain letters, numbers, hyphens, and underscores")
+            "Organization ID can only contain letters, numbers, hyphens, and underscores"
+        )
 
     return org_id
 
@@ -569,49 +586,51 @@ def validate_metadata_filter(filter_dict: Dict[str, Any]) -> Dict[str, Any]:
 
     # Allowed filter keys (whitelist approach)
     allowed_keys = {
-        'upload_id', 'org_id', 'source', 'type', 'chunk_index',
-        'has_products', 'created_at', 'updated_at'
+        "upload_id",
+        "org_id",
+        "source",
+        "type",
+        "chunk_index",
+        "has_products",
+        "created_at",
+        "updated_at",
     }
 
     for key, value in filter_dict.items():
         # Validate key
         if not isinstance(key, str):
-            raise ValidationError(
-                f"Filter key must be string, got {type(key)}")
+            raise ValidationError(f"Filter key must be string, got {type(key)}")
 
         if key not in allowed_keys:
             raise ValidationError(f"Filter key '{key}' is not allowed")
 
         # Validate value based on key
-        if key in ['upload_id', 'org_id', 'source', 'type']:
+        if key in ["upload_id", "org_id", "source", "type"]:
             if not isinstance(value, str):
-                raise ValidationError(
-                    f"Filter value for '{key}' must be string")
+                raise ValidationError(f"Filter value for '{key}' must be string")
 
             # Sanitize string values
             if len(value) > 500:
                 raise ValidationError(f"Filter value for '{key}' is too long")
 
             # Check for injection patterns
-            dangerous_patterns = ['$', '{', '}', '..', '/', '\\', '\x00']
+            dangerous_patterns = ["$", "{", "}", "..", "/", "\\", "\x00"]
             for pattern in dangerous_patterns:
                 if pattern in value:
                     raise ValidationError(
-                        f"Filter value for '{key}' contains dangerous pattern: {pattern}")
+                        f"Filter value for '{key}' contains dangerous pattern: {pattern}"
+                    )
 
-        elif key == 'chunk_index':
+        elif key == "chunk_index":
             if not isinstance(value, int):
-                raise ValidationError(
-                    f"Filter value for '{key}' must be integer")
+                raise ValidationError(f"Filter value for '{key}' must be integer")
 
             if value < 0 or value > 1000000:
-                raise ValidationError(
-                    f"Filter value for '{key}' is out of range")
+                raise ValidationError(f"Filter value for '{key}' is out of range")
 
-        elif key == 'has_products':
+        elif key == "has_products":
             if not isinstance(value, bool):
-                raise ValidationError(
-                    f"Filter value for '{key}' must be boolean")
+                raise ValidationError(f"Filter value for '{key}' must be boolean")
 
         validated[key] = value
 
@@ -634,8 +653,7 @@ def validate_json_safe(data: Any, max_depth: int = 10, current_depth: int = 0) -
         ValidationError: If data structure is unsafe
     """
     if current_depth > max_depth:
-        raise ValidationError(
-            f"Data structure exceeds maximum depth of {max_depth}")
+        raise ValidationError(f"Data structure exceeds maximum depth of {max_depth}")
 
     if isinstance(data, dict):
         if len(data) > 1000:

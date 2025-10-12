@@ -4,9 +4,10 @@ Script to configure Supabase storage bucket for private access
 """
 
 import os
+
+import requests
 from dotenv import load_dotenv
 from supabase import create_client
-import requests
 
 load_dotenv()
 
@@ -37,8 +38,7 @@ def configure_private_bucket():
         if not uploads_bucket:
             print("📁 Creating private uploads bucket...")
             try:
-                result = supabase.storage.create_bucket(
-                    "uploads", {"public": False})
+                result = supabase.storage.create_bucket("uploads", {"public": False})
                 print(f"✅ Private bucket created successfully: {result}")
             except Exception as e:
                 print(f"❌ Failed to create bucket: {e}")
@@ -86,18 +86,21 @@ def test_authenticated_access(supabase):
 
                 # Test accessing the file with service role key
                 headers = {
-                    'Authorization': f'Bearer {os.getenv("SUPABASE_SERVICE_ROLE_KEY")}',
-                    'apikey': os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                    "Authorization": f'Bearer {os.getenv("SUPABASE_SERVICE_ROLE_KEY")}',
+                    "apikey": os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
                 }
 
-                file_url = f"{os.getenv('SUPABASE_URL')}/storage/v1/object/uploads/{test_file}"
+                file_url = (
+                    f"{os.getenv('SUPABASE_URL')}/storage/v1/object/uploads/{test_file}"
+                )
                 response = requests.head(file_url, headers=headers, timeout=10)
 
                 if response.status_code == 200:
                     print("✅ Authenticated access to files working correctly")
                 else:
                     print(
-                        f"⚠️  Authenticated access returned status: {response.status_code}")
+                        f"⚠️  Authenticated access returned status: {response.status_code}"
+                    )
 
             except requests.RequestException as e:
                 print(f"⚠️  Error testing file access: {e}")
@@ -114,13 +117,11 @@ def create_test_upload():
         print("\n📝 Creating test upload...")
 
         supabase = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         )
 
         # Get first organization
-        orgs_result = supabase.table(
-            "organizations").select("*").limit(1).execute()
+        orgs_result = supabase.table("organizations").select("*").limit(1).execute()
         if not orgs_result.data:
             print("❌ No organizations found")
             return
@@ -133,7 +134,7 @@ def create_test_upload():
             "type": "url",
             "source": "https://httpbin.org/json",  # Simple JSON endpoint
             "pinecone_namespace": f"org-{org_id}",
-            "status": "pending"
+            "status": "pending",
         }
 
         result = supabase.table("uploads").insert(test_upload).execute()

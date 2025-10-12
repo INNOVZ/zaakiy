@@ -1,13 +1,19 @@
 import html
 import os
-from fastapi import APIRouter, HTTPException
+
 from dotenv import load_dotenv
+from fastapi import APIRouter, HTTPException
+
 from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
 from ..services.storage.supabase_client import get_supabase_client
-from ..utils.rate_limiter import rate_limit, get_rate_limit_config
+from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 
 load_dotenv()
+
+# Constants
+CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
+CHATBOT_NOT_FOUND_OR_INACTIVE_MESSAGE = "Chatbot not found or inactive"
 
 # Get centralized Supabase client
 supabase = get_supabase_client()
@@ -21,13 +27,17 @@ async def public_chat(request: PublicChatRequest):
     """Public chat endpoint for embedded chatbots"""
     try:
         # Get chatbot configuration using proper Supabase client
-        response = supabase.table("chatbots").select("*").eq(
-            "id", request.chatbot_id
-        ).eq("chain_status", "active").execute()
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", request.chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
+        )
 
         if not response.data or len(response.data) == 0:
             raise HTTPException(
-                status_code=404, detail="Chatbot not found or inactive"
+                status_code=404, detail=CHATBOT_NOT_FOUND_OR_INACTIVE_MESSAGE
             )
 
         chatbot = response.data[0]
@@ -35,7 +45,9 @@ async def public_chat(request: PublicChatRequest):
         # Initialize chat service with required parameters
         chat_service = ChatService(
             org_id=chatbot["org_id"],
-            chatbot_config=chatbot
+            chatbot_config=chatbot,
+            entity_id=chatbot["org_id"],  # Use organization ID for public chat
+            entity_type="organization",  # Public chat consumes tokens from organization's subscription
         )
 
         # Generate response using the existing chat method
@@ -43,7 +55,7 @@ async def public_chat(request: PublicChatRequest):
             message=request.message,
             session_id=request.session_id or "anonymous",
             chatbot_id=request.chatbot_id,
-            channel="public"
+            channel="public",
         )
 
         return {
@@ -52,17 +64,16 @@ async def public_chat(request: PublicChatRequest):
             "chatbot": {
                 "name": chatbot["name"],
                 "avatar_url": chatbot.get("avatar_url"),
-                "color_hex": chatbot["color_hex"]
+                "color_hex": chatbot["color_hex"],
             },
-            "session_id": request.session_id or "anonymous"
+            "session_id": request.session_id or "anonymous",
         }
 
     except HTTPException:
         raise
     except Exception as e:
         print(f"[Error] Public chat failed: {e}")
-        raise HTTPException(
-            status_code=500, detail="Chat service unavailable") from e
+        raise HTTPException(status_code=500, detail="Chat service unavailable") from e
 
 
 @router.get("/chatbot/{chatbot_id}/config")
@@ -70,12 +81,16 @@ async def get_public_chatbot_config(chatbot_id: str):
     """Get public chatbot configuration for embedding"""
     try:
         # Use proper Supabase client
-        response = supabase.table("chatbots").select("*").eq(
-            "id", chatbot_id
-        ).eq("chain_status", "active").execute()
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
+        )
 
         if not response.data or len(response.data) == 0:
-            raise HTTPException(status_code=404, detail="Chatbot not found")
+            raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
 
         chatbot = response.data[0]
 
@@ -86,8 +101,10 @@ async def get_public_chatbot_config(chatbot_id: str):
             "avatar_url": chatbot.get("avatar_url"),
             "color_hex": chatbot["color_hex"],
             "description": chatbot.get("description", ""),
-            "greeting_message": chatbot.get("greeting_message", "Hello! How can I help you today?"),
-            "status": "active"
+            "greeting_message": chatbot.get(
+                "greeting_message", "Hello! How can I help you today?"
+            ),
+            "status": "active",
         }
 
     except HTTPException:
@@ -104,12 +121,16 @@ async def get_chatbot_widget_code(chatbot_id: str):
     """Get embeddable widget code for a chatbot - FIXED XSS vulnerability"""
     try:
         # Get chatbot config
-        response = supabase.table("chatbots").select("*").eq(
-            "id", chatbot_id
-        ).eq("chain_status", "active").execute()
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
+        )
 
         if not response.data or len(response.data) == 0:
-            raise HTTPException(status_code=404, detail="Chatbot not found")
+            raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
 
         chatbot = response.data[0]
 
@@ -120,8 +141,9 @@ async def get_chatbot_widget_code(chatbot_id: str):
         chatbot_id_escaped = html.escape(chatbot_id)
         chatbot_name_escaped = html.escape(str(chatbot["name"]))
         chatbot_color_escaped = html.escape(str(chatbot["color_hex"]))
-        greeting_msg_escaped = html.escape(str(chatbot.get(
-            "greeting_message", "Hello! How can I help you today!")))
+        greeting_msg_escaped = html.escape(
+            str(chatbot.get("greeting_message", "Hello! How can I help you today!"))
+        )
         api_base_url_escaped = html.escape(api_base_url)
 
         # Generate widget HTML/JS code - Fixed XSS vulnerability
@@ -137,7 +159,7 @@ async def get_chatbot_widget_code(chatbot_id: str):
       color: '{chatbot_color_escaped}',
       greeting: '{greeting_msg_escaped}'
     }};
-    
+
     var script = document.createElement('script');
     script.src = chatbotConfig.apiUrl + '/chatbot/' + encodeURIComponent(chatbotConfig.chatbotId) + '/widget.js';
     script.onload = function() {{
@@ -153,7 +175,7 @@ async def get_chatbot_widget_code(chatbot_id: str):
         return {
             "chatbot_id": chatbot_id,
             "widget_code": widget_code,
-            "integration_url": f"{api_base_url}/api/public/chatbot/{chatbot_id}/widget.js"
+            "integration_url": f"{api_base_url}/api/public/chatbot/{chatbot_id}/widget.js",
         }
 
     except HTTPException:
@@ -170,37 +192,41 @@ async def get_chatbot_widget_js(chatbot_id: str):
     """Serve the JavaScript widget file - Enhanced security"""
     try:
         # Get chatbot config for defaults
-        response = supabase.table("chatbots").select("*").eq(
-            "id", chatbot_id
-        ).eq("chain_status", "active").execute()
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
+        )
 
         if not response.data or len(response.data) == 0:
-            raise HTTPException(status_code=404, detail="Chatbot not found")
+            raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
 
         # Enhanced JavaScript widget code with improved security
         js_code = """
 // ZaaKy AI Chatbot Widget v2.1 - Security Enhanced
 (function() {
   'use strict';
-  
+
   window.ZaakyWidget = {
     config: null,
     isInitialized: false,
-    
+
     init: function(config) {
       if (this.isInitialized) {
         console.warn('ZaaKy Widget already initialized');
         return;
       }
-      
+
       this.config = this.sanitizeConfig(config);
       this.createWidget();
       this.bindEvents();
       this.isInitialized = true;
-      
+
       console.log('ZaaKy Widget v2.1 initialized for chatbot:', this.config.chatbotId);
     },
-    
+
     sanitizeConfig: function(config) {
       return {
         chatbotId: this.escapeHtml(config.chatbotId || ''),
@@ -210,14 +236,14 @@ async def get_chatbot_widget_js(chatbot_id: str):
         greeting: this.escapeHtml(config.greeting || 'Hello! How can I help you today?')
       };
     },
-    
+
     escapeHtml: function(str) {
       if (!str) return '';
       var div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
     },
-    
+
     sanitizeColor: function(color) {
       // Basic color validation
       if (typeof color !== 'string') return '#6a8fff';
@@ -227,19 +253,19 @@ async def get_chatbot_widget_js(chatbot_id: str):
       }
       return '#6a8fff'; // Default fallback
     },
-    
+
     createWidget: function() {
       var container = document.getElementById('zaaky-chatbot-' + this.config.chatbotId);
       if (!container) {
         console.error('ZaaKy Widget container not found');
         return;
       }
-      
+
       // Create widget UI with properly escaped content
       var widgetHTML = this.buildWidgetHTML();
       container.innerHTML = widgetHTML;
     },
-    
+
     buildWidgetHTML: function() {
       return `
         <div class="zaaky-widget" style="
@@ -310,21 +336,21 @@ async def get_chatbot_widget_js(chatbot_id: str):
         </div>
       `;
     },
-    
+
     bindEvents: function() {
       var widget = document.querySelector('.zaaky-widget');
       if (!widget) return;
-      
+
       var closeBtn = widget.querySelector('.zaaky-close');
       var sendBtn = widget.querySelector('.zaaky-send');
       var input = widget.querySelector('.zaaky-input');
-      
+
       if (closeBtn) {
         closeBtn.addEventListener('click', () => {
           widget.style.display = 'none';
         });
       }
-      
+
       if (sendBtn && input) {
         var sendMessage = () => this.sendMessage(input.value);
         sendBtn.addEventListener('click', sendMessage);
@@ -333,19 +359,19 @@ async def get_chatbot_widget_js(chatbot_id: str):
         });
       }
     },
-    
+
     sendMessage: function(message) {
       if (!message.trim()) return;
-      
+
       var input = document.querySelector('.zaaky-input');
       var messagesContainer = document.querySelector('.zaaky-messages');
-      
+
       if (!input || !messagesContainer) return;
-      
+
       // Add user message
       this.addMessage(message, 'user');
       input.value = '';
-      
+
       // Send to API with proper error handling
       fetch(this.config.apiUrl + '/chat', {
         method: 'POST',
@@ -374,28 +400,28 @@ async def get_chatbot_widget_js(chatbot_id: str):
         this.addMessage('Sorry, I encountered an error. Please try again.', 'bot');
       });
     },
-    
+
     addMessage: function(text, sender) {
       var messagesContainer = document.querySelector('.zaaky-messages');
       if (!messagesContainer) return;
-      
+
       var messageDiv = document.createElement('div');
       messageDiv.className = 'zaaky-message ' + sender;
       messageDiv.style.cssText = `
         padding: 12px;
         border-radius: 8px;
         margin-bottom: 12px;
-        ${sender === 'user' ? 
-          'background: ' + this.config.color + '; color: white; margin-left: 40px;' : 
+        ${sender === 'user' ?
+          'background: ' + this.config.color + '; color: white; margin-left: 40px;' :
           'background: #f8f9fa; margin-right: 40px;'
         }
       `;
       messageDiv.textContent = text; // Use textContent to prevent XSS
-      
+
       messagesContainer.appendChild(messageDiv);
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     },
-    
+
     getSessionId: function() {
       var sessionId = localStorage.getItem('zaaky-session-' + this.config.chatbotId);
       if (!sessionId) {
@@ -408,10 +434,7 @@ async def get_chatbot_widget_js(chatbot_id: str):
 })();
 """
 
-        return {
-            "content": js_code,
-            "content_type": "application/javascript"
-        }
+        return {"content": js_code, "content_type": "application/javascript"}
 
     except HTTPException:
         raise

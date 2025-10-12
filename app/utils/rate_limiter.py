@@ -6,11 +6,15 @@ protect against cost explosion from excessive API calls.
 """
 
 import logging
-from typing import Callable, Optional
-from functools import wraps
-from datetime import datetime, timedelta
-from collections import defaultdict
 import threading
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+from typing import Callable, Optional
+
+from fastapi import Depends
+
+from ..services.auth import verify_jwt_token_from_header
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +31,10 @@ class InMemoryRateLimiter:
         self._requests = defaultdict(list)
         self._lock = threading.Lock()
         self._cleanup_interval = 60  # Cleanup old entries every 60 seconds
-        self._last_cleanup = datetime.utcnow()
+        self._last_cleanup = datetime.now(timezone.utc)
 
     def is_allowed(
-        self,
-        key: str,
-        max_requests: int,
-        window_seconds: int
+        self, key: str, max_requests: int, window_seconds: int
     ) -> tuple[bool, dict]:
         """
         Check if a request is allowed based on rate limits
@@ -48,7 +49,7 @@ class InMemoryRateLimiter:
             info_dict contains: remaining, reset_time, retry_after
         """
         with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             window_start = now - timedelta(seconds=window_seconds)
 
             # Get request history for this key
@@ -67,8 +68,7 @@ class InMemoryRateLimiter:
                 request_times.append(now)
 
             # Calculate info
-            remaining = max(0, max_requests - current_count -
-                            (1 if is_allowed else 0))
+            remaining = max(0, max_requests - current_count - (1 if is_allowed else 0))
             reset_time = now + timedelta(seconds=window_seconds)
             retry_after = 0
 
@@ -76,7 +76,10 @@ class InMemoryRateLimiter:
                 # Calculate when the oldest request will expire
                 oldest_request = min(request_times)
                 retry_after = int(
-                    (oldest_request + timedelta(seconds=window_seconds) - now).total_seconds())
+                    (
+                        oldest_request + timedelta(seconds=window_seconds) - now
+                    ).total_seconds()
+                )
 
             # Periodic cleanup
             if (now - self._last_cleanup).total_seconds() > self._cleanup_interval:
@@ -88,7 +91,7 @@ class InMemoryRateLimiter:
                 "reset_time": reset_time.isoformat(),
                 "retry_after": max(0, retry_after),
                 "limit": max_requests,
-                "window": window_seconds
+                "window": window_seconds,
             }
 
             return is_allowed, info
@@ -110,8 +113,7 @@ class InMemoryRateLimiter:
             del self._requests[key]
 
         if keys_to_delete:
-            logger.debug(
-                f"Cleaned up {len(keys_to_delete)} empty rate limit keys")
+            logger.debug(f"Cleaned up {len(keys_to_delete)} empty rate limit keys")
 
     def reset(self, key: str):
         """Reset rate limit for a specific key"""
@@ -126,7 +128,7 @@ class InMemoryRateLimiter:
             return {
                 "total_keys": len(self._requests),
                 "total_requests": sum(len(times) for times in self._requests.values()),
-                "last_cleanup": self._last_cleanup.isoformat()
+                "last_cleanup": self._last_cleanup.isoformat(),
             }
 
 
@@ -143,7 +145,7 @@ def rate_limit(
     max_requests: int = 10,
     window_seconds: int = 60,
     key_func: Optional[Callable] = None,
-    error_message: str = "Rate limit exceeded"
+    error_message: str = "Rate limit exceeded",
 ):
     """
     Decorator for rate limiting endpoints
@@ -157,9 +159,10 @@ def rate_limit(
 
     Example:
         @rate_limit(max_requests=10, window_seconds=60)
-        async def my_endpoint(user=Depends(verify_jwt_token)):
+        async def my_endpoint(user=Depends(verify_jwt_token_from_header)):
             return {"message": "success"}
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -170,7 +173,7 @@ def rate_limit(
                 key = key_func(*args, **kwargs)
             else:
                 # Try to get user from kwargs (from JWT token)
-                user = kwargs.get('user')
+                user = kwargs.get("user")
                 if user and isinstance(user, dict):
                     key = f"user:{user.get('user_id', 'unknown')}"
                 else:
@@ -179,8 +182,7 @@ def rate_limit(
 
             # Check rate limit
             limiter = get_rate_limiter()
-            is_allowed, info = limiter.is_allowed(
-                key, max_requests, window_seconds)
+            is_allowed, info = limiter.is_allowed(key, max_requests, window_seconds)
 
             if not is_allowed:
                 logger.warning(
@@ -189,8 +191,8 @@ def rate_limit(
                         "key": key,
                         "limit": max_requests,
                         "window": window_seconds,
-                        "retry_after": info["retry_after"]
-                    }
+                        "retry_after": info["retry_after"],
+                    },
                 )
 
                 raise HTTPException(
@@ -199,14 +201,14 @@ def rate_limit(
                         "error": error_message,
                         "retry_after": info["retry_after"],
                         "limit": info["limit"],
-                        "window": info["window"]
+                        "window": info["window"],
                     },
                     headers={
                         "X-RateLimit-Limit": str(max_requests),
                         "X-RateLimit-Remaining": "0",
                         "X-RateLimit-Reset": info["reset_time"],
-                        "Retry-After": str(info["retry_after"])
-                    }
+                        "Retry-After": str(info["retry_after"]),
+                    },
                 )
 
             # Add rate limit headers to response
@@ -217,10 +219,7 @@ def rate_limit(
                 # For now, we just log the info
                 logger.debug(
                     f"Rate limit check passed for key: {key}",
-                    extra={
-                        "remaining": info["remaining"],
-                        "limit": info["limit"]
-                    }
+                    extra={"remaining": info["remaining"], "limit": info["limit"]},
                 )
 
                 return result
@@ -229,6 +228,7 @@ def rate_limit(
                 raise e
 
         return wrapper
+
     return decorator
 
 
@@ -257,19 +257,19 @@ class RateLimitMiddleware:
         # Check rate limit
         limiter = get_rate_limiter()
         is_allowed, info = limiter.is_allowed(
-            key, self.default_limit, self.default_window)
+            key, self.default_limit, self.default_window
+        )
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
 
                 # Add rate limit headers
+                headers.append((b"x-ratelimit-limit", str(self.default_limit).encode()))
                 headers.append(
-                    (b"x-ratelimit-limit", str(self.default_limit).encode()))
-                headers.append((b"x-ratelimit-remaining",
-                               str(info["remaining"]).encode()))
-                headers.append(
-                    (b"x-ratelimit-reset", info["reset_time"].encode()))
+                    (b"x-ratelimit-remaining", str(info["remaining"]).encode())
+                )
+                headers.append((b"x-ratelimit-reset", info["reset_time"].encode()))
 
                 message["headers"] = headers
 
@@ -277,18 +277,22 @@ class RateLimitMiddleware:
 
         if not is_allowed:
             # Send 429 response
-            await send_with_headers({
-                "type": "http.response.start",
-                "status": 429,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"retry-after", str(info["retry_after"]).encode())
-                ]
-            })
-            await send({
-                "type": "http.response.body",
-                "body": b'{"error": "Rate limit exceeded"}',
-            })
+            await send_with_headers(
+                {
+                    "type": "http.response.start",
+                    "status": 429,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"retry-after", str(info["retry_after"]).encode()),
+                    ],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"error": "Rate limit exceeded"}',
+                }
+            )
         else:
             await self.app(scope, receive, send_with_headers)
 
@@ -298,28 +302,28 @@ RATE_LIMITS = {
     "chat": {
         "max_requests": 100,
         "window_seconds": 60,
-        "error_message": "Too many chat requests. Please wait before sending more messages."
+        "error_message": "Too many chat requests. Please wait before sending more messages.",
     },
     "upload": {
         "max_requests": 10,
         "window_seconds": 300,  # 5 minutes
-        "error_message": "Too many upload requests. Please wait before uploading more files."
+        "error_message": "Too many upload requests. Please wait before uploading more files.",
     },
     "search": {
         "max_requests": 30,
         "window_seconds": 60,
-        "error_message": "Too many search requests. Please slow down."
+        "error_message": "Too many search requests. Please slow down.",
     },
     "public_chat": {
         "max_requests": 100,
         "window_seconds": 60,
-        "error_message": "Too many messages. Please wait before sending more."
+        "error_message": "Too many messages. Please wait before sending more.",
     },
     "api_general": {
         "max_requests": 100,
         "window_seconds": 60,
-        "error_message": "API rate limit exceeded. Please slow down."
-    }
+        "error_message": "API rate limit exceeded. Please slow down.",
+    },
 }
 
 

@@ -6,8 +6,8 @@ including optimized deletion, querying, and batch operations.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +33,13 @@ class VectorOperations:
         """
         self.index = index
         self.embedding_dimension = embedding_dimension
-        self._stats = {
-            "deletions": 0,
-            "queries": 0,
-            "upserts": 0,
-            "errors": 0
-        }
+        self._stats = {"deletions": 0, "queries": 0, "upserts": 0, "errors": 0}
 
     def delete_by_metadata(
         self,
         filter_dict: Dict[str, Any],
         namespace: str,
-        fallback_to_query: bool = True
+        fallback_to_query: bool = True,
     ) -> Dict[str, Any]:
         """
         Delete vectors by metadata filter (most efficient method)
@@ -57,15 +52,16 @@ class VectorOperations:
         Returns:
             Dict with deletion results and statistics
         """
-        from ..utils.validators import validate_metadata_filter, validate_namespace, ValidationError
+        from ..utils.validators import (ValidationError, validate_metadata_filter,
+                                        validate_namespace)
 
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         result = {
             "success": False,
             "method": "unknown",
             "vectors_deleted": 0,
             "duration_ms": 0,
-            "error": None
+            "error": None,
         }
 
         try:
@@ -79,13 +75,13 @@ class VectorOperations:
                 return result
 
             logger.info(
-                f"Deleting vectors with filter {validated_filter} from namespace {validated_namespace}")
+                f"Deleting vectors with filter {validated_filter} from namespace {validated_namespace}"
+            )
 
             # Try direct metadata filter deletion (Pinecone v3+)
             try:
                 delete_response = self.index.delete(
-                    filter=validated_filter,
-                    namespace=validated_namespace
+                    filter=validated_filter, namespace=validated_namespace
                 )
 
                 result["success"] = True
@@ -97,8 +93,10 @@ class VectorOperations:
 
                 logger.info(
                     f"Successfully deleted vectors using metadata filter",
-                    extra={"filter": validated_filter,
-                           "namespace": validated_namespace}
+                    extra={
+                        "filter": validated_filter,
+                        "namespace": validated_namespace,
+                    },
                 )
 
             except (TypeError, AttributeError) as filter_error:
@@ -111,10 +109,11 @@ class VectorOperations:
                 )
 
                 result = self._delete_by_query_fallback(
-                    validated_filter, validated_namespace)
+                    validated_filter, validated_namespace
+                )
                 result["method"] = "query_fallback"
 
-            duration = (datetime.utcnow() - start_time).total_seconds() * 1000
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             result["duration_ms"] = int(duration)
 
             return result
@@ -123,21 +122,26 @@ class VectorOperations:
             self._stats["errors"] += 1
             result["error"] = str(e)
             result["duration_ms"] = int(
-                (datetime.utcnow() - start_time).total_seconds() * 1000)
+                (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            )
 
             logger.error(
                 f"Failed to delete vectors: {e}",
                 exc_info=True,
-                extra={"filter": validated_filter if 'validated_filter' in locals() else filter_dict,
-                       "namespace": validated_namespace if 'validated_namespace' in locals() else namespace}
+                extra={
+                    "filter": validated_filter
+                    if "validated_filter" in locals()
+                    else filter_dict,
+                    "namespace": validated_namespace
+                    if "validated_namespace" in locals()
+                    else namespace,
+                },
             )
 
             return result
 
     def _delete_by_query_fallback(
-        self,
-        filter_dict: Dict[str, Any],
-        namespace: str
+        self, filter_dict: Dict[str, Any], namespace: str
     ) -> Dict[str, Any]:
         """
         Fallback method: Query for vector IDs then delete
@@ -159,7 +163,7 @@ class VectorOperations:
                 namespace=namespace,
                 top_k=batch_size,
                 include_metadata=False,
-                include_values=False
+                include_values=False,
             )
 
             batch_ids = [match.id for match in query_result.matches]
@@ -177,7 +181,7 @@ class VectorOperations:
             deleted_count = 0
 
             for i in range(0, len(vector_ids), delete_batch_size):
-                batch = vector_ids[i:i + delete_batch_size]
+                batch = vector_ids[i : i + delete_batch_size]
                 self.index.delete(ids=batch, namespace=namespace)
                 deleted_count += len(batch)
                 self._stats["deletions"] += 1
@@ -186,21 +190,21 @@ class VectorOperations:
                 f"Deleted {deleted_count} vectors using query fallback",
                 extra={
                     "queries": query_count,
-                    "batches": len(vector_ids) // delete_batch_size + 1
-                }
+                    "batches": len(vector_ids) // delete_batch_size + 1,
+                },
             )
 
             return {
                 "success": True,
                 "vectors_deleted": deleted_count,
-                "queries_executed": query_count
+                "queries_executed": query_count,
             }
         else:
             logger.info("No vectors found matching filter")
             return {
                 "success": True,
                 "vectors_deleted": 0,
-                "queries_executed": query_count
+                "queries_executed": query_count,
             }
 
     def delete_by_upload_id(self, upload_id: str, namespace: str) -> Dict[str, Any]:
@@ -214,7 +218,7 @@ class VectorOperations:
         Returns:
             Deletion result dictionary
         """
-        from ..utils.validators import validate_upload_id, ValidationError
+        from ..utils.validators import ValidationError, validate_upload_id
 
         try:
             validated_upload_id = validate_upload_id(upload_id)
@@ -223,19 +227,15 @@ class VectorOperations:
             return {
                 "success": False,
                 "error": f"Invalid upload_id: {str(ve)}",
-                "vectors_deleted": 0
+                "vectors_deleted": 0,
             }
 
         return self.delete_by_metadata(
-            filter_dict={"upload_id": validated_upload_id},
-            namespace=namespace
+            filter_dict={"upload_id": validated_upload_id}, namespace=namespace
         )
 
     def batch_upsert(
-        self,
-        vectors: List[tuple],
-        namespace: str,
-        batch_size: int = 100
+        self, vectors: List[tuple], namespace: str, batch_size: int = 100
     ) -> Dict[str, Any]:
         """
         Upsert vectors in batches for better performance
@@ -248,28 +248,28 @@ class VectorOperations:
         Returns:
             Upsert result dictionary
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         total_upserted = 0
 
         try:
             for i in range(0, len(vectors), batch_size):
-                batch = vectors[i:i + batch_size]
+                batch = vectors[i : i + batch_size]
                 self.index.upsert(vectors=batch, namespace=namespace)
                 total_upserted += len(batch)
                 self._stats["upserts"] += 1
 
-            duration = (datetime.utcnow() - start_time).total_seconds() * 1000
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
             logger.info(
                 f"Upserted {total_upserted} vectors in {len(vectors) // batch_size + 1} batches",
-                extra={"duration_ms": int(duration)}
+                extra={"duration_ms": int(duration)},
             )
 
             return {
                 "success": True,
                 "vectors_upserted": total_upserted,
                 "batches": len(vectors) // batch_size + 1,
-                "duration_ms": int(duration)
+                "duration_ms": int(duration),
             }
 
         except Exception as e:
@@ -279,28 +279,22 @@ class VectorOperations:
             return {
                 "success": False,
                 "vectors_upserted": total_upserted,
-                "error": str(e)
+                "error": str(e),
             }
 
     def get_stats(self) -> Dict[str, Any]:
         """Get operation statistics"""
-        return {
-            **self._stats,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        return {**self._stats, "timestamp": datetime.now(timezone.utc).isoformat()}
 
     def reset_stats(self):
         """Reset operation statistics"""
-        self._stats = {
-            "deletions": 0,
-            "queries": 0,
-            "upserts": 0,
-            "errors": 0
-        }
+        self._stats = {"deletions": 0, "queries": 0, "upserts": 0, "errors": 0}
         logger.info("Vector operations statistics reset")
 
 
-def create_vector_operations(index, embedding_dimension: int = 1536) -> VectorOperations:
+def create_vector_operations(
+    index, embedding_dimension: int = 1536
+) -> VectorOperations:
     """
     Factory function to create VectorOperations instance
 
@@ -316,10 +310,9 @@ def create_vector_operations(index, embedding_dimension: int = 1536) -> VectorOp
 
 # Convenience functions for common operations
 
+
 def efficient_delete_by_upload_id(
-    index,
-    upload_id: str,
-    namespace: str
+    index, upload_id: str, namespace: str
 ) -> Dict[str, Any]:
     """
     Efficiently delete all vectors for an upload
@@ -340,10 +333,7 @@ def efficient_delete_by_upload_id(
 
 
 def efficient_batch_upsert(
-    index,
-    vectors: List[tuple],
-    namespace: str,
-    batch_size: int = 100
+    index, vectors: List[tuple], namespace: str, batch_size: int = 100
 ) -> Dict[str, Any]:
     """
     Efficiently upsert vectors in batches

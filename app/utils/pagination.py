@@ -4,27 +4,27 @@ Pagination utilities for API endpoints
 Provides standardized pagination helpers to prevent memory issues
 and improve API performance.
 """
-from typing import Dict, Any, List, Optional, TypeVar, Generic
-from pydantic import BaseModel, Field, validator
-from fastapi import HTTPException
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
-T = TypeVar('T')
+from fastapi import HTTPException
+from pydantic import BaseModel, Field, validator
+
+T = TypeVar("T")
 
 
 class PaginationParams(BaseModel):
     """Standard pagination parameters"""
 
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
-    page_size: int = Field(default=20, ge=1, le=100,
-                           description="Items per page")
+    page_size: int = Field(default=20, ge=1, le=100, description="Items per page")
 
-    @validator('page')
+    @validator("page")
     def validate_page(cls, v):
         if v < 1:
             raise ValueError("Page must be >= 1")
         return v
 
-    @validator('page_size')
+    @validator("page_size")
     def validate_page_size(cls, v):
         if v < 1:
             raise ValueError("Page size must be >= 1")
@@ -55,9 +55,7 @@ class PaginationMeta(BaseModel):
 
     @classmethod
     def from_params(
-        cls,
-        params: PaginationParams,
-        total_items: int
+        cls, params: PaginationParams, total_items: int
     ) -> "PaginationMeta":
         """Create pagination metadata from params and total count"""
         total_pages = (total_items + params.page_size - 1) // params.page_size
@@ -68,7 +66,7 @@ class PaginationMeta(BaseModel):
             total_items=total_items,
             total_pages=max(1, total_pages),  # At least 1 page
             has_next=params.page < total_pages,
-            has_prev=params.page > 1
+            has_prev=params.page > 1,
         )
 
 
@@ -80,9 +78,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 
 def validate_pagination_params(
-    page: int = 1,
-    page_size: int = 20,
-    max_page_size: int = 100
+    page: int = 1, page_size: int = 20, max_page_size: int = 100
 ) -> PaginationParams:
     """
     Validate and create pagination parameters
@@ -110,9 +106,7 @@ def validate_pagination_params(
 
 
 def create_pagination_meta(
-    page: int,
-    page_size: int,
-    total_items: int
+    page: int, page_size: int, total_items: int
 ) -> Dict[str, Any]:
     """
     Create pagination metadata dictionary
@@ -125,8 +119,7 @@ def create_pagination_meta(
     Returns:
         Dictionary with pagination metadata
     """
-    total_pages = (total_items + page_size -
-                   1) // page_size if total_items > 0 else 1
+    total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 1
 
     return {
         "page": page,
@@ -134,14 +127,11 @@ def create_pagination_meta(
         "total_items": total_items,
         "total_pages": total_pages,
         "has_next": page < total_pages,
-        "has_prev": page > 1
+        "has_prev": page > 1,
     }
 
 
-def apply_supabase_pagination(
-    query,
-    params: PaginationParams
-):
+def apply_supabase_pagination(query, params: PaginationParams):
     """
     Apply pagination to a Supabase query
 
@@ -152,20 +142,16 @@ def apply_supabase_pagination(
     Returns:
         Query with pagination applied
     """
-    return query.range(
-        params.offset,
-        params.offset + params.page_size - 1
-    )
+    return query.range(params.offset, params.offset + params.page_size - 1)
 
 
 class CursorPaginationParams(BaseModel):
     """Cursor-based pagination parameters (for large datasets)"""
 
-    cursor: Optional[str] = Field(
-        default=None, description="Cursor for next page")
+    cursor: Optional[str] = Field(default=None, description="Cursor for next page")
     limit: int = Field(default=20, ge=1, le=100, description="Items per page")
 
-    @validator('limit')
+    @validator("limit")
     def validate_limit(cls, v):
         if v < 1:
             raise ValueError("Limit must be >= 1")
@@ -193,10 +179,11 @@ def encode_cursor(value: Any) -> str:
         Base64-encoded cursor string
     """
     import base64
-    import json
+
+    import orjson
 
     cursor_data = {"value": str(value)}
-    json_str = json.dumps(cursor_data)
+    json_str = orjson.dumps(cursor_data).decode("utf-8")
     return base64.b64encode(json_str.encode()).decode()
 
 
@@ -214,11 +201,12 @@ def decode_cursor(cursor: str) -> Any:
         ValueError: If cursor is invalid
     """
     import base64
-    import json
+
+    import orjson
 
     try:
         json_str = base64.b64decode(cursor.encode()).decode()
-        cursor_data = json.loads(json_str)
+        cursor_data = orjson.loads(json_str)
         return cursor_data["value"]
     except Exception as e:
         raise ValueError(f"Invalid cursor: {str(e)}")
@@ -257,14 +245,14 @@ from app.utils.pagination import validate_pagination_params, create_pagination_m
 async def list_items(page: int = 1, page_size: int = 20):
     # Validate parameters
     params = validate_pagination_params(page, page_size)
-    
+
     # Query with pagination
     offset = params.offset
     limit = params.page_size
-    
+
     items = db.query().offset(offset).limit(limit).all()
     total = db.query().count()
-    
+
     # Create response
     return {
         "items": items,
@@ -279,12 +267,12 @@ from app.utils.pagination import PaginationParams, apply_supabase_pagination
 @router.get("/uploads")
 async def list_uploads(page: int = 1, page_size: int = 20):
     params = PaginationParams(page=page, page_size=page_size)
-    
+
     query = supabase.table("uploads").select("*", count="exact")
     query = apply_supabase_pagination(query, params)
-    
+
     result = query.execute()
-    
+
     return {
         "items": result.data,
         "pagination": PaginationMeta.from_params(params, result.count)
@@ -298,22 +286,22 @@ from app.utils.pagination import CursorPaginationParams, encode_cursor
 @router.get("/messages")
 async def list_messages(cursor: str = None, limit: int = 20):
     params = CursorPaginationParams(cursor=cursor, limit=limit)
-    
+
     query = db.query()
-    
+
     if params.cursor:
         last_id = decode_cursor(params.cursor)
         query = query.filter(Message.id > last_id)
-    
+
     messages = query.limit(params.limit + 1).all()
-    
+
     has_more = len(messages) > params.limit
     items = messages[:params.limit]
-    
+
     next_cursor = None
     if has_more:
         next_cursor = encode_cursor(items[-1].id)
-    
+
     return {
         "items": items,
         "pagination": {
