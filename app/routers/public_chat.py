@@ -1,19 +1,20 @@
 import html
 import os
 
-from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 
 from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
 from ..services.storage.supabase_client import get_supabase_client
+from ..utils.logging_config import get_logger
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
-
-load_dotenv()
 
 # Constants
 CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
 CHATBOT_NOT_FOUND_OR_INACTIVE_MESSAGE = "Chatbot not found or inactive"
+
+# Get logger
+logger = get_logger(__name__)
 
 # Get centralized Supabase client
 supabase = get_supabase_client()
@@ -72,7 +73,11 @@ async def public_chat(request: PublicChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Error] Public chat failed: {e}")
+        logger.error(
+            "Public chat request failed",
+            extra={"error": str(e), "chatbot_id": request.chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Chat service unavailable") from e
 
 
@@ -110,7 +115,11 @@ async def get_public_chatbot_config(chatbot_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Error] Get chatbot config failed: {e}")
+        logger.error(
+            "Failed to get chatbot configuration",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail="Failed to get chatbot configuration"
         ) from e
@@ -181,7 +190,11 @@ async def get_chatbot_widget_code(chatbot_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Error] Get widget code failed: {e}")
+        logger.error(
+            "Failed to generate widget code",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail="Failed to generate widget code"
         ) from e
@@ -439,7 +452,11 @@ async def get_chatbot_widget_js(chatbot_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Error] Get widget JS failed: {e}")
+        logger.error(
+            "Failed to serve widget JavaScript",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail="Failed to serve widget JavaScript"
         ) from e

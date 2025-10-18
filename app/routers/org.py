@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-
 from ..models import UpdateOrganizationRequest
 from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.storage.supabase_client import get_supabase_http_client
+from ..utils.logging_config import get_logger
+logger = get_logger(__name__)
 
 # Module-level client variable for lazy loading
 _client = None
@@ -101,7 +102,11 @@ async def update_organization(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Update organization failed: {e}")
+        logger.error(
+            "Failed to update organization",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to update organization: {str(e)}"
         ) from e

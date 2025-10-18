@@ -4,11 +4,14 @@ Role-based access control and permissions
 Handles user permissions, organization access, and role-based authorization.
 """
 
+import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from ..storage.supabase_client import get_supabase_http_client
 from .exceptions import AuthorizationError
+
+logger = logging.getLogger(__name__)
 
 # Module-level client variable for lazy loading
 _client = None
@@ -164,7 +167,11 @@ async def get_user_role(user_id: str) -> Optional[UserRole]:
                     return UserRole.USER  # Default role
         return UserRole.USER  # Default role
     except Exception as e:
-        print(f"Error fetching user role for {user_id}: {e}")
+        logger.error(
+            "Error fetching user role",
+            extra={"user_id": user_id, "error": str(e)},
+            exc_info=True
+        )
         return UserRole.USER  # Default role
 
 
@@ -187,7 +194,11 @@ async def check_user_permission(user_id: str, permission: Permission) -> bool:
         user_permissions = ROLE_PERMISSIONS.get(user_role, [])
         return permission in user_permissions
     except Exception as e:
-        print(f"Error checking permission for user {user_id}: {e}")
+        logger.error(
+            "Error checking user permission",
+            extra={"user_id": user_id, "permission": permission, "error": str(e)},
+            exc_info=True
+        )
         return False
 
 
@@ -241,7 +252,11 @@ async def check_org_permission(
         # Check if user has the permission
         return await check_user_permission(user_id, permission)
     except Exception as e:
-        print(f"Error checking org permission for user {user_id}: {e}")
+        logger.error(
+            "Error checking organization permission",
+            extra={"user_id": user_id, "org_id": org_id, "permission": permission, "error": str(e)},
+            exc_info=True
+        )
         return False
 
 
@@ -291,13 +306,16 @@ async def get_user_organizations(user_id: str) -> List[Dict[str, Any]]:
 
         # Get organization details
         org_response = await client.get("/organizations", params={"id": f"eq.{org_id}"})
-
         if org_response.json():
             return org_response.json()
 
         return []
     except Exception as e:
-        print(f"Error fetching organizations for user {user_id}: {e}")
+        logger.error(
+            "Error fetching user organizations",
+            extra={"user_id": user_id, "error": str(e)},
+            exc_info=True
+        )
         return []
 
 
@@ -320,7 +338,11 @@ async def update_user_role(user_id: str, new_role: UserRole) -> bool:
 
         return response.status_code in [200, 204]
     except Exception as e:
-        print(f"Error updating user role for {user_id}: {e}")
+        logger.error(
+            "Error updating user role",
+            extra={"user_id": user_id, "role": role, "error": str(e)},
+            exc_info=True
+        )
         return False
 
 

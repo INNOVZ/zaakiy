@@ -3,10 +3,7 @@ Simple test script to check database connection and create a test upload
 """
 import os
 
-from dotenv import load_dotenv
 from supabase import create_client
-
-load_dotenv()
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")

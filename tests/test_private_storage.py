@@ -4,10 +4,7 @@ Test script to verify private storage authentication works
 import os
 
 import requests
-from dotenv import load_dotenv
 from supabase import create_client
-
-load_dotenv()
 
 
 def test_private_access():

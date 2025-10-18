@@ -50,6 +50,7 @@ pydantic>=2.0.0
 
 # Additional dependencies
 typing-extensions>=4.0.0
+orjson>=3.10.0,<4.0.0
 
 # Testing dependencies
 pytest>=7.0.0

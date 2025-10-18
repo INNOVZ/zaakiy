@@ -3,15 +3,9 @@ import os
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, Optional, Set
-
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-
 from ..shared.cache_service import cache_service
 from ..storage.supabase_client import get_supabase_client
-
-# Load environment variables
-load_dotenv()
 
 
 class RetrievalStrategy(str, Enum):

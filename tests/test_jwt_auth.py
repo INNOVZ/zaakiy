@@ -7,10 +7,6 @@ import json
 import os
 
 import requests
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 # Backend URL
 BASE_URL = "http://localhost:8001"

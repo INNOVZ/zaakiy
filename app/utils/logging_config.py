@@ -13,6 +13,12 @@ from typing import Any, Dict, Optional
 
 from app.config.settings import get_app_config
 
+# Prefer orjson if available for faster JSON serialization; fall back to json
+try:
+    import orjson as _orjson
+except ImportError:
+    _orjson = None
+
 # Optional import for database logging
 try:
     from services.storage.supabase_client import supabase
@@ -106,13 +112,16 @@ class StructuredFormatter(logging.Formatter):
             "environment": app_config.environment,
         }
 
-        return orjson.dumps(log_data).decode("utf-8")
+        if _orjson is not None:
+            return _orjson.dumps(log_data).decode("utf-8")
+        # Fallback to standard library JSON
+        return json.dumps(log_data, ensure_ascii=False, separators=(",", ":"))
 
 
 class ContextFilter(logging.Filter):
     """Filter to add service context to log records"""
 
-    def __init__(self, service_name: str = "zaaky-api"):
+    def __init__(self, service_name: str = "zaakiy-api"):
         super().__init__()
         self.service_name = service_name
 
@@ -174,7 +183,7 @@ def setup_logging(
     log_file: Optional[str] = None,
     enable_structured: bool = True,
     enable_database_logging: bool = False,
-    service_name: str = "zaaky-api",
+    service_name: str = "zaakiy-api",
 ) -> None:
     """Setup comprehensive logging configuration"""
 

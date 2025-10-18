@@ -9,7 +9,6 @@ import os
 import openai
 import orjson
 import requests
-from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from PyPDF2 import PdfReader
@@ -22,9 +21,6 @@ from .web_scraper import scrape_url_text
 
 # Initialize logger
 logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
 
 # Initialize clients
 openai.api_key = os.getenv("OPENAI_API_KEY")

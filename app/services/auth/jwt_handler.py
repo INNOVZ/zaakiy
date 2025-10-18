@@ -7,15 +7,12 @@ Handles JWT token verification, validation, and user extraction from Supabase to
 import os
 from typing import Any, Dict
 
-from dotenv import load_dotenv
 from fastapi import Header, HTTPException
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError
 
 from .exceptions import AuthenticationError, InvalidTokenError, TokenExpiredError
 from .user_auth import sync_user_if_missing
-
-load_dotenv()
 
 
 class JWTValidator:

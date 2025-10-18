@@ -270,7 +270,7 @@ class ChatService:
 
             # Step 7: Log analytics
             processing_time = int((time.time() - start_time) * 1000)
-            self.analytics.log_analytics(
+            await self.analytics.log_analytics(
                 conversation_id=conversation["id"],
                 message_id=assistant_message["id"],
                 query_original=message,

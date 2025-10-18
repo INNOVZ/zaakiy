@@ -1,11 +1,14 @@
 import logging
 import os
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from ..models import SearchRequest, UpdateRequest, URLIngestRequest
 from ..services.auth import get_user_with_org, verify_jwt_token_from_header
+from ..services.scraping.ingestion_worker import get_supabase_storage_url
 from ..services.storage.pinecone_client import get_pinecone_index
 from ..services.storage.supabase_client import get_supabase_client
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
@@ -271,6 +274,179 @@ async def upload_pdf(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/image")
+@rate_limit(**get_rate_limit_config("upload"))
+async def upload_image(
+    file: UploadFile = File(...), user=Depends(verify_jwt_token_from_header)
+):
+    """
+    Upload an image file to Supabase storage for chatbot avatars.
+    
+    Args:
+        file (UploadFile): The image file to be uploaded.
+        user: The authenticated user, verified via JWT token.
+        
+    Returns:
+        dict: A dictionary containing the file URL and success message.
+    """
+    try:
+        user_data = await get_user_with_org(user["user_id"])
+        org_id = user_data["org_id"]
+
+        # Validate file type
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+
+        # Validate image file type
+        allowed_extensions = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        try:
+            validate_file_type(file.filename, allowed_extensions)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Read file content
+        file_content = await file.read()
+
+        # Validate file size (2MB max for images)
+        try:
+            validate_file_size(len(file_content), max_size_mb=2)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Get file extension
+        file_extension = Path(file.filename).suffix.lower()
+        
+        # Generate unique file path
+        file_id = str(uuid.uuid4())
+        supabase_path = f"org-{org_id}/avatars/{file_id}{file_extension}"
+
+        # Upload to Supabase Storage
+        try:
+            storage_result = supabase.storage.from_("uploads").upload(
+                supabase_path, file_content
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=400, detail=f"Storage upload failed: {str(e)}"
+            ) from e
+
+        # Return a proxy URL that will serve the image through our API
+        proxy_url = f"/api/uploads/avatar/{file_id}{file_extension}"
+
+        return {
+            "success": True,
+            "url": proxy_url,
+            "file_path": supabase_path,
+            "message": "Image uploaded successfully",
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/avatar/{file_id}")
+async def get_avatar_image(file_id: str):
+    """
+    Serve avatar images from private Supabase storage.
+    This endpoint acts as a proxy to serve images from the private bucket.
+    """
+    try:
+        # Find the file in storage by searching for the file_id
+        # Since we know the pattern is org-{org_id}/avatars/{file_id}.{ext}
+        files = supabase.storage.from_("uploads").list()
+        
+        target_file = None
+        for file in files:
+            if isinstance(file, dict) and file.get("name", "").endswith(f"/{file_id}"):
+                # This is a folder, check its contents
+                folder_files = supabase.storage.from_("uploads").list(file["name"])
+                for folder_file in folder_files:
+                    if isinstance(folder_file, dict) and folder_file.get("name", "").startswith("avatars/"):
+                        target_file = f"{file['name']}/{folder_file['name']}"
+                        break
+                if target_file:
+                    break
+            elif isinstance(file, dict) and file.get("name", "").endswith(f"/avatars/{file_id}"):
+                target_file = file["name"]
+                break
+        
+        if not target_file:
+            raise HTTPException(status_code=404, detail="Avatar image not found")
+        
+        # Get the file content from Supabase Storage
+        file_content = supabase.storage.from_("uploads").download(target_file)
+        
+        # Determine content type from file extension
+        content_type = "image/png"  # default
+        if file_id.endswith(('.jpg', '.jpeg')):
+            content_type = "image/jpeg"
+        elif file_id.endswith('.gif'):
+            content_type = "image/gif"
+        elif file_id.endswith('.webp'):
+            content_type = "image/webp"
+        
+        # Return the image with proper headers
+        return Response(
+            content=file_content,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=31536000",  # 1 year cache
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error serving avatar image {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve avatar image")
+
+
+@router.get("/avatar/legacy/{file_path:path}")
+async def get_legacy_avatar_image(file_path: str):
+    """
+    Serve legacy avatar images from Supabase storage URLs.
+    This handles existing avatars that use the old Supabase Storage URL format.
+    """
+    try:
+        # Extract the file path from the legacy URL
+        # URL format: https://xxx.supabase.co/storage/v1/object/uploads/org-xxx/avatars/file_id.ext
+        if "storage/v1/object/uploads/" in file_path:
+            # Extract the path after "uploads/"
+            path_parts = file_path.split("storage/v1/object/uploads/")
+            if len(path_parts) > 1:
+                supabase_path = path_parts[1]
+            else:
+                raise HTTPException(status_code=400, detail="Invalid legacy URL format")
+        else:
+            # Assume it's already the correct path
+            supabase_path = file_path
+        
+        # Get the file content from Supabase Storage
+        file_content = supabase.storage.from_("uploads").download(supabase_path)
+        
+        # Determine content type from file extension
+        content_type = "image/png"  # default
+        if supabase_path.endswith(('.jpg', '.jpeg')):
+            content_type = "image/jpeg"
+        elif supabase_path.endswith('.gif'):
+            content_type = "image/gif"
+        elif supabase_path.endswith('.webp'):
+            content_type = "image/webp"
+        
+        # Return the image with proper headers
+        return Response(
+            content=file_content,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=31536000",  # 1 year cache
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error serving legacy avatar image {file_path}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve legacy avatar image")
 
 
 @router.post("/json")

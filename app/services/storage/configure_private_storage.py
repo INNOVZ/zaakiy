@@ -6,10 +6,7 @@ Script to configure Supabase storage bucket for private access
 import os
 
 import requests
-from dotenv import load_dotenv
 from supabase import create_client
-
-load_dotenv()
 
 
 def configure_private_bucket():

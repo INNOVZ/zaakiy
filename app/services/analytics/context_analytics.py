@@ -126,17 +126,51 @@ class ContextAnalytics:
 
         # Basic statistics
         total_queries = len(data)
-        response_times = [
-            d.get("response_time_ms", 0) for d in data if d.get("response_time_ms")
-        ]
-        context_scores = [
-            d.get("context_quality_score", 0)
-            for d in data
-            if d.get("context_quality_score")
-        ]
-        satisfaction_scores = [
-            d.get("user_satisfaction", 0) for d in data if d.get("user_satisfaction")
-        ]
+        
+        # Extract response times from retrieval_stats JSONB field
+        response_times = []
+        for d in data:
+            retrieval_stats = d.get("retrieval_stats", {})
+            if isinstance(retrieval_stats, dict):
+                # Use retrieval_time_ms as the response time metric
+                response_time = retrieval_stats.get("retrieval_time_ms", 0)
+                if response_time:
+                    response_times.append(response_time)
+        
+        # Extract context quality scores from context_quality JSONB field
+        context_scores = []
+        for d in data:
+            context_quality = d.get("context_quality", {})
+            if isinstance(context_quality, dict):
+                quality_score = context_quality.get("score") or context_quality.get("coverage_score", 0)
+                if quality_score:
+                    context_scores.append(quality_score)
+        
+        # Extract satisfaction scores from conversation_feedback table
+        satisfaction_scores = []
+        try:
+            # Get all message IDs from current analytics data
+            message_ids = [record["message_id"] for record in data if record.get("message_id")]
+            
+            if message_ids:
+                # Fetch feedback data for these messages
+                feedback_response = (
+                    self.supabase.table("conversation_feedback")
+                    .select("message_id, rating")
+                    .in_("message_id", message_ids)
+                    .execute()
+                )
+                
+                if feedback_response.data:
+                    # Convert ratings to satisfaction scores (1-5 scale to 0-1 scale)
+                    satisfaction_scores = [
+                        (feedback["rating"] - 1) / 4.0  # Convert 1-5 to 0-1
+                        for feedback in feedback_response.data
+                        if feedback.get("rating") is not None
+                    ]
+        except Exception as e:
+            logging.warning("Failed to fetch satisfaction data: %s", e)
+            satisfaction_scores = []
 
         # Performance metrics
         avg_response_time = statistics.mean(response_times) if response_times else 0
@@ -165,8 +199,12 @@ class ContextAnalytics:
             # Model usage
             model_usage[record.get("model_used", "unknown")] += 1
 
-            # Source diversity
-            sources_count = record.get("sources_count", 0)
+            # Source diversity - extract from retrieval_stats JSONB field
+            retrieval_stats = record.get("retrieval_stats", {})
+            if isinstance(retrieval_stats, dict):
+                sources_count = retrieval_stats.get("sources_used", 0)
+            else:
+                sources_count = 0
             source_diversity.append(sources_count)
 
         # Trends (compare with previous period)

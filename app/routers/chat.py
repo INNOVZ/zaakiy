@@ -8,7 +8,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..models import (ChatRequest, ChatResponse, ContextConfigRequest,
@@ -19,16 +18,17 @@ from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.chat.chat_service import ChatService
 from ..services.storage.supabase_client import get_supabase_client
 from ..utils.error_context import ErrorContextManager
-from ..utils.error_context_manager import SafeErrorContext
 from ..utils.error_handlers import handle_errors
 from ..utils.error_monitoring import error_monitor
 from ..utils.exceptions import ValidationError
+from ..utils.logging_config import get_logger
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
-
-load_dotenv()
 
 # Constants
 CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
+
+# Get logger
+logger = get_logger(__name__)
 
 # Get centralized Supabase client
 supabase = get_supabase_client()
@@ -64,11 +64,14 @@ def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
 
         if response.data and len(response.data) > 0:
             chatbot = response.data[0]
-            print(f"[SUCCESS] Found chatbot: {chatbot['name']} for org {org_id}")
+            logger.info(
+                "Found chatbot for organization",
+                extra={"chatbot_name": chatbot['name'], "org_id": org_id, "chatbot_id": chatbot['id']}
+            )
             return chatbot
 
         # Enhanced default chatbot
-        print(f"[INFO] No chatbot found for org {org_id}, using enhanced default")
+        logger.info("No chatbot found, using default configuration", extra={"org_id": org_id})
         return {
             "id": f"default-{org_id}",
             "name": "INNOVZ Assistant",
@@ -85,7 +88,11 @@ def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
         }
 
     except (ConnectionError, TimeoutError) as e:
-        print(f"[ERROR] Database connection error for org {org_id}: {str(e)}")
+        logger.error(
+            "Database connection error while fetching chatbot",
+            extra={"org_id": org_id, "error": str(e)},
+            exc_info=True
+        )
         return {
             "id": f"fallback-{org_id}",
             "name": "INNOVZ Assistant",
@@ -174,13 +181,19 @@ FALLBACK: {request.fallback_message}
 
         if response.data:
             created_chatbot = response.data[0]
-            print(f"[SUCCESS] Chatbot created: {chatbot_id} for org {org_id}")
+            logger.info(
+                "Chatbot created successfully",
+                extra={"chatbot_id": chatbot_id, "org_id": org_id, "chatbot_name": created_chatbot.get("name")}
+            )
 
             # Initialize default context config for this org if it doesn't exist
             try:
                 await context_config_manager.get_config(org_id)
             except (KeyError, ValueError, ConnectionError) as config_error:
-                print(f"[WARNING] Could not initialize context config: {config_error}")
+                logger.warning(
+                    "Could not initialize context config for new chatbot",
+                    extra={"org_id": org_id, "chatbot_id": chatbot_id, "error": str(config_error)}
+                )
 
             return {
                 "success": True,
@@ -190,7 +203,10 @@ FALLBACK: {request.fallback_message}
             }
         else:
             error_msg = getattr(response, "error", "Unknown database error")
-            print(f"[ERROR] Database insert failed: {error_msg}")
+            logger.error(
+                "Database insert failed for chatbot creation",
+                extra={"error_msg": error_msg, "org_id": org_id}
+            )
             raise HTTPException(status_code=500, detail=f"Database error: {error_msg}")
 
     except ValidationError:
@@ -201,7 +217,11 @@ FALLBACK: {request.fallback_message}
             detail="Failed to create chatbot due to database connection issue",
         ) from e
     except Exception as e:
-        print(f"[ERROR] Create chatbot failed: {e}")
+        logger.error(
+            "Failed to create chatbot",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to create chatbot: {str(e)}"
         ) from e
@@ -227,7 +247,11 @@ async def update_chatbot(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Update chatbot failed: {e}")
+        logger.error(
+            "Failed to update chatbot",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to update chatbot: {str(e)}"
         ) from e
@@ -269,7 +293,7 @@ def _execute_chatbot_update(chatbot_id: str, org_id: str, update_data: dict):
 def _format_update_response(response, chatbot_id: str) -> dict:
     """Format the successful update response"""
     if response.data:
-        print(f"[SUCCESS] Chatbot updated: {chatbot_id}")
+        logger.info("Chatbot updated successfully", extra={"chatbot_id": chatbot_id})
         return {
             "success": True,
             "chatbot": response.data[0],
@@ -295,7 +319,7 @@ async def delete_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_hea
         )
 
         if response.data:
-            print(f"[SUCCESS] Chatbot deleted: {chatbot_id}")
+            logger.info("Chatbot deleted successfully", extra={"chatbot_id": chatbot_id})
             return {"success": True, "message": "Chatbot deleted successfully"}
         else:
             raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
@@ -303,7 +327,11 @@ async def delete_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_hea
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Delete chatbot failed: {e}")
+        logger.error(
+            "Failed to delete chatbot",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to delete chatbot: {str(e)}"
         ) from e
@@ -377,8 +405,15 @@ async def list_chatbots(
         has_next = page < total_pages
         has_prev = page > 1
 
-        print(
-            f"[SUCCESS] Listed {len(chatbots)} chatbots for org {org_id} (page {page}/{total_pages})"
+        logger.info(
+            "Retrieved chatbots for organization",
+            extra={
+                "count": len(chatbots),
+                "org_id": org_id,
+                "page": page,
+                "total_pages": total_pages,
+                "page_size": page_size
+            }
         )
 
         return {
@@ -396,7 +431,11 @@ async def list_chatbots(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] List chatbots failed: {e}")
+        logger.error(
+            "Failed to list chatbots",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Failed to fetch chatbots") from e
 
 
@@ -421,7 +460,7 @@ async def get_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_header
             if "model_config" in chatbot:
                 chatbot["ai_model_config"] = chatbot["model_config"]
 
-            print(f"[SUCCESS] Retrieved chatbot: {chatbot_id}")
+            logger.info("Retrieved chatbot details", extra={"chatbot_id": chatbot_id})
             return chatbot
         else:
             raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
@@ -429,7 +468,11 @@ async def get_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_header
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Get chatbot failed: {e}")
+        logger.error(
+            "Failed to get chatbot",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Failed to fetch chatbot") from e
 
 
@@ -463,7 +506,7 @@ async def activate_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_h
         )
 
         if response.data:
-            print(f"[SUCCESS] Chatbot activated: {chatbot_id}")
+            logger.info("Chatbot activated successfully", extra={"chatbot_id": chatbot_id})
             return {"success": True, "message": "Chatbot activated successfully"}
         else:
             raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
@@ -471,7 +514,11 @@ async def activate_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_h
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Activate chatbot failed: {e}")
+        logger.error(
+            "Failed to activate chatbot",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to activate chatbot: {str(e)}"
         ) from e
@@ -506,7 +553,10 @@ async def chat_conversation(
         # Update context with org_id
         ErrorContextManager.set_request_context(org_id=org_id)
 
-        print(f"[INFO] Chat request from org {org_id}: {request.message[:50]}...")
+        logger.info(
+            "Processing chat request",
+            extra={"org_id": org_id, "message_preview": request.message[:50], "chatbot_id": request.chatbot_id}
+        )
 
         # Get chatbot config
         chatbot_config = get_org_chatbot(org_id, request.chatbot_id)
@@ -536,7 +586,10 @@ async def chat_conversation(
             (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         )
 
-        print(f"[SUCCESS] Chat completed in {total_time}ms for org {org_id}")
+        logger.info(
+            "Chat completed successfully",
+            extra={"org_id": org_id, "processing_time_ms": total_time, "chatbot_id": request.chatbot_id}
+        )
 
         # Handle case where conversation_id might be None (fallback response)
         conversation_id = result.get("conversation_id")
@@ -574,7 +627,11 @@ async def chat_conversation(
             category="api_endpoint",
         )
 
-        print(f"[ERROR] Chat conversation failed after {error_time}ms: {e}")
+        logger.error(
+            "Chat conversation failed",
+            extra={"error": str(e), "processing_time_ms": error_time, "org_id": org_id},
+            exc_info=True
+        )
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}") from e
 
@@ -640,8 +697,15 @@ async def list_conversations(
         has_next = page < total_pages
         has_prev = page > 1
 
-        print(
-            f"[SUCCESS] Listed {len(result.data)} conversations for org {org_id} (page {page}/{total_pages})"
+        logger.info(
+            "Retrieved conversations for organization",
+            extra={
+                "count": len(result.data),
+                "org_id": org_id,
+                "page": page,
+                "total_pages": total_pages,
+                "page_size": page_size
+            }
         )
 
         return {
@@ -659,7 +723,11 @@ async def list_conversations(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] List conversations failed: {e}")
+        logger.error(
+            "Failed to list conversations",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to load conversations: {str(e)}"
         ) from e
@@ -684,7 +752,10 @@ async def add_feedback(
         )
 
         if success:
-            print(f"[SUCCESS] Feedback added for message {request.message_id}")
+            logger.info(
+                "Feedback added successfully",
+                extra={"message_id": request.message_id, "rating": request.rating}
+            )
             return {"success": True, "message": "Feedback recorded successfully"}
         else:
             raise HTTPException(status_code=404, detail="Message not found")
@@ -692,7 +763,11 @@ async def add_feedback(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Add feedback failed: {e}")
+        logger.error(
+            "Failed to add feedback",
+            extra={"error": str(e), "message_id": request.message_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to add feedback: {str(e)}"
         ) from e
@@ -714,11 +789,15 @@ async def get_analytics_dashboard(
 
         dashboard = await context_analytics.get_performance_dashboard(org_id, days)
 
-        print(f"[SUCCESS] Analytics dashboard retrieved for org {org_id}")
+        logger.info("Analytics dashboard retrieved", extra={"org_id": org_id})
         return dashboard
 
     except Exception as e:
-        print(f"[ERROR] Get analytics dashboard failed: {e}")
+        logger.error(
+            "Failed to get analytics dashboard",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to get analytics: {str(e)}"
         ) from e
@@ -740,7 +819,11 @@ async def get_context_config(user=Depends(verify_jwt_token_from_header)):
         }
 
     except Exception as e:
-        print(f"[ERROR] Get context config failed: {e}")
+        logger.error(
+            "Failed to get context config",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to get context configuration: {str(e)}"
         ) from e
@@ -772,7 +855,11 @@ async def update_context_config(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Update context config failed: {e}")
+        logger.error(
+            "Failed to update context config",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to update context configuration: {str(e)}"
         ) from e
@@ -797,17 +884,29 @@ async def get_performance_insights(user=Depends(verify_jwt_token_from_header)):
         }
 
     except (ConnectionError, TimeoutError) as e:
-        print(f"[ERROR] Database connection error in performance insights: {e}")
+        logger.error(
+            "Database connection error in performance insights",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=503, detail="Service temporarily unavailable"
         ) from e
     except (KeyError, ValueError) as e:
-        print(f"[ERROR] Data validation error in performance insights: {e}")
+        logger.error(
+            "Data validation error in performance insights",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(status_code=400, detail="Invalid data format") from e
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Get performance insights failed: {e}")
+        logger.error(
+            "Failed to get performance insights",
+            extra={"error": str(e), "org_id": org_id},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to get performance insights: {str(e)}"
         ) from e

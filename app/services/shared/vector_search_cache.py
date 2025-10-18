@@ -197,7 +197,7 @@ class VectorSearchCache:
             "version": "v2",
         }
 
-        composite_str = orjson.dumps(composite, sort_keys=True).decode("utf-8")
+        composite_str = json.dumps(composite, sort_keys=True)
         cache_hash = hashlib.sha256(composite_str.encode()).hexdigest()[:16]
 
         return f"vector_exact:v2:{org_id}:{cache_hash}"
@@ -210,7 +210,7 @@ class VectorSearchCache:
         embedding_str = ",".join(
             [f"{x:.6f}" for x in embedding[:50]]
         )  # First 50 dimensions
-        params_str = orjson.dumps(search_params, sort_keys=True).decode("utf-8")
+        params_str = json.dumps(search_params, sort_keys=True)
 
         composite = f"{org_id}:{embedding_str}:{params_str}"
         cache_hash = hashlib.sha256(composite.encode()).hexdigest()[:16]

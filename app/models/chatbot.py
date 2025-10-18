@@ -133,6 +133,8 @@ class CreateChatbotRequest(BaseModel):
         """Validate avatar URL"""
         if v is not None:
             v = v.strip()
+            
+            # Validate URL format
             if len(v) > 500:
                 raise ValueError("Avatar URL too long")
             if not v.startswith(("http://", "https://")):

@@ -13,10 +13,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import pytest
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

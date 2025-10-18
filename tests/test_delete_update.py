@@ -8,9 +8,6 @@ import os
 import time
 
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Configuration
 BASE_URL = "http://localhost:8000"

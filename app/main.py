@@ -2,7 +2,6 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,11 +12,11 @@ from .services.shared import get_client_manager
 from .services.shared.worker_scheduler import (start_background_worker,
                                                stop_background_worker)
 from .services.storage.supabase_client import get_supabase_client
+from .utils.env_loader import is_test_environment
 from .utils.error_monitoring import error_monitor
 from .utils.logging_config import get_logger, setup_logging
 
-# Load environment variables once
-load_dotenv()
+# Environment variables are loaded by app.config.settings (via env_loader)
 
 # Setup logging first
 setup_logging(
@@ -27,9 +26,11 @@ setup_logging(
 logger = get_logger("main")
 
 # Validate environment BEFORE starting anything else
+# Skip validation in test environments automatically
 try:
-    validate_environment()
-    logger.info("Environment validation passed - starting server")
+    validate_environment(skip_in_tests=True)
+    if not is_test_environment():
+        logger.info("Environment validation passed - starting server")
 except SystemExit:
     raise  # Re-raise SystemExit as-is (it's intentional)
 except Exception as e:

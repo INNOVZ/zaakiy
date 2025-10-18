@@ -6,14 +6,15 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
+# Import safe environment loader
+from ..utils.env_loader import is_test_environment, safe_load_dotenv
 
 # Constants
 HTTPS_PREFIX = "https://"
 HTTP_PREFIX = "http://"
 
-# Load environment variables
-load_dotenv()
+# Load environment variables safely
+safe_load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -397,8 +398,18 @@ class ConfigurationManager:
 settings = ConfigurationManager()
 
 
-def validate_environment() -> None:
-    """Validate environment configuration on startup with proper guardrails"""
+def validate_environment(skip_in_tests: bool = True) -> None:
+    """
+    Validate environment configuration on startup with proper guardrails
+    
+    Args:
+        skip_in_tests: If True, skip validation in test environments (default: True)
+    """
+    # Skip validation in test environments if requested
+    if skip_in_tests and is_test_environment():
+        logger.info("ℹ Skipping environment validation in test environment")
+        return
+    
     validation = settings.validate_all()
 
     # Critical API keys that MUST be present

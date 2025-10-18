@@ -337,7 +337,11 @@ async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
 
         return None
     except Exception as e:
-        print(f"Error fetching user {user_id}: {e}")
+        logger.error(
+            "Error fetching user",
+            extra={"user_id": user_id, "error": str(e)},
+            exc_info=True
+        )
         return None
 
 
@@ -383,5 +387,9 @@ async def delete_user(user_id: str) -> bool:
         response = await client.delete(f"/users?id=eq.{user_id}")
         return response.status_code in [200, 204]
     except Exception as e:
-        print(f"Error deleting user {user_id}: {e}")
+        logger.error(
+            "Error deleting user",
+            extra={"user_id": user_id, "error": str(e)},
+            exc_info=True
+        )
         return False

@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  zaakiy-backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: zaakiy-backend-prod
+    ports:
+      - "8001:8001"
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=WARNING
+      - WORKERS=4
+    env_file:
+      - .env.production
+    volumes:
+      - ./logs:/app/logs
+      - ./app/logs:/app/app/logs
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    networks:
+      - zaakiy-network
+
+  # Redis for production caching
+  redis:
+    image: redis:7-alpine
+    container_name: zaakiy-redis-prod
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - zaakiy-network
+
+  # Nginx reverse proxy with SSL
+  nginx:
+    image: nginx:alpine
+    container_name: zaakiy-nginx-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - zaakiy-backend
+    restart: always
+    networks:
+      - zaakiy-network
+
+volumes:
+  redis_data:
+
+networks:
+  zaakiy-network:
+    driver: bridge

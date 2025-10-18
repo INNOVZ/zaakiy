@@ -443,11 +443,10 @@ class DocumentRetrievalService:
     def _generate_retrieval_cache_key(self, queries: List[str]) -> str:
         """Generate cache key for retrieval results"""
         import hashlib
+        import json
 
-        import orjson
-
-        # Create composite string for hashing using orjson for better performance
-        queries_str = orjson.dumps(sorted(queries)).decode("utf-8")
+        # Create composite string for hashing using json for compatibility
+        queries_str = json.dumps(sorted(queries), sort_keys=True)
 
         # Handle both dict and object with dict() method - exclude datetime fields
         if hasattr(self.context_config, "dict"):
@@ -458,7 +457,7 @@ class DocumentRetrievalService:
                 for k, v in config_dict.items()
                 if not str(type(v)).startswith("<class 'datetime")
             }
-            config_str = orjson.dumps(json_safe_config, sort_keys=True).decode("utf-8")
+            config_str = json.dumps(json_safe_config, sort_keys=True)
         else:
             # For plain dict, filter out datetime objects
             json_safe_config = {
@@ -466,8 +465,8 @@ class DocumentRetrievalService:
                 for k, v in self.context_config.items()
                 if not str(type(v)).startswith("<class 'datetime")
             }
-            config_str = orjson.dumps(json_safe_config, sort_keys=True).decode("utf-8")
-        params_str = orjson.dumps(self.retrieval_config, sort_keys=True).decode("utf-8")
+            config_str = json.dumps(json_safe_config, sort_keys=True)
+        params_str = json.dumps(self.retrieval_config, sort_keys=True)
 
         composite = f"{self.org_id}:{queries_str}:{config_str}:{params_str}"
         cache_hash = hashlib.md5(composite.encode("utf-8")).hexdigest()

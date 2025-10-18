@@ -40,47 +40,48 @@ class AnalyticsService:
     ) -> None:
         """Log comprehensive analytics data"""
         try:
-            # Create context metrics (commented out - requires env setup)
-            # metrics = ContextMetrics(
-            #     org_id=self.org_id,
-            #     conversation_id=conversation_id,
-            #     message_id=message_id,
-            #     query_original=query_original,
-            #     query_enhanced=response_data.get("enhanced_queries", []),
-            #     documents_retrieved=response_data.get(
-            #         "retrieved_documents", []),
-            #     context_length=len(response_data.get("context_used", "")),
-            #     context_quality_score=response_data.get(
-            #         "context_quality", {}).get("coverage_score", 0.5),
-            #     retrieval_time_ms=response_data.get(
-            #         "retrieval_stats", {}).get("retrieval_time_ms", 0),
-            #     response_time_ms=processing_time,
-            #     model_used=str(self.context_config.model_tier),
-            #     sources_count=len(response_data.get("sources", []))
-            # )
-
-            # Log to analytics system (commented out - requires env setup)
-            # context_analytics.log_context_metrics(metrics)
-
-            # Also log to context_analytics table (legacy support)
+            # Extract context quality score from nested structure
+            context_quality = response_data.get("context_quality", {})
+            context_quality_score = context_quality.get("coverage_score", 0.5) if isinstance(context_quality, dict) else 0.5
+            
+            # Extract retrieval stats
+            retrieval_stats = response_data.get("retrieval_stats", {})
+            retrieval_time_ms = retrieval_stats.get("retrieval_time_ms", 0) if isinstance(retrieval_stats, dict) else 0
+            
+            # Count sources
+            sources = response_data.get("sources", [])
+            sources_count = len(sources) if isinstance(sources, list) else 0
+            
+            # Prepare analytics data matching the actual database schema
+            # Store nested data in JSONB fields as the schema expects
             context_data = {
                 "message_id": message_id,
-                "conversation_id": conversation_id,
                 "org_id": self.org_id,
                 "query_original": query_original,
                 "query_enhanced": response_data.get("enhanced_queries", []),
-                "documents_retrieved": response_data.get("sources", []),
+                "documents_retrieved": sources,
                 "context_used": response_data.get("context_used", ""),
-                "retrieval_stats": response_data.get("retrieval_stats", {}),
-                "context_quality": response_data.get("context_quality", {}),
-                "model_used": str(self.context_config.model_tier)
-                if self.context_config
-                else "default",
-                "processing_time_ms": processing_time,
+                "retrieval_stats": {
+                    "sources_used": sources_count,  # Match existing field name
+                    "retrieval_time_ms": retrieval_time_ms,  # Match existing field name
+                    "candidates_found": sources_count,  # Add candidates found
+                    "context_length": len(response_data.get("context_used", "")),  # Add context length
+                },
+                "context_quality": {
+                    "score": context_quality_score,  # Store quality score in context_quality
+                    "coverage_score": context_quality_score,  # For backward compatibility
+                    **context_quality  # Include any other quality metrics
+                },
+                "model_used": str(self.context_config.model_tier) if self.context_config else "default",
             }
 
             # Execute sync supabase call
-            self.supabase.table("context_analytics").insert(context_data).execute()
+            result = self.supabase.table("context_analytics").insert(context_data).execute()
+            
+            if result.data:
+                logger.info(f"Analytics logged successfully for message {message_id}")
+            else:
+                logger.warning(f"Analytics insert returned no data for message {message_id}")
 
         except Exception as e:
             logger.warning("Analytics logging failed: %s", e)
@@ -149,12 +150,17 @@ class AnalyticsService:
             if response.data:
                 try:
                     satisfaction_score = 1.0 if rating > 0 else 0.0
-                    self.supabase.table("context_analytics").update(
+                    update_result = self.supabase.table("context_analytics").update(
                         {
                             "user_satisfaction": satisfaction_score,
                             "feedback_text": feedback_text,
                         }
                     ).eq("message_id", message_id).execute()
+                    
+                    if update_result.data:
+                        logger.info(f"Updated user satisfaction for message {message_id}: {satisfaction_score}")
+                    else:
+                        logger.warning(f"No analytics record found to update for message {message_id}")
 
                     logger.info(
                         "Feedback recorded for message %s: rating=%s",

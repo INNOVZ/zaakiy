@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..models import UpdateUserRequest
 from ..services.auth import CurrentUser, verify_jwt_token_from_header
 from ..services.storage.supabase_client import get_supabase_http_client
-
+from ..utils.logging_config import get_logger
+logger = get_logger(__name__)
 # Constants
 USERS_ENDPOINT = "/users"
 
@@ -85,7 +86,11 @@ async def update_user(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Update user failed: {e}")
+        logger.error(
+            "Failed to update user profile",
+            extra={"error": str(e), "user_id": user["user_id"]},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to update user: {str(e)}"
         ) from e
@@ -115,7 +120,11 @@ async def get_user_profile(user=CurrentUser):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Get user profile failed: {e}")
+        logger.error(
+            "Failed to get user profile",
+            extra={"error": str(e), "user_id": user["user_id"]},
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to get user profile: {str(e)}"
         ) from e
