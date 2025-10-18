@@ -82,3 +82,11 @@ docker-compose.override.yml
 *.pem
 *.key
 secrets/
+.env
+.env.local
+.env.production
+*.log
+logs/
+__pycache__/
+*.pyc
+.DS_Store
