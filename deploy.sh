@@ -154,7 +154,7 @@ show_status() {
     docker-compose -f "$COMPOSE_FILE" ps
     echo ""
     log_info "Application URLs:"
-    echo "  - API: http://localhost:8001"
+    echo "  - API: anhttp://localhost:8001"
     echo "  - Health: http://localhost:8001/health"
     echo "  - Docs: http://localhost:8001/docs"
     echo ""
