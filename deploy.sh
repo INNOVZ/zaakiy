@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# ZaaKy AI Platform - Production Deployment Script
+# ZaaKiy AI Platform - Production Deployment Script
 # This script handles the complete deployment process
 
 set -e  # Exit on any error
@@ -46,33 +46,33 @@ check_root() {
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
-    
+
     # Check Docker
     if ! command -v docker &> /dev/null; then
         log_error "Docker is not installed. Please install Docker first."
         exit 1
     fi
-    
+
     # Check Docker Compose
     if ! command -v docker-compose &> /dev/null; then
         log_error "Docker Compose is not installed. Please install Docker Compose first."
         exit 1
     fi
-    
+
     # Check if .env.production exists
     if [[ ! -f "$ENV_FILE" ]]; then
         log_error "Production environment file $ENV_FILE not found!"
         log_info "Please copy .env.production and configure it with your production values."
         exit 1
     fi
-    
+
     log_success "All prerequisites met"
 }
 
 # Validate environment configuration
 validate_environment() {
     log_info "Validating environment configuration..."
-    
+
     # Check for required environment variables
     required_vars=(
         "SUPABASE_URL"
@@ -82,14 +82,14 @@ validate_environment() {
         "PINECONE_API_KEY"
         "PINECONE_INDEX"
     )
-    
+
     missing_vars=()
     for var in "${required_vars[@]}"; do
         if ! grep -q "^${var}=" "$ENV_FILE" || grep -q "^${var}=$" "$ENV_FILE" || grep -q "^${var}=your_.*_here" "$ENV_FILE"; then
             missing_vars+=("$var")
         fi
     done
-    
+
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         log_error "Missing or incomplete environment variables:"
         for var in "${missing_vars[@]}"; do
@@ -98,7 +98,7 @@ validate_environment() {
         log_info "Please update $ENV_FILE with your production values"
         exit 1
     fi
-    
+
     log_success "Environment configuration validated"
 }
 
@@ -126,21 +126,21 @@ start_containers() {
 # Wait for health check
 wait_for_health() {
     log_info "Waiting for application to be healthy..."
-    
+
     max_attempts=30
     attempt=1
-    
+
     while [[ $attempt -le $max_attempts ]]; do
         if curl -f http://localhost:8001/health &> /dev/null; then
             log_success "Application is healthy and ready!"
             return 0
         fi
-        
+
         log_info "Health check attempt $attempt/$max_attempts - waiting..."
         sleep 10
         ((attempt++))
     done
-    
+
     log_error "Application failed to become healthy after $max_attempts attempts"
     log_info "Checking container logs..."
     docker-compose -f "$COMPOSE_FILE" logs --tail=50
@@ -173,7 +173,7 @@ cleanup_images() {
 deploy() {
     log_info "Starting ZaaKy AI Platform deployment..."
     echo ""
-    
+
     check_root
     check_prerequisites
     validate_environment
@@ -183,7 +183,7 @@ deploy() {
     wait_for_health
     show_status
     cleanup_images
-    
+
     echo ""
     log_success "🎉 Deployment completed successfully!"
     log_info "Your ZaaKy AI Platform is now running in production mode"
