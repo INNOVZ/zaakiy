@@ -195,6 +195,12 @@ INSTRUCTIONS:
     async def _call_openai(self, messages: List[Dict[str, str]]) -> str:
         """Call OpenAI API with error handling"""
         try:
+            # Validate OpenAI client is available
+            if self.openai_client is None:
+                raise ResponseGenerationError(
+                    "OpenAI client is not initialized. Please check API key configuration."
+                )
+
             # Get parameters from chatbot config with defaults
             model = self.chatbot_config.get("model", "gpt-3.5-turbo")
             temperature = self.chatbot_config.get("temperature", 0.7)

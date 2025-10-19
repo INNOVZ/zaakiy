@@ -14,6 +14,7 @@ from app.utils.error_monitoring import error_monitor
 
 from .analytics_service import AnalyticsService
 from .chat_utilities import ChatUtilities
+
 # Import services
 from .conversation_manager import ConversationManager
 from .document_retrieval_service import DocumentRetrievalService
@@ -112,6 +113,17 @@ class ChatService:
     def _initialize_services(self):
         """Initialize all modular services"""
         try:
+            # Validate critical dependencies
+            if self.openai_client is None:
+                raise ChatServiceError(
+                    "OpenAI client not initialized. Please check OPENAI_API_KEY environment variable."
+                )
+
+            if self.index is None:
+                logger.warning(
+                    "Pinecone index not initialized - document retrieval may fail"
+                )
+
             # Conversation management service
             self.conversation_manager = ConversationManager(
                 org_id=self.org_id, supabase_client=self.supabase
@@ -304,14 +316,32 @@ class ChatService:
             )
 
         except Exception as e:
+            # Log the actual error for debugging
+            logger.error(
+                "Unexpected error in process_message: %s",
+                str(e),
+                exc_info=True,
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "session_id": session_id,
+                    "message_length": len(message),
+                },
+            )
+
             # Record unexpected error
             self.error_handler.record_error(
                 error=e,
                 context="process_message_unexpected",
                 metadata={"message_length": len(message), "session_id": session_id},
             )
+
+            # Return more informative error message
+            error_detail = (
+                f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+            )
             return await self.error_handler.create_fallback_response(
-                "An unexpected error occurred. Please try again."
+                f"An unexpected error occurred ({error_detail}). Please try again."
             )
 
     async def _load_context_config(self):

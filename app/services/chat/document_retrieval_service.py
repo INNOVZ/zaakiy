@@ -57,15 +57,20 @@ class DocumentRetrievalService:
         all_docs = {}
 
         # Get retrieval strategy from context config
-        if hasattr(self.context_config, "retrieval_strategy"):
+        if self.context_config and hasattr(self.context_config, "retrieval_strategy"):
             strategy = self.context_config.retrieval_strategy
             semantic_weight = self.context_config.semantic_weight
             keyword_weight = self.context_config.keyword_weight
-        else:
+        elif self.context_config and isinstance(self.context_config, dict):
             # Handle dict-based config
             strategy = self.context_config.get("retrieval_strategy", "vector_search")
             semantic_weight = self.context_config.get("semantic_weight", 0.8)
             keyword_weight = self.context_config.get("keyword_weight", 0.2)
+        else:
+            # Handle None or invalid config - use defaults
+            strategy = "vector_search"
+            semantic_weight = 0.8
+            keyword_weight = 0.2
 
         logger.info(
             "Using retrieval strategy: %s (semantic: %s, keyword: %s)",
