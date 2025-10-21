@@ -15,12 +15,27 @@ from PyPDF2 import PdfReader
 
 from ..storage.pinecone_client import get_pinecone_index
 from ..storage.supabase_client import get_supabase_client
-from .url_utils import (create_safe_fetch_message, create_safe_success_message,
-                        log_domain_safely)
-from .web_scraper import scrape_url_text
+from .url_utils import (
+    create_safe_fetch_message,
+    create_safe_success_message,
+    log_domain_safely,
+)
 
-# Initialize logger
+# Initialize logger FIRST (needed for imports below)
 logger = logging.getLogger(__name__)
+
+# Import both scrapers for JavaScript and non-JavaScript sites
+try:
+    from .playwright_scraper import scrape_url_with_playwright
+
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    logger.warning(
+        "Playwright not available. JavaScript-rendered sites may not scrape correctly."
+    )
+
+from .web_scraper import scrape_url_text
 
 # Initialize clients
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -506,14 +521,66 @@ def upload_to_pinecone(
         raise
 
 
+async def smart_scrape_url(url: str) -> str:
+    """
+    Intelligently scrape URL using Playwright first, then fallback to traditional scraper.
+
+    This ensures multi-tenant SaaS customers can upload any URL type:
+    - JavaScript-rendered sites (React, Vue, Angular) → Playwright
+    - Traditional HTML sites → Traditional scraper
+
+    Args:
+        url: The URL to scrape
+
+    Returns:
+        Extracted text content
+    """
+    # Try Playwright first for best results
+    if PLAYWRIGHT_AVAILABLE:
+        try:
+            logger.info(f"[Multi-Tenant] Attempting Playwright scraping for: {url}")
+            text = await scrape_url_with_playwright(url)
+
+            # Check if we got meaningful content (not just "enable JavaScript" message)
+            if (
+                text
+                and len(text.strip()) > 100
+                and "enable JavaScript" not in text.lower()
+            ):
+                logger.info(
+                    f"[Multi-Tenant] ✅ Playwright succeeded: {len(text)} chars from {url}"
+                )
+                return text
+            else:
+                logger.warning(
+                    f"[Multi-Tenant] Playwright returned minimal content, trying traditional scraper"
+                )
+        except Exception as e:
+            logger.warning(
+                f"[Multi-Tenant] Playwright failed: {e}, falling back to traditional scraper"
+            )
+
+    # Fallback to traditional scraper
+    logger.info(f"[Multi-Tenant] Using traditional scraper for: {url}")
+    text = await scrape_url_text(url)
+    return text
+
+
 async def process_pending_uploads():
-    """Main function to process all pending uploads with authenticated storage access"""
+    """
+    Main function to process all pending uploads with authenticated storage access.
+
+    MULTI-TENANT ARCHITECTURE:
+    - Each upload has an org_id that identifies the tenant
+    - Data is stored in tenant-specific Pinecone namespace (org-{org_id})
+    - Complete data isolation between tenants
+    """
     try:
         # Get pending uploads from Supabase
         result = supabase.table("uploads").select("*").eq("status", "pending").execute()
 
         uploads = result.data
-        print(f"[Info] Found {len(uploads)} pending uploads")
+        print(f"[Multi-Tenant] Found {len(uploads)} pending uploads across all tenants")
 
         for upload in uploads:
             try:
@@ -523,14 +590,17 @@ async def process_pending_uploads():
                 doc_type = upload["type"]
                 namespace = upload["pinecone_namespace"]
 
-                print(f"[Info] Processing upload {upload_id} of type {doc_type}")
+                print(
+                    f"[Multi-Tenant] Processing upload {upload_id} for tenant {org_id}"
+                )
+                print(f"[Multi-Tenant]   Type: {doc_type}, Namespace: {namespace}")
 
                 # Extract text based on document type
                 if doc_type == "pdf":
                     text = extract_text_from_pdf_url(source)
                 elif doc_type == "url":
-                    # URLs don't need auth
-                    text = await scrape_url_text(source)
+                    # Use smart scraping with Playwright + fallback
+                    text = await smart_scrape_url(source)
                 elif doc_type == "json":
                     text = extract_text_from_json_url(source)
                 else:

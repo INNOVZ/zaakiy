@@ -29,6 +29,7 @@ PyPDF2==3.0.1
 # Web scraping
 beautifulsoup4==4.12.2
 lxml>=5.0.0
+playwright>=1.40.0  # For JavaScript-rendered websites (React, Vue, Angular)
 
 # Task scheduling
 apscheduler==3.10.4

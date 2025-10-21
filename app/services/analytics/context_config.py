@@ -3,7 +3,9 @@ import os
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, Optional, Set
+
 from pydantic import BaseModel, Field
+
 from ..shared.cache_service import cache_service
 from ..storage.supabase_client import get_supabase_client
 
@@ -41,13 +43,13 @@ class ContextEngineeringConfig(BaseModel):
 
     # Retrieval Configuration
     initial_retrieval_count: int = Field(
-        default=20, ge=5, le=50, description="Initial document retrieval count"
+        default=30, ge=5, le=50, description="Initial document retrieval count"
     )
     semantic_rerank_count: int = Field(
-        default=10, ge=3, le=25, description="Documents to semantically re-rank"
+        default=25, ge=3, le=30, description="Documents to semantically re-rank"
     )
     final_context_chunks: int = Field(
-        default=5, ge=1, le=10, description="Final chunks to include in context"
+        default=10, ge=1, le=12, description="Final chunks to include in context"
     )
     max_context_length: int = Field(
         default=4000, ge=1000, le=8000, description="Maximum context length in tokens"
