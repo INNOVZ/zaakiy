@@ -171,7 +171,10 @@ INSTRUCTIONS:
 - Be conversational and maintain {self.chatbot_config.get('tone', 'friendly')} tone and use relevant emojis to make the response more engaging
 - If context doesn't contain relevant info, say so politely
 - Maintain a logical flow of information
-- Always refer the contact details from the data and provide the user when they ask for it
+- IMPORTANT: When users ask for contact information (phone, email, address), extract the EXACT details from the context above
+- NEVER use placeholders like [insert phone number] or [insert email] - always provide the actual contact details found in the context
+- If you see phone numbers in the context (like +91 75 94 94 94 06), provide them exactly as shown
+- If you see email addresses in the context, provide them exactly as shown
 - Always refer to yourself as {self.chatbot_config.get('name', 'Assistant')} and be act like a human
 - When mentioning products, always include clickable links in markdown format: [Product Name](URL)
 - If you find product information in the context, make sure to mention the product names and include their links
@@ -309,6 +312,15 @@ INSTRUCTIONS:
         """Enhance query with context from conversation history - OPTIMIZED"""
         enhanced = [query]  # Always include original query
 
+        # SPECIAL CASE: Always enhance contact-related queries regardless of settings
+        contact_variants = self._get_contact_query_variants(query)
+        if contact_variants:
+            enhanced.extend(contact_variants)
+            logger.info(
+                "Added %d contact-related query variants", len(contact_variants)
+            )
+            return enhanced[:5]  # Limit to 5 total queries
+
         # OPTIMIZATION: Skip query enhancement if disabled or no OpenAI client
         if not hasattr(self.context_config, "enable_query_rewriting"):
             return enhanced
@@ -380,6 +392,57 @@ Alternative queries (one per line, no numbering):"""
         except Exception as e:
             logger.warning("Query enhancement failed: %s", e)
             return enhanced
+
+    def _get_contact_query_variants(self, query: str) -> List[str]:
+        """Generate query variants for contact-related queries"""
+        query_lower = query.lower()
+
+        # Keywords that indicate a contact information query
+        contact_keywords = {
+            "phone": ["phone number", "contact number", "call", "telephone", "mobile"],
+            "email": ["email address", "email", "contact email", "mail"],
+            "address": ["address", "location", "where located", "office address"],
+            "contact": [
+                "contact information",
+                "contact details",
+                "reach",
+                "get in touch",
+            ],
+        }
+
+        variants = []
+
+        # Check if query contains contact-related keywords
+        for category, keywords in contact_keywords.items():
+            if any(keyword in query_lower for keyword in keywords):
+                # Add specific variants based on the category
+                if category == "phone":
+                    variants.extend(
+                        [
+                            "phone number contact information",
+                            "call telephone number",
+                            "contact phone details",
+                        ]
+                    )
+                elif category == "email":
+                    variants.extend(
+                        ["email address contact", "email contact information"]
+                    )
+                elif category == "address":
+                    variants.extend(["office address location", "company address"])
+                elif category == "contact":
+                    variants.extend(
+                        [
+                            "contact information phone email",
+                            "contact details phone number email address",
+                            "how to reach contact",
+                        ]
+                    )
+
+                # Found contact keywords, return variants
+                return list(set(variants))[:4]  # Return unique variants, max 4
+
+        return []
 
     def _summarize_recent_context(self, messages: List[Dict[str, Any]]) -> str:
         """Summarize recent conversation context"""

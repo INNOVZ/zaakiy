@@ -20,9 +20,13 @@ from bs4 import BeautifulSoup
 from ...config.settings import get_performance_config, get_web_scraping_config
 from ...utils.error_handlers import ErrorHandler, handle_errors
 from ...utils.logging_config import LogContext, PerformanceLogger, get_logger
-from .url_utils import (URLSanitizer, create_safe_error_message,
-                        create_safe_fetch_message, create_safe_success_message,
-                        log_domain_safely)
+from .url_utils import (
+    URLSanitizer,
+    create_safe_error_message,
+    create_safe_fetch_message,
+    create_safe_success_message,
+    log_domain_safely,
+)
 
 logger = get_logger(__name__)
 
@@ -316,10 +320,13 @@ class SecureWebScraper:
         raise last_exception
 
     def _extract_and_clean_text(self, html_content: str) -> str:
-        """Extract and clean text from HTML"""
+        """Extract and clean text from HTML, preserving contact information"""
         soup = BeautifulSoup(html_content, "html.parser")
 
-        # Remove unwanted elements
+        # FIRST: Extract contact information from headers/footers before removing them
+        contact_info = self._extract_contact_information(soup)
+
+        # Remove unwanted elements (but we already saved contact info)
         for element in soup(["script", "style", "nav", "header", "footer", "aside"]):
             element.decompose()
 
@@ -331,7 +338,75 @@ class SecureWebScraper:
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         cleaned_text = " ".join(chunk for chunk in chunks if chunk)
 
+        # Prepend contact information to ensure it's included in the indexed content
+        if contact_info:
+            cleaned_text = contact_info + "\n\n" + cleaned_text
+
         return cleaned_text.strip()
+
+    def _extract_contact_information(self, soup: BeautifulSoup) -> str:
+        """Extract contact information (phone, email, address) from the entire page"""
+        contact_parts = []
+
+        # Find all text in the page (including header, footer, etc.)
+        all_text = soup.get_text()
+
+        # Extract phone numbers using various international formats
+        phone_patterns = [
+            r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}",  # International
+            r"\+\d{1,3}\s?\d{1,14}",  # Simple international format
+            r"\(\d{3}\)\s?\d{3}[-.\s]?\d{4}",  # US format with parentheses
+            r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}",  # US format
+            r"\d{4}[-.\s]?\d{6,7}",  # Some Asian formats
+        ]
+
+        phone_numbers = set()
+        for pattern in phone_patterns:
+            matches = re.findall(pattern, all_text)
+            for match in matches:
+                # Clean up the match and validate it looks like a real phone number
+                cleaned_match = match.strip()
+                # Filter out numbers that are likely dates or other non-phone numbers
+                if len(re.sub(r"\D", "", cleaned_match)) >= 10:  # At least 10 digits
+                    phone_numbers.add(cleaned_match)
+
+        if phone_numbers:
+            contact_parts.append("Contact Numbers: " + ", ".join(sorted(phone_numbers)))
+
+        # Extract email addresses
+        email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
+        emails = set(re.findall(email_pattern, all_text))
+
+        if emails:
+            contact_parts.append("Email: " + ", ".join(sorted(emails)))
+
+        # Look for common contact-related elements
+        contact_keywords = ["contact", "phone", "email", "address", "call", "reach"]
+
+        # Search for elements with contact-related classes or IDs
+        for keyword in contact_keywords:
+            elements = soup.find_all(
+                ["div", "span", "p", "a"], class_=re.compile(keyword, re.IGNORECASE)
+            )
+            elements += soup.find_all(
+                ["div", "span", "p", "a"], id=re.compile(keyword, re.IGNORECASE)
+            )
+
+            for elem in elements[:3]:  # Limit to avoid too much noise
+                elem_text = elem.get_text(strip=True)
+                if elem_text and len(elem_text) < 200:  # Not too long
+                    # Check if it contains useful contact info we haven't already captured
+                    if any(phone in elem_text for phone in phone_numbers) or any(
+                        email in elem_text for email in emails
+                    ):
+                        continue  # Already captured
+
+                    # Check if it looks like contact information
+                    if re.search(r"\d{3,}", elem_text) or "@" in elem_text:
+                        if elem_text not in str(contact_parts):  # Avoid duplicates
+                            contact_parts.append(elem_text)
+
+        return " | ".join(contact_parts) if contact_parts else ""
 
     @handle_errors(context="secure_web_scraper.scrape_url")
     async def scrape_url_text(self, url: str, user_agent: Optional[str] = None) -> str:
