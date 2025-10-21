@@ -42,8 +42,13 @@ class ResponseGenerationService:
                 system_prompt, conversation_history, message
             )
 
-            # Generate response using OpenAI
-            openai_response = await self._call_openai(messages)
+            # Detect if this is a contact information query - if so, use ZERO temperature
+            is_contact_query = self._is_contact_information_query(message)
+
+            # Generate response using OpenAI with dynamic temperature
+            openai_response = await self._call_openai(
+                messages, force_factual=is_contact_query
+            )
 
             # Process and format the response
             formatted_response = self._format_response(
@@ -154,32 +159,45 @@ class ResponseGenerationService:
 CONTEXT INFORMATION:
 {context_text}
 
-INSTRUCTIONS:
-- Use the context information above to answer the user's question
-- If the context doesn't contain relevant information, say so clearly
-- Cite sources when possible
-- Be concise but comprehensive
-- If you're unsure about something, acknowledge the uncertainty
-- Please provide the answer in the same language as the user's question.
-- Keep responses focused and concise
-- Avoid unnecessary repetition
-- Format lists in bullet points with clear item names and details (e.g., prices, links, etc.).
-- You can use markdown to format your response and also use bold and italic to make your response more engaging
-- Encourage user engagement and questions
-- Answer questions clearly and concisely in strictly less than 100 words
-- Never make your own assumptions or fabricate information
-- Be conversational and maintain {self.chatbot_config.get('tone', 'friendly')} tone and use relevant emojis to make the response more engaging
-- If context doesn't contain relevant info, say so politely
-- Maintain a logical flow of information
-- IMPORTANT: When users ask for contact information (phone, email, address), extract the EXACT details from the context above
-- NEVER use placeholders like [insert phone number] or [insert email] - always provide the actual contact details found in the context
-- If you see phone numbers in the context (like +91 75 94 94 94 06), provide them exactly as shown
-- If you see email addresses in the context, provide them exactly as shown
-- Always refer to yourself as {self.chatbot_config.get('name', 'Assistant')} and be act like a human
-- When mentioning products, always include clickable links in markdown format: [Product Name](URL)
-- If you find product information in the context, make sure to mention the product names and include their links
-- For product listings, format them as: **Product Name** - Description - [View Product](URL)
-- Confidence threshold for responses: {self.context_config.confidence_threshold}
+⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
+
+1. ONLY use information from the CONTEXT INFORMATION above
+2. If information is NOT in the context, say "I don't have that information in my knowledge base"
+3. NEVER generate, assume, or fabricate any information
+4. NEVER use placeholders like [insert X] or make up examples
+
+CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
+- Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character
+- If you see "+91 75 94 94 94 06" in context, use EXACTLY that - NOT "+91 9876543210" or any variation
+- If contact info is NOT in context, say "I don't have contact information available"
+
+EXAMPLES OF CORRECT BEHAVIOR:
+✅ Context has: "Call us at +91 75 94 94 94 06"
+   Response: "You can reach us at +91 75 94 94 94 06 📞"
+
+❌ WRONG - Context has: "Call us at +91 75 94 94 94 06"
+   Response: "Call us at +91 9876543210" (NEVER make up numbers!)
+
+✅ Context has: "Solar panels cost ₹50,000"
+   Response: "Solar panels cost ₹50,000"
+
+❌ WRONG - Context has: "Solar panels cost ₹50,000"
+   Response: "Solar panels cost around ₹40,000-60,000" (Don't modify prices!)
+
+GENERAL INSTRUCTIONS:
+- ONLY provide information that exists in the context above
+- If information is NOT in context, respond: "I don't have that specific information in my knowledge base"
+- Be precise and factual - accuracy is MORE important than sounding friendly
+- Cite exact facts, numbers, prices, and details from the context without modification
+- Use the same language as the user's question
+- Keep responses under 100 words and focused
+- Format lists with bullet points when listing multiple items
+- Use markdown, bold, and italic for readability
+- Maintain {self.chatbot_config.get('tone', 'friendly')} tone but prioritize accuracy over friendliness
+- Refer to yourself as {self.chatbot_config.get('name', 'Assistant')}
+- When mentioning products, include clickable links: [Product Name](URL)
+- For product listings: **Product Name** - Description - [View Product](URL)
+- If unsure or information seems incomplete, acknowledge the uncertainty rather than guessing
 
 """
             return base_prompt + "\n\n" + context_section
@@ -213,8 +231,10 @@ INSTRUCTIONS:
 
         return messages
 
-    async def _call_openai(self, messages: List[Dict[str, str]]) -> str:
-        """Call OpenAI API with error handling"""
+    async def _call_openai(
+        self, messages: List[Dict[str, str]], force_factual: bool = False
+    ) -> str:
+        """Call OpenAI API with error handling and dynamic temperature control"""
         try:
             # Validate OpenAI client is available
             if self.openai_client is None:
@@ -224,8 +244,22 @@ INSTRUCTIONS:
 
             # Get parameters from chatbot config with defaults
             model = self.chatbot_config.get("model", "gpt-3.5-turbo")
-            temperature = self.chatbot_config.get("temperature", 0.7)
             max_tokens = self.chatbot_config.get("max_tokens", 500)
+
+            # CRITICAL: Use low temperature to prevent hallucinations
+            # Business chatbots should prioritize ACCURACY over creativity
+            if force_factual:
+                temperature = 0.0  # Completely deterministic for contact info
+                logger.info(
+                    "Using temperature=0.0 for factual/contact information query"
+                )
+            else:
+                # Even for general queries, use LOW temperature to minimize hallucinations
+                # 0.1-0.2 provides slight variation while maintaining factual accuracy
+                temperature = self.chatbot_config.get(
+                    "temperature", 0.1
+                )  # Changed from 0.7 to 0.1
+                logger.debug("Using temperature=%.1f for general query", temperature)
 
             response = self.openai_client.chat.completions.create(
                 model=model,
@@ -258,9 +292,15 @@ INSTRUCTIONS:
         retrieved_documents: List[Dict[str, Any]],
         context_data: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Format the final response with metadata"""
+        """Format the final response with metadata and validate for hallucinations"""
+
+        # Validate contact information to prevent hallucinations
+        validated_response = self._validate_contact_info(
+            response_text, context_data.get("context_text", "")
+        )
+
         return {
-            "response": response_text,
+            "response": validated_response,
             "sources": context_data.get("sources", []),
             "context_used": context_data.get("context_text", ""),
             "context_quality": context_data.get("context_quality", {}),
@@ -274,6 +314,102 @@ INSTRUCTIONS:
                 "message_count": 1,  # Current message
             },
         }
+
+    def _validate_contact_info(self, response: str, context: str) -> str:
+        """Validate that factual information in response exists in context - prevents hallucinations"""
+        import re
+
+        # 1. VALIDATE PHONE NUMBERS
+        phone_pattern = (
+            r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
+        )
+        response_phones = re.findall(phone_pattern, response)
+        context_phones = re.findall(phone_pattern, context)
+
+        # Normalize phone numbers for comparison (remove spaces, dashes, etc.)
+        def normalize_phone(phone):
+            return re.sub(r"[^\d+]", "", phone)
+
+        normalized_context_phones = set(normalize_phone(p) for p in context_phones)
+
+        # Check each phone number in response
+        for response_phone in response_phones:
+            normalized_response_phone = normalize_phone(response_phone)
+
+            # If phone number in response is not in context, it's hallucinated
+            if normalized_response_phone not in normalized_context_phones:
+                logger.warning(
+                    "🚨 HALLUCINATION DETECTED: Phone number '%s' not in context. Context has: %s",
+                    response_phone,
+                    context_phones,
+                )
+
+                # Replace hallucinated number with actual or remove it
+                if context_phones:
+                    response = response.replace(response_phone, context_phones[0])
+                    logger.info("✅ Auto-corrected phone to: %s", context_phones[0])
+                else:
+                    response = re.sub(
+                        re.escape(response_phone),
+                        "[Contact number not available]",
+                        response,
+                    )
+
+        # 2. VALIDATE EMAILS
+        email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
+        response_emails = re.findall(email_pattern, response)
+        context_emails = set(re.findall(email_pattern, context))
+
+        for response_email in response_emails:
+            if response_email not in context_emails:
+                logger.warning(
+                    "🚨 HALLUCINATION DETECTED: Email '%s' not in context. Context has: %s",
+                    response_email,
+                    context_emails,
+                )
+
+                if context_emails:
+                    actual_email = list(context_emails)[0]
+                    response = response.replace(response_email, actual_email)
+                    logger.info("✅ Auto-corrected email to: %s", actual_email)
+
+        # 3. VALIDATE PRICES (₹, Rs, INR, $, etc.)
+        # Look for price patterns in both response and context
+        price_pattern = r"(?:₹|Rs\.?|INR|\$|USD|EUR|£)\s*[\d,]+(?:\.\d{2})?"
+        response_prices = re.findall(price_pattern, response, re.IGNORECASE)
+        context_prices = set(re.findall(price_pattern, context, re.IGNORECASE))
+
+        for response_price in response_prices:
+            # Normalize for comparison (remove spaces, commas)
+            normalized_response_price = re.sub(r"[\s,]", "", response_price.lower())
+            normalized_context_prices = {
+                re.sub(r"[\s,]", "", p.lower()) for p in context_prices
+            }
+
+            if normalized_response_price not in normalized_context_prices:
+                logger.warning(
+                    "🚨 POTENTIAL PRICE HALLUCINATION: '%s' not found in context. Context prices: %s",
+                    response_price,
+                    list(context_prices)[:3],  # Show first 3 prices
+                )
+
+        # 4. DETECT VAGUE PHRASES THAT INDICATE HALLUCINATION
+        hallucination_phrases = [
+            r"around \d+",  # "around 50000"
+            r"approximately \d+",
+            r"roughly \d+",
+            r"about \d+",
+            r"\d+-\d+ range",  # "40000-60000 range"
+        ]
+
+        for pattern in hallucination_phrases:
+            if re.search(pattern, response, re.IGNORECASE):
+                logger.warning(
+                    "⚠️ VAGUE/ESTIMATED LANGUAGE DETECTED: AI may be hallucinating. Pattern: %s",
+                    pattern,
+                )
+
+        return response
 
     async def generate_fallback_response(
         self, message: str, session_id: str, error_type: Optional[str] = None
@@ -392,6 +528,32 @@ Alternative queries (one per line, no numbering):"""
         except Exception as e:
             logger.warning("Query enhancement failed: %s", e)
             return enhanced
+
+    def _is_contact_information_query(self, query: str) -> bool:
+        """Detect if the query is asking for contact information"""
+        query_lower = query.lower()
+
+        # Keywords that indicate a contact information query
+        contact_keywords = [
+            "phone",
+            "number",
+            "call",
+            "telephone",
+            "mobile",
+            "contact",
+            "email",
+            "mail",
+            "address",
+            "location",
+            "reach",
+            "get in touch",
+            "whatsapp",
+            "how to contact",
+            "contact details",
+            "contact info",
+        ]
+
+        return any(keyword in query_lower for keyword in contact_keywords)
 
     def _get_contact_query_variants(self, query: str) -> List[str]:
         """Generate query variants for contact-related queries"""
