@@ -2,6 +2,7 @@
 Main Chat Service Orchestrator
 Lightweight coordinator that integrates all modular chat services
 """
+import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,7 @@ import openai
 from app.services.analytics.context_config import context_config_manager
 from app.services.shared import get_client_manager
 from app.utils.error_monitoring import error_monitor
+from app.utils.performance_monitor import performance_monitor
 
 from .analytics_service import AnalyticsService
 from .chat_utilities import ChatUtilities
@@ -186,42 +188,62 @@ class ChatService:
             )
 
         try:
-            # Load context configuration for this organization
-            await self._load_context_config()
+            # OPTIMIZATION: Parallelize independent operations
+            # Load context config and get/create conversation in parallel
+            config_task = self._load_context_config()
+            conversation_task = self.conversation_manager.get_or_create_conversation(
+                session_id=session_id
+            )
+
+            # Wait for both to complete
+            await config_task
+            conversation = await conversation_task
 
             # Update services with current context config
             self._update_services_config()
 
-            # Step 1: Get or create conversation
-            conversation = await self.conversation_manager.get_or_create_conversation(
-                session_id=session_id
-            )
-
-            # Step 2: Add user message to conversation
-            await self.conversation_manager.add_message(
+            # OPTIMIZATION: Parallelize adding user message and getting history
+            # First add the user message, then get history
+            add_message_task = self.conversation_manager.add_message(
                 conversation_id=conversation["id"], role="user", content=message
             )
 
-            # Step 3: Get conversation history for context
-            history = await self.conversation_manager.get_conversation_history(
+            # Get conversation history (before the current message)
+            history_task = self.conversation_manager.get_conversation_history(
                 conversation_id=conversation["id"], limit=10
             )
 
-            # Step 4: Enhanced query processing and document retrieval
-            enhanced_queries = await self.response_generator.enhance_query(
-                message, history
-            )
+            # Wait for both operations
+            await add_message_task
+            history = await history_task
 
-            documents = await self.document_retrieval.retrieve_documents(
-                queries=enhanced_queries
-            )
+            # Step 4: Enhanced query processing and document retrieval (with performance tracking)
+            async with performance_monitor.track_operation(
+                "query_enhancement", {"org_id": self.org_id}
+            ):
+                enhanced_queries = await self.response_generator.enhance_query(
+                    message, history
+                )
 
-            # Step 5: Generate response with context
-            response_data = await self.response_generator.generate_enhanced_response(
-                message=message,
-                conversation_history=history,
-                retrieved_documents=documents,
-            )
+            async with performance_monitor.track_operation(
+                "document_retrieval",
+                {"org_id": self.org_id, "query_count": len(enhanced_queries)},
+            ):
+                documents = await self.document_retrieval.retrieve_documents(
+                    queries=enhanced_queries
+                )
+
+            # Step 5: Generate response with context (with performance tracking)
+            async with performance_monitor.track_operation(
+                "response_generation", {"org_id": self.org_id}
+            ):
+                response_data = (
+                    await self.response_generator.generate_enhanced_response(
+                        message=message,
+                        conversation_history=history,
+                        retrieved_documents=documents,
+                    )
+                )
 
             # Step 5.5: Consume tokens if entity information is available
             if self.entity_id and self.entity_type and "tokens_used" in response_data:
@@ -268,7 +290,8 @@ class ChatService:
                     logger.warning("Failed to consume tokens: %s", str(e))
                     # Don't fail the chat request if token consumption fails
 
-            # Step 6: Add assistant response to conversation
+            # OPTIMIZATION: Save assistant message first (needed for analytics)
+            processing_time = int((time.time() - start_time) * 1000)
             assistant_message = await self.conversation_manager.add_message(
                 conversation_id=conversation["id"],
                 role="assistant",
@@ -276,18 +299,20 @@ class ChatService:
                 metadata={
                     "sources": response_data.get("sources", []),
                     "context_quality": response_data.get("context_quality", {}),
-                    "processing_time_ms": int((time.time() - start_time) * 1000),
+                    "processing_time_ms": processing_time,
                 },
             )
 
-            # Step 7: Log analytics
-            processing_time = int((time.time() - start_time) * 1000)
-            await self.analytics.log_analytics(
-                conversation_id=conversation["id"],
-                message_id=assistant_message["id"],
-                query_original=message,
-                response_data=response_data,
-                processing_time=processing_time,
+            # OPTIMIZATION: Log analytics asynchronously (don't wait for it)
+            # This doesn't block the response
+            asyncio.create_task(
+                self.analytics.log_analytics(
+                    conversation_id=conversation["id"],
+                    message_id=assistant_message["id"],
+                    query_original=message,
+                    response_data=response_data,
+                    processing_time=processing_time,
+                )
             )
 
             # Step 8: Return comprehensive response

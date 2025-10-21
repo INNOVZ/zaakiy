@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
+from ..services.shared import cache_service
 from ..services.storage.supabase_client import get_supabase_client
 from ..utils.logging_config import get_logger
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
@@ -12,6 +13,7 @@ from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 # Constants
 CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
 CHATBOT_NOT_FOUND_OR_INACTIVE_MESSAGE = "Chatbot not found or inactive"
+CHATBOT_CACHE_TTL = 300  # Cache chatbot config for 5 minutes
 
 # Get logger
 logger = get_logger(__name__)
@@ -22,26 +24,52 @@ supabase = get_supabase_client()
 router = APIRouter()
 
 
+async def get_cached_chatbot_config(chatbot_id: str):
+    """Get chatbot configuration with caching for better performance"""
+    cache_key = f"chatbot_config:{chatbot_id}"
+
+    # Try cache first
+    try:
+        cached_config = await cache_service.get(cache_key)
+        if cached_config:
+            logger.debug(f"Chatbot config cache HIT for {chatbot_id}")
+            return cached_config
+    except Exception as e:
+        logger.warning(f"Cache retrieval failed: {e}")
+
+    # Cache miss - fetch from database
+    logger.debug(f"Chatbot config cache MISS for {chatbot_id}")
+    response = (
+        supabase.table("chatbots")
+        .select("*")
+        .eq("id", chatbot_id)
+        .eq("chain_status", "active")
+        .execute()
+    )
+
+    if not response.data or len(response.data) == 0:
+        raise HTTPException(
+            status_code=404, detail=CHATBOT_NOT_FOUND_OR_INACTIVE_MESSAGE
+        )
+
+    chatbot = response.data[0]
+
+    # Cache for future requests
+    try:
+        await cache_service.set(cache_key, chatbot, CHATBOT_CACHE_TTL)
+    except Exception as e:
+        logger.warning(f"Cache set failed: {e}")
+
+    return chatbot
+
+
 @router.post("/chat", response_model=PublicChatResponse)
 @rate_limit(**get_rate_limit_config("public_chat"))
 async def public_chat(request: PublicChatRequest):
-    """Public chat endpoint for embedded chatbots"""
+    """Public chat endpoint for embedded chatbots - Optimized with caching"""
     try:
-        # Get chatbot configuration using proper Supabase client
-        response = (
-            supabase.table("chatbots")
-            .select("*")
-            .eq("id", request.chatbot_id)
-            .eq("chain_status", "active")
-            .execute()
-        )
-
-        if not response.data or len(response.data) == 0:
-            raise HTTPException(
-                status_code=404, detail=CHATBOT_NOT_FOUND_OR_INACTIVE_MESSAGE
-            )
-
-        chatbot = response.data[0]
+        # Get chatbot configuration with caching
+        chatbot = await get_cached_chatbot_config(request.chatbot_id)
 
         # Initialize chat service with required parameters
         chat_service = ChatService(
@@ -76,7 +104,7 @@ async def public_chat(request: PublicChatRequest):
         logger.error(
             "Public chat request failed",
             extra={"error": str(e), "chatbot_id": request.chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Chat service unavailable") from e
 
@@ -118,7 +146,7 @@ async def get_public_chatbot_config(chatbot_id: str):
         logger.error(
             "Failed to get chatbot configuration",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail="Failed to get chatbot configuration"
@@ -193,7 +221,7 @@ async def get_chatbot_widget_code(chatbot_id: str):
         logger.error(
             "Failed to generate widget code",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail="Failed to generate widget code"
@@ -455,7 +483,7 @@ async def get_chatbot_widget_js(chatbot_id: str):
         logger.error(
             "Failed to serve widget JavaScript",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail="Failed to serve widget JavaScript"

@@ -9,10 +9,13 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..services.auth import verify_jwt_token_from_header
-from ..services.storage.pinecone_client import \
-    get_connection_stats as get_pinecone_stats
-from ..services.storage.supabase_client import \
-    get_connection_stats as get_supabase_stats
+from ..services.storage.pinecone_client import (
+    get_connection_stats as get_pinecone_stats,
+)
+from ..services.storage.supabase_client import (
+    get_connection_stats as get_supabase_stats,
+)
+from ..utils.performance_monitor import performance_monitor
 from ..utils.query_optimizer import query_monitor
 
 router = APIRouter()
@@ -285,3 +288,109 @@ async def get_system_alerts(user=Depends(verify_jwt_token_from_header)):
         raise HTTPException(
             status_code=500, detail=f"Failed to get system alerts: {str(e)}"
         )
+
+
+@router.get("/chat-performance")
+async def get_chat_performance(user=Depends(verify_jwt_token_from_header)):
+    """
+    Get chat service performance statistics
+
+    Returns performance metrics for:
+    - Query enhancement
+    - Document retrieval
+    - Response generation
+
+    Requires authentication
+    """
+    try:
+        stats = performance_monitor.get_all_stats()
+
+        # Calculate overall health
+        total_avg = sum(s.get("avg_ms", 0) for s in stats.values()) / max(len(stats), 1)
+
+        health_status = "healthy"
+        if total_avg > 3000:
+            health_status = "degraded"
+        elif total_avg > 5000:
+            health_status = "unhealthy"
+
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "health": health_status,
+            "operations": stats,
+            "summary": {
+                "total_avg_ms": round(total_avg, 2),
+                "operations_tracked": len(stats),
+            },
+            "recommendations": _get_performance_recommendations(stats),
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get chat performance: {str(e)}"
+        )
+
+
+@router.post("/chat-performance/reset")
+async def reset_chat_performance(user=Depends(verify_jwt_token_from_header)):
+    """
+    Reset chat performance statistics
+
+    Requires authentication
+    """
+    try:
+        performance_monitor.clear_metrics()
+
+        return {
+            "success": True,
+            "message": "Chat performance statistics reset",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to reset chat performance: {str(e)}"
+        )
+
+
+def _get_performance_recommendations(stats):
+    """Generate performance recommendations based on stats"""
+    recommendations = []
+
+    # Check query enhancement performance
+    query_stats = stats.get("query_enhancement", {})
+    if query_stats.get("avg_ms", 0) > 800:
+        recommendations.append(
+            {
+                "operation": "query_enhancement",
+                "issue": "Slow query enhancement",
+                "recommendation": "Consider disabling query_rewriting in context config",
+                "expected_improvement": "500-1000ms",
+            }
+        )
+
+    # Check document retrieval performance
+    retrieval_stats = stats.get("document_retrieval", {})
+    if retrieval_stats.get("avg_ms", 0) > 800:
+        recommendations.append(
+            {
+                "operation": "document_retrieval",
+                "issue": "Slow document retrieval",
+                "recommendation": "Reduce initial_retrieval_count or enable caching",
+                "expected_improvement": "200-400ms",
+            }
+        )
+
+    # Check response generation performance
+    response_stats = stats.get("response_generation", {})
+    if response_stats.get("avg_ms", 0) > 2000:
+        recommendations.append(
+            {
+                "operation": "response_generation",
+                "issue": "Slow response generation",
+                "recommendation": "Use gpt-3.5-turbo instead of gpt-4 or reduce max_tokens",
+                "expected_improvement": "500-1000ms",
+            }
+        )
+
+    return recommendations

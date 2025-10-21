@@ -2,6 +2,7 @@
 Response Generation Service
 Handles AI response generation and context engineering
 """
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -159,6 +160,23 @@ INSTRUCTIONS:
 - Cite sources when possible
 - Be concise but comprehensive
 - If you're unsure about something, acknowledge the uncertainty
+- Please provide the answer in the same language as the user's question.
+- Keep responses focused and concise
+- Avoid unnecessary repetition
+- Format lists in bullet points with clear item names and details (e.g., prices, links, etc.).
+- You can use markdown to format your response and also use bold and italic to make your response more engaging
+- Encourage user engagement and questions
+- Answer questions clearly and concisely in strictly less than 100 words
+- Never make your own assumptions or fabricate information
+- Be conversational and maintain {self.chatbot_config.get('tone', 'friendly')} tone and use relevant emojis to make the response more engaging
+- If context doesn't contain relevant info, say so politely
+- Maintain a logical flow of information
+- Always refer the contact details from the data and provide the user when they ask for it
+- Always refer to yourself as {self.chatbot_config.get('name', 'Assistant')} and be act like a human
+- When mentioning products, always include clickable links in markdown format: [Product Name](URL)
+- If you find product information in the context, make sure to mention the product names and include their links
+- For product listings, format them as: **Product Name** - Description - [View Product](URL)
+- Confidence threshold for responses: {self.context_config.confidence_threshold}
 
 """
             return base_prompt + "\n\n" + context_section
@@ -288,10 +306,18 @@ INSTRUCTIONS:
     async def enhance_query(
         self, query: str, history: List[Dict[str, Any]]
     ) -> List[str]:
-        """Enhance query with context from conversation history"""
+        """Enhance query with context from conversation history - OPTIMIZED"""
         enhanced = [query]  # Always include original query
 
-        if not self.context_config.enable_query_rewriting:
+        # OPTIMIZATION: Skip query enhancement if disabled or no OpenAI client
+        if not hasattr(self.context_config, "enable_query_rewriting"):
+            return enhanced
+
+        if not self.context_config.enable_query_rewriting or not self.openai_client:
+            return enhanced
+
+        # OPTIMIZATION: Skip enhancement for very short queries or no history
+        if len(query.strip()) < 10 or not history:
             return enhanced
 
         try:
@@ -302,8 +328,11 @@ INSTRUCTIONS:
             if not context_summary:
                 return enhanced
 
-            # Generate enhanced query using OpenAI
-            enhancement_prompt = f"""
+            # OPTIMIZATION: Add timeout to query enhancement (max 1 second)
+            # This prevents slow OpenAI calls from blocking the entire request
+            try:
+                # Generate enhanced query using OpenAI
+                enhancement_prompt = f"""
 Given this conversation context and user query, generate 1-2 alternative ways to ask the same question that might help find more relevant information.
 
 Conversation Context:
@@ -313,27 +342,40 @@ Original Query: {query}
 
 Alternative queries (one per line, no numbering):"""
 
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": enhancement_prompt}],
-                temperature=0.3,
-                max_tokens=150,
-            )
+                # Wrap the OpenAI call with a timeout
+                async def enhance_with_openai():
+                    return self.openai_client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": enhancement_prompt}],
+                        temperature=0.3,
+                        max_tokens=100,  # Reduced from 150 for faster response
+                    )
 
-            # Parse enhanced queries
-            enhanced_queries = response.choices[0].message.content.strip().split("\n")
+                response = await asyncio.wait_for(enhance_with_openai(), timeout=1.0)
 
-            for enhanced_query in enhanced_queries:
-                enhanced_query = enhanced_query.strip()
-                if (
-                    enhanced_query
-                    and enhanced_query != query
-                    and len(enhanced_query) > 5
-                ):
-                    enhanced.append(enhanced_query)
+                # Parse enhanced queries
+                enhanced_queries = (
+                    response.choices[0].message.content.strip().split("\n")
+                )
 
-            # Limit to max query variants
-            return enhanced[: self.context_config.max_query_variants]
+                for enhanced_query in enhanced_queries:
+                    enhanced_query = enhanced_query.strip()
+                    if (
+                        enhanced_query
+                        and enhanced_query != query
+                        and len(enhanced_query) > 5
+                    ):
+                        enhanced.append(enhanced_query)
+
+                # Limit to max query variants
+                max_variants = getattr(self.context_config, "max_query_variants", 3)
+                return enhanced[:max_variants]
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Query enhancement timed out after 1s - using original query only"
+                )
+                return enhanced
 
         except Exception as e:
             logger.warning("Query enhancement failed: %s", e)
