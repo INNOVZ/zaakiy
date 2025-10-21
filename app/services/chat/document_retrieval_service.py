@@ -132,7 +132,42 @@ class DocumentRetrievalService:
 
         # Return top documents sorted by score
         sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
-        final_docs = sorted_docs[: self.retrieval_config["final"]]
+
+        # For contact queries, return MORE documents to ensure we get phone/email info
+        # Check if any query contains contact keywords
+        is_contact_query = any(
+            keyword in query.lower()
+            for query in queries
+            for keyword in [
+                "phone",
+                "number",
+                "email",
+                "contact",
+                "call",
+                "reach",
+                "address",
+            ]
+        )
+
+        if is_contact_query:
+            # Return up to 10 documents for contact queries (instead of 3)
+            final_count = min(10, len(sorted_docs))
+            logger.info(
+                "🔍 Contact query detected - returning %d documents (instead of %d)",
+                final_count,
+                self.retrieval_config["final"],
+            )
+        else:
+            final_count = self.retrieval_config["final"]
+
+        final_docs = sorted_docs[:final_count]
+
+        # DEBUG: Log what we're returning
+        logger.info(
+            "📤 Returning %d documents (scores: %s)",
+            len(final_docs),
+            [f"{doc['score']:.3f}" for doc in final_docs[:5]],
+        )
 
         # Cache results asynchronously to avoid blocking
         asyncio.create_task(self._cache_retrieval_results(cache_key, final_docs))

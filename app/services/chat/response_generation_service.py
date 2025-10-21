@@ -31,8 +31,52 @@ class ResponseGenerationService:
     ) -> Dict[str, Any]:
         """Generate response with enhanced context engineering"""
         try:
+            # DEBUG: Log retrieved documents
+            logger.info(
+                "📄 Retrieved %d documents for query: '%s'",
+                len(retrieved_documents),
+                message[:100],
+            )
+
             # Build context from retrieved documents
             context_data = self._build_context(retrieved_documents)
+
+            # DEBUG: Log context information
+            context_text = context_data.get("context_text", "")
+            logger.info("📝 Context length: %d characters", len(context_text))
+
+            # Detect if this is a contact information query - if so, use ZERO temperature
+            is_contact_query = self._is_contact_information_query(message)
+
+            # DEBUG: Check if phone numbers are in context
+            import re
+
+            phone_pattern = r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
+            phones_in_context = re.findall(phone_pattern, context_text)
+
+            if phones_in_context:
+                logger.info(
+                    "📞 Found %d phone numbers in context: %s",
+                    len(phones_in_context),
+                    phones_in_context,
+                )
+            elif is_contact_query:
+                # Contact query but no phone in context - this is the problem!
+                logger.error(
+                    "🚨 PROBLEM: Contact query detected but NO phone numbers in retrieved context!"
+                )
+                logger.error(
+                    "Retrieved documents: %d, Context length: %d chars",
+                    len(retrieved_documents),
+                    len(context_text),
+                )
+                logger.error("First 500 chars of context: %s", context_text[:500])
+
+                # DEBUG: Log each retrieved document
+                for idx, doc in enumerate(retrieved_documents):
+                    chunk = doc.get("chunk", "")[:200]
+                    score = doc.get("score", 0)
+                    logger.error("Doc %d (score %.3f): %s...", idx + 1, score, chunk)
 
             # Create system prompt with context
             system_prompt = self._create_system_prompt(context_data)
@@ -41,9 +85,6 @@ class ResponseGenerationService:
             messages = self._build_conversation_messages(
                 system_prompt, conversation_history, message
             )
-
-            # Detect if this is a contact information query - if so, use ZERO temperature
-            is_contact_query = self._is_contact_information_query(message)
 
             # Generate response using OpenAI with dynamic temperature
             openai_response = await self._call_openai(
@@ -83,7 +124,7 @@ class ResponseGenerationService:
             sources = []
             total_score = 0
 
-            for doc in documents:
+            for idx, doc in enumerate(documents):
                 chunk_text = doc.get("chunk", "")
                 source = doc.get("source", "")
                 score = doc.get("score", 0)
@@ -93,6 +134,15 @@ class ResponseGenerationService:
                     if source and source not in sources:
                         sources.append(source)
                     total_score += score
+
+                    # DEBUG: Log each chunk being added
+                    logger.debug(
+                        "📄 Chunk %d (score: %.3f, length: %d): %s...",
+                        idx + 1,
+                        score,
+                        len(chunk_text),
+                        chunk_text[:100],
+                    )
 
             # Combine context with length limit
             context_text = self._combine_context_chunks(context_chunks)
@@ -453,7 +503,9 @@ GENERAL INSTRUCTIONS:
         if contact_variants:
             enhanced.extend(contact_variants)
             logger.info(
-                "Added %d contact-related query variants", len(contact_variants)
+                "🔍 Contact query detected! Generated %d query variants: %s",
+                len(enhanced),
+                enhanced,
             )
             return enhanced[:5]  # Limit to 5 total queries
 
