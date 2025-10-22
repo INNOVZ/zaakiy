@@ -759,6 +759,13 @@ async def get_channel_trends(
         Daily trends data for the specified channel
     """
     try:
+        # SECURITY: Validate days_back to prevent injection attacks
+        # Limit to reasonable range (1-365 days) to prevent resource exhaustion
+        if days_back < 1:
+            days_back = 1
+        elif days_back > 365:
+            days_back = 365
+        
         # Verify access
         if not await _verify_subscription_access(current_user, subscription_id):
             raise HTTPException(
@@ -1044,13 +1051,17 @@ async def _process_channel_trends(trends_data, days_back):
 
     Args:
         trends_data: List of channel analytics records
-        days_back: Number of days to analyze
+        days_back: Number of days to analyze (must be validated before calling)
 
     Returns:
         Processed trends data
     """
     from collections import defaultdict
     from datetime import datetime, timedelta
+
+    # SECURITY: Additional safeguard - ensure days_back is within safe bounds
+    # This should already be validated by the caller, but defense in depth
+    days_back = max(1, min(int(days_back), 365))
 
     # Initialize daily data
     daily_tokens = []
@@ -1066,7 +1077,7 @@ async def _process_channel_trends(trends_data, days_back):
         date_data[date]["messages"] += record["message_count"]
         date_data[date]["users"].add(record.get("unique_users", 0))
 
-    # Convert to arrays
+    # Convert to arrays - now safe from injection
     for i in range(days_back):
         date = (datetime.utcnow() - timedelta(days=i)).date().isoformat()
         data = date_data.get(date, {"tokens": 0, "messages": 0, "users": set()})
