@@ -3,14 +3,25 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from .config.settings import settings, validate_environment
-from .routers import (auth, cache, chat, monitoring, onboarding, org, public_chat,
-                      uploads, users)
+from .middleware.cors import SmartCORSMiddleware
+from .routers import (
+    auth,
+    cache,
+    chat,
+    monitoring,
+    onboarding,
+    org,
+    public_chat,
+    uploads,
+    users,
+)
 from .services.shared import get_client_manager
-from .services.shared.worker_scheduler import (start_background_worker,
-                                               stop_background_worker)
+from .services.shared.worker_scheduler import (
+    start_background_worker,
+    stop_background_worker,
+)
 from .services.storage.supabase_client import get_supabase_client
 from .utils.env_loader import is_test_environment
 from .utils.error_monitoring import error_monitor
@@ -122,19 +133,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS middleware using centralized config
+# Configure Smart CORS middleware for multi-tenant widget deployment
+# Public endpoints (/api/public/*) allow all origins
+# Authenticated endpoints use strict CORS from settings
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.security.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    SmartCORSMiddleware,
+    allowed_origins=settings.security.cors_origins,
 )
 
 logger.info(
-    "FastAPI application configured",
+    "Smart CORS middleware configured",
     extra={
-        "cors_origins": settings.security.cors_origins,
+        "authenticated_origins": settings.security.cors_origins,
+        "public_endpoints": "Allow all origins",
         "debug_mode": settings.app.debug,
     },
 )
