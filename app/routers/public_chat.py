@@ -68,24 +68,59 @@ async def get_cached_chatbot_config(chatbot_id: str):
 async def public_chat(request: PublicChatRequest):
     """Public chat endpoint for embedded chatbots - Optimized with caching"""
     try:
+        logger.info(
+            "Public chat request received",
+            extra={
+                "chatbot_id": request.chatbot_id,
+                "message_length": len(request.message),
+                "session_id": request.session_id,
+            },
+        )
+
         # Get chatbot configuration with caching
         chatbot = await get_cached_chatbot_config(request.chatbot_id)
 
-        # Initialize chat service with required parameters
-        chat_service = ChatService(
-            org_id=chatbot["org_id"],
-            chatbot_config=chatbot,
-            entity_id=chatbot["org_id"],  # Use organization ID for public chat
-            entity_type="organization",  # Public chat consumes tokens from organization's subscription
+        logger.info(
+            "Chatbot config retrieved",
+            extra={
+                "chatbot_name": chatbot["name"],
+                "org_id": chatbot["org_id"],
+            },
         )
 
+        # Initialize chat service with required parameters
+        try:
+            chat_service = ChatService(
+                org_id=chatbot["org_id"],
+                chatbot_config=chatbot,
+                entity_id=chatbot["org_id"],  # Use organization ID for public chat
+                entity_type="organization",  # Public chat consumes tokens from organization's subscription
+            )
+            logger.info("ChatService initialized successfully")
+        except Exception as init_error:
+            logger.error(
+                "Failed to initialize ChatService",
+                extra={"error": str(init_error)},
+                exc_info=True,
+            )
+            raise
+
         # Generate response using the existing chat method
-        result = await chat_service.chat(
-            message=request.message,
-            session_id=request.session_id or "anonymous",
-            chatbot_id=request.chatbot_id,
-            channel="public",
-        )
+        try:
+            result = await chat_service.chat(
+                message=request.message,
+                session_id=request.session_id or "anonymous",
+                chatbot_id=request.chatbot_id,
+                channel="public",
+            )
+            logger.info("Chat response generated successfully")
+        except Exception as chat_error:
+            logger.error(
+                "Failed to generate chat response",
+                extra={"error": str(chat_error)},
+                exc_info=True,
+            )
+            raise
 
         return {
             "response": result["response"],
@@ -103,10 +138,18 @@ async def public_chat(request: PublicChatRequest):
     except Exception as e:
         logger.error(
             "Public chat request failed",
-            extra={"error": str(e), "chatbot_id": request.chatbot_id},
+            extra={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "chatbot_id": request.chatbot_id,
+            },
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail="Chat service unavailable") from e
+        # Return more detailed error for debugging
+        error_detail = f"Chat service unavailable: {type(e).__name__}"
+        if hasattr(e, "args") and e.args:
+            error_detail += f" - {str(e.args[0])[:100]}"
+        raise HTTPException(status_code=500, detail=error_detail) from e
 
 
 @router.get("/chatbot/{chatbot_id}/config")
