@@ -111,7 +111,6 @@ async def public_chat(request: PublicChatRequest):
                 message=request.message,
                 session_id=request.session_id or "anonymous",
                 chatbot_id=request.chatbot_id,
-                channel="public",
             )
             logger.info("Chat response generated successfully")
         except Exception as chat_error:
