@@ -1,3 +1,15 @@
+# Ignore local environment files and backups
+.env
+.env.*
+*.env
+.env.backup*
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+logs/
 # Python
 __pycache__/
 *.py[cod]
