@@ -29,14 +29,15 @@ async def get_cached_chatbot_config(chatbot_id: str):
     """Get chatbot configuration with caching for better performance"""
     cache_key = f"chatbot_config:{chatbot_id}"
 
-    # Try cache first
-    try:
-        cached_config = await cache_service.get(cache_key)
-        if cached_config:
-            logger.debug(f"Chatbot config cache HIT for {chatbot_id}")
-            return cached_config
-    except Exception as e:
-        logger.warning(f"Cache retrieval failed: {e}")
+    # Try cache first (only if available)
+    if cache_service:
+        try:
+            cached_config = await cache_service.get(cache_key)
+            if cached_config:
+                logger.debug(f"Chatbot config cache HIT for {chatbot_id}")
+                return cached_config
+        except Exception as e:
+            logger.warning(f"Cache retrieval failed: {e}")
 
     # Cache miss - fetch from database
     logger.debug(f"Chatbot config cache MISS for {chatbot_id}")
@@ -55,11 +56,12 @@ async def get_cached_chatbot_config(chatbot_id: str):
 
     chatbot = response.data[0]
 
-    # Cache for future requests
-    try:
-        await cache_service.set(cache_key, chatbot, CHATBOT_CACHE_TTL)
-    except Exception as e:
-        logger.warning(f"Cache set failed: {e}")
+    # Cache for future requests (only if available)
+    if cache_service:
+        try:
+            await cache_service.set(cache_key, chatbot, CHATBOT_CACHE_TTL)
+        except Exception as e:
+            logger.warning(f"Cache set failed: {e}")
 
     return chatbot
 

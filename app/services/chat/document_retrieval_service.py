@@ -79,33 +79,26 @@ class DocumentRetrievalService:
             keyword_weight,
         )
 
-        for query in queries:
+        # OPTIMIZATION: Process all queries in parallel instead of sequentially
+        async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
+            """Retrieve documents for a single query with error handling"""
             try:
                 # Strategy-based retrieval
                 if strategy == "semantic_only":
-                    docs = await self._semantic_retrieval(query)
+                    return await self._semantic_retrieval(query)
                 elif strategy == "hybrid":
-                    docs = await self._hybrid_retrieval(
+                    return await self._hybrid_retrieval(
                         query, semantic_weight, keyword_weight
                     )
                 elif strategy == "keyword_boost":
-                    docs = await self._keyword_boost_retrieval(
+                    return await self._keyword_boost_retrieval(
                         query, semantic_weight, keyword_weight
                     )
                 elif strategy == "domain_specific":
-                    docs = await self._domain_specific_retrieval(query)
+                    return await self._domain_specific_retrieval(query)
                 else:
                     # Fallback to semantic only
-                    docs = await self._semantic_retrieval(query)
-
-                # Merge results, keeping highest scores
-                for doc in docs:
-                    doc_id = doc["id"]
-                    if (
-                        doc_id not in all_docs
-                        or doc["score"] > all_docs[doc_id]["score"]
-                    ):
-                        all_docs[doc_id] = doc
+                    return await self._semantic_retrieval(query)
 
             except Exception as e:
                 logger.warning(
@@ -116,19 +109,39 @@ class DocumentRetrievalService:
                 )
                 # Fallback to basic semantic search
                 try:
-                    docs = await self._semantic_retrieval(query)
-                    for doc in docs:
-                        doc_id = doc["id"]
-                        if (
-                            doc_id not in all_docs
-                            or doc["score"] > all_docs[doc_id]["score"]
-                        ):
-                            all_docs[doc_id] = doc
+                    return await self._semantic_retrieval(query)
                 except Exception as fallback_e:
                     logger.error("Fallback retrieval also failed: %s", fallback_e)
                     raise DocumentRetrievalError(
                         f"Document retrieval failed: {e}"
                     ) from e
+
+        # Execute all query retrievals in parallel
+        try:
+            query_results = await asyncio.gather(
+                *[retrieve_for_query(query) for query in queries],
+                return_exceptions=True
+            )
+        except Exception as e:
+            logger.error("Parallel retrieval failed: %s", e)
+            raise DocumentRetrievalError(f"Document retrieval failed: {e}") from e
+
+        # Merge results from all queries, keeping highest scores
+        for result in query_results:
+            if isinstance(result, Exception):
+                logger.error("Query retrieval error: %s", result)
+                continue
+            
+            if not result:
+                continue
+                
+            for doc in result:
+                doc_id = doc["id"]
+                if (
+                    doc_id not in all_docs
+                    or doc["score"] > all_docs[doc_id]["score"]
+                ):
+                    all_docs[doc_id] = doc
 
         # Return top documents sorted by score
         sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
@@ -517,6 +530,9 @@ class DocumentRetrievalService:
         self, cache_key: str
     ) -> Optional[List[Dict[str, Any]]]:
         """Get cached retrieval results"""
+        if not cache_service:
+            return None
+            
         try:
             cached_data = await cache_service.get(cache_key)
             if cached_data:
@@ -531,6 +547,9 @@ class DocumentRetrievalService:
         self, cache_key: str, results: List[Dict[str, Any]]
     ):
         """Cache retrieval results asynchronously"""
+        if not cache_service:
+            return
+            
         try:
             # Cache for 30 minutes (1800 seconds)
             await cache_service.set(cache_key, results, 1800)

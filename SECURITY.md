@@ -1,11 +1,13 @@
 # Production-Grade Security Documentation
 
 ## Overview
+
 This document outlines the comprehensive security measures implemented in the ZaaKy chatbot system.
 
 ## Security Layers
 
 ### Layer 1: Input Validation
+
 - **Chatbot ID Validation**: Ensures valid UUID format
 - **Message Length Enforcement**: 1-2000 characters
 - **Character Validation**: Prevents null bytes and control characters
@@ -14,6 +16,7 @@ This document outlines the comprehensive security measures implemented in the Za
 ### Layer 2: Attack Prevention
 
 #### XSS (Cross-Site Scripting) Protection
+
 - HTML tag stripping
 - JavaScript URL blocking
 - Event handler removal
@@ -21,6 +24,7 @@ This document outlines the comprehensive security measures implemented in the Za
 - **Status**: ✅ Implemented
 
 #### SQL Injection Protection
+
 - Detects UNION SELECT patterns
 - Blocks SQL comment sequences
 - Prevents SQL command injection
@@ -28,6 +32,7 @@ This document outlines the comprehensive security measures implemented in the Za
 - **Status**: ✅ Implemented
 
 #### Code Injection Protection
+
 - `eval()` call detection
 - Script tag removal
 - JavaScript execution prevention
@@ -36,23 +41,27 @@ This document outlines the comprehensive security measures implemented in the Za
 ### Layer 3: Rate Limiting
 
 #### Per-Session Rate Limiting
+
 - **Limit**: 10 messages per minute
 - **Daily Limit**: 100 messages per session
 - **Enforcement**: In-memory tracking with automatic cleanup
 - **Status**: ✅ Implemented
 
 #### Global Rate Limiting
+
 - **FastAPI Rate Limiter**: Configured via decorators
 - **Configurable**: Per endpoint customization
 - **Status**: ✅ Implemented
 
 ### Layer 4: Spam Detection
+
 - **Excessive Character Repetition**: Blocks messages with 10+ repeated characters
 - **Word Repetition**: Prevents same word repeated >5 times
 - **All Caps Detection**: Flags messages >20 chars in all caps
 - **Status**: ✅ Implemented
 
 ### Layer 5: Suspicious Activity Detection
+
 - **Pattern Matching**: Maintains list of malicious patterns
 - **Session Flagging**: Automatically flags suspicious sessions
 - **Automatic Blocking**: Blocks flagged sessions from further requests
@@ -60,12 +69,14 @@ This document outlines the comprehensive security measures implemented in the Za
 - **Status**: ✅ Implemented
 
 ### Layer 6: Response Sanitization
+
 - **API Key Redaction**: Automatically removes leaked credentials
 - **Sensitive Data Filtering**: Prevents accidental data exposure
 - **Response Validation**: Ensures clean responses to clients
 - **Status**: ✅ Implemented
 
 ### Layer 7: CORS Protection
+
 - **Origin Validation**: Strict CORS for authenticated endpoints
 - **Wildcard Allowed**: Only for `/api/public/*` endpoints
 - **Credential Support**: Proper `Access-Control-Allow-Credentials`
@@ -73,12 +84,14 @@ This document outlines the comprehensive security measures implemented in the Za
 - **Status**: ✅ Implemented
 
 ### Layer 8: Session Security
+
 - **Cryptographic Session IDs**: SHA-256 hashed with secrets
 - **Timestamp Inclusion**: Prevents replay attacks
 - **User Binding**: Optional user identifier binding
 - **Status**: ✅ Implemented
 
 ### Layer 9: Audit Logging
+
 - **Security Events**: All security-related events logged
 - **Severity Levels**: INFO, WARNING, ERROR, CRITICAL
 - **Structured Logging**: JSON format for analysis
@@ -86,6 +99,7 @@ This document outlines the comprehensive security measures implemented in the Za
 - **Status**: ✅ Implemented
 
 ### Layer 10: Memory Management
+
 - **Automatic Cleanup**: Old session data removed after 24 hours
 - **Memory Leak Prevention**: Periodic cleanup tasks
 - **Resource Limits**: Bounded data structures
@@ -94,6 +108,7 @@ This document outlines the comprehensive security measures implemented in the Za
 ## Security Configuration
 
 ### Message Limits
+
 ```python
 MAX_MESSAGE_LENGTH = 2000  # Maximum characters
 MIN_MESSAGE_LENGTH = 1     # Minimum characters
@@ -102,6 +117,7 @@ MAX_MESSAGES_PER_MINUTE = 10
 ```
 
 ### Suspicious Patterns Detected
+
 1. Script tags: `<script>...</script>`
 2. JavaScript URLs: `javascript:`
 3. Event handlers: `onclick=`, `onerror=`, etc.
@@ -114,6 +130,7 @@ MAX_MESSAGES_PER_MINUTE = 10
 ## Security Best Practices
 
 ### For Developers
+
 1. **Never bypass security checks** - All endpoints must use security service
 2. **Always sanitize input** - Use `sanitize_message()` before processing
 3. **Log security events** - Use `log_security_event()` for auditing
@@ -121,6 +138,7 @@ MAX_MESSAGES_PER_MINUTE = 10
 5. **Check rate limits** - Ensure rate limiting is enforced
 
 ### For Deployments
+
 1. **Enable HTTPS** - Always use SSL/TLS in production
 2. **Set Environment Variables**:
    - `CORS_ORIGINS` - Restrict to trusted domains
@@ -132,12 +150,14 @@ MAX_MESSAGES_PER_MINUTE = 10
 ## Monitoring & Alerts
 
 ### Security Events to Monitor
+
 - `invalid_chatbot_id` - Potential scanning/probing
 - `suspicious_session_blocked` - Attack attempt
 - `invalid_message` - XSS/injection attempts
 - `chat_success` - Normal operation baseline
 
 ### Recommended Alerts
+
 1. **High Rate**: >100 invalid messages per hour
 2. **Suspicious Sessions**: >10 flagged sessions per hour
 3. **Failed Validations**: >50% failure rate
@@ -146,6 +166,7 @@ MAX_MESSAGES_PER_MINUTE = 10
 ## Compliance
 
 ### OWASP Top 10 Coverage
+
 - ✅ A01:2021 – Broken Access Control
 - ✅ A02:2021 – Cryptographic Failures
 - ✅ A03:2021 – Injection
@@ -155,6 +176,7 @@ MAX_MESSAGES_PER_MINUTE = 10
 - ✅ A09:2021 – Security Logging and Monitoring Failures
 
 ### GDPR Considerations
+
 - **Data Minimization**: Only necessary data collected
 - **Anonymization**: Session IDs are cryptographic hashes
 - **Right to Erasure**: Session cleanup after 24 hours
@@ -163,6 +185,7 @@ MAX_MESSAGES_PER_MINUTE = 10
 ## Testing Security
 
 ### Manual Testing
+
 ```bash
 # Test XSS prevention
 curl -X POST https://api/public/chat \
@@ -183,6 +206,7 @@ done
 ```
 
 ### Expected Results
+
 - XSS attempts: Message sanitized, tags removed
 - SQL injection: Request blocked with 400 error
 - Rate limit: 11th+ request blocked with 400 error
@@ -190,6 +214,7 @@ done
 ## Incident Response
 
 ### If Attack Detected
+
 1. **Identify**: Check logs for `session_id` and `client_ip`
 2. **Block**: Session automatically flagged and blocked
 3. **Investigate**: Review audit logs for pattern
@@ -197,6 +222,7 @@ done
 5. **Monitor**: Watch for similar attacks
 
 ### Emergency Procedures
+
 ```python
 # Manually block a session
 security_service = get_security_service()
@@ -208,6 +234,7 @@ security_service.suspicious_sessions.clear()
 ```
 
 ## Future Enhancements
+
 - [ ] IP-based geoblocking
 - [ ] Machine learning anomaly detection
 - [ ] Honeypot endpoints
@@ -216,4 +243,5 @@ security_service.suspicious_sessions.clear()
 - [ ] Integration with threat intelligence feeds
 
 ## Support
+
 For security concerns or vulnerabilities, contact: security@zaakiy.com

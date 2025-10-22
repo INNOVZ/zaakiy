@@ -349,43 +349,44 @@ async def upload_image(
 @router.get("/avatar/{file_id}")
 async def get_avatar_image(file_id: str):
     """
-    Serve avatar images from private Supabase storage.
-    This endpoint acts as a proxy to serve images from the private bucket.
+    Serve avatar images from Supabase storage.
+    
+    NOTE: This endpoint is deprecated. Avatars should use direct Supabase public URLs
+    or the /avatar/legacy/{file_path} endpoint with the full path.
     """
     try:
-        # Find the file in storage by searching for the file_id
-        # Since we know the pattern is org-{org_id}/avatars/{file_id}.{ext}
-        files = supabase.storage.from_("uploads").list()
+        logger.warning(f"Deprecated /avatar/{file_id} endpoint called. Use full path or public URLs instead.")
         
-        target_file = None
-        for file in files:
-            if isinstance(file, dict) and file.get("name", "").endswith(f"/{file_id}"):
-                # This is a folder, check its contents
-                folder_files = supabase.storage.from_("uploads").list(file["name"])
-                for folder_file in folder_files:
-                    if isinstance(folder_file, dict) and folder_file.get("name", "").startswith("avatars/"):
-                        target_file = f"{file['name']}/{folder_file['name']}"
-                        break
-                if target_file:
+        # Try common avatar paths (much more efficient than listing all files)
+        common_paths = [
+            f"avatars/{file_id}",
+            f"avatars/{file_id}.png",
+            f"avatars/{file_id}.jpg",
+            f"avatars/{file_id}.jpeg",
+        ]
+        
+        file_content = None
+        content_type = "image/png"
+        
+        for path in common_paths:
+            try:
+                file_content = supabase.storage.from_("uploads").download(path)
+                if file_content:
+                    # Determine content type
+                    if path.endswith(('.jpg', '.jpeg')):
+                        content_type = "image/jpeg"
+                    elif path.endswith('.gif'):
+                        content_type = "image/gif"
+                    elif path.endswith('.webp'):
+                        content_type = "image/webp"
                     break
-            elif isinstance(file, dict) and file.get("name", "").endswith(f"/avatars/{file_id}"):
-                target_file = file["name"]
-                break
+            except Exception:
+                continue
         
-        if not target_file:
+        if not file_content:
+            logger.warning(f"Avatar not found: {file_id}")
+            # Return a placeholder or 404
             raise HTTPException(status_code=404, detail="Avatar image not found")
-        
-        # Get the file content from Supabase Storage
-        file_content = supabase.storage.from_("uploads").download(target_file)
-        
-        # Determine content type from file extension
-        content_type = "image/png"  # default
-        if file_id.endswith(('.jpg', '.jpeg')):
-            content_type = "image/jpeg"
-        elif file_id.endswith('.gif'):
-            content_type = "image/gif"
-        elif file_id.endswith('.webp'):
-            content_type = "image/webp"
         
         # Return the image with proper headers
         return Response(
@@ -397,8 +398,10 @@ async def get_avatar_image(file_id: str):
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error serving avatar image {file_id}: {e}")
+        logger.error(f"Error serving avatar image {file_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to serve avatar image")
 
 
