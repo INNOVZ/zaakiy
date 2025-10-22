@@ -49,7 +49,7 @@ class SmartCORSMiddleware(BaseHTTPMiddleware):
             ] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
             response.headers[
                 "Access-Control-Allow-Headers"
-            ] = "Content-Type, Authorization, X-User-ID, X-Request-ID, X-Organization-ID"
+            ] = "Content-Type, Authorization, X-User-ID, X-Request-ID, X-Org-ID"
             logger.debug(
                 f"Public endpoint CORS: {request.url.path} - Origin: {origin or '*'}"
             )
@@ -63,7 +63,7 @@ class SmartCORSMiddleware(BaseHTTPMiddleware):
             ] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
             response.headers[
                 "Access-Control-Allow-Headers"
-            ] = "Content-Type, Authorization, X-User-ID, X-Request-ID, X-Organization-ID"
+            ] = "Content-Type, Authorization, X-User-ID, X-Request-ID, X-Org-ID"
             logger.debug(
                 f"Authenticated endpoint CORS: {request.url.path} - Origin: {origin}"
             )
@@ -112,7 +112,7 @@ class SmartCORSMiddleware(BaseHTTPMiddleware):
             "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-ID, X-Request-ID, X-Organization-ID",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-ID, X-Request-ID, X-Org-ID",
             "Access-Control-Max-Age": "86400",  # 24 hours
         }
 
