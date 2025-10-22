@@ -1,10 +1,11 @@
 import html
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
+from ..services.chat.security_service import get_security_service
 from ..services.shared import cache_service
 from ..services.storage.supabase_client import get_supabase_client
 from ..utils.logging_config import get_logger
@@ -65,19 +66,88 @@ async def get_cached_chatbot_config(chatbot_id: str):
 
 @router.post("/chat", response_model=PublicChatResponse)
 @rate_limit(**get_rate_limit_config("public_chat"))
-async def public_chat(request: PublicChatRequest):
-    """Public chat endpoint for embedded chatbots - Optimized with caching"""
+async def public_chat(request: PublicChatRequest, http_request: Request):
+    """
+    Public chat endpoint for embedded chatbots.
+
+    Security features:
+    - Input validation and sanitization
+    - XSS/injection attack prevention
+    - Rate limiting per session
+    - Suspicious pattern detection
+    - Message length enforcement
+    - Response sanitization
+    """
+    security_service = get_security_service()
+    session_id = request.session_id or "anonymous"
+
     try:
+        # Get client IP for logging
+        client_ip = http_request.client.host if http_request.client else "unknown"
+
         logger.info(
             "Public chat request received",
             extra={
                 "chatbot_id": request.chatbot_id,
                 "message_length": len(request.message),
-                "session_id": request.session_id,
+                "session_id": session_id,
+                "client_ip": client_ip,
             },
         )
 
-        # Get chatbot configuration with caching
+        # ====== SECURITY LAYER 1: Validate Chatbot ID ======
+        if not security_service.validate_chatbot_id(request.chatbot_id):
+            security_service.log_security_event(
+                "invalid_chatbot_id",
+                session_id,
+                {"chatbot_id": request.chatbot_id, "client_ip": client_ip},
+                severity="WARNING",
+            )
+            raise HTTPException(status_code=400, detail="Invalid chatbot ID format")
+
+        # ====== SECURITY LAYER 2: Check if session is suspicious ======
+        if security_service.is_session_suspicious(session_id):
+            security_service.log_security_event(
+                "suspicious_session_blocked",
+                session_id,
+                {"client_ip": client_ip},
+                severity="WARNING",
+            )
+            raise HTTPException(
+                status_code=429,
+                detail="Session has been flagged for suspicious activity",
+            )
+
+        # ====== SECURITY LAYER 3: Validate and sanitize message ======
+        is_valid, error_message = security_service.validate_message(
+            request.message, session_id
+        )
+
+        if not is_valid:
+            security_service.log_security_event(
+                "invalid_message",
+                session_id,
+                {
+                    "error": error_message,
+                    "message_preview": request.message[:100],
+                    "client_ip": client_ip,
+                },
+                severity="WARNING",
+            )
+            raise HTTPException(status_code=400, detail=error_message)
+
+        # Sanitize the message
+        sanitized_message = security_service.sanitize_message(request.message)
+
+        logger.info(
+            "Message validated and sanitized",
+            extra={
+                "original_length": len(request.message),
+                "sanitized_length": len(sanitized_message),
+            },
+        )
+
+        # ====== SECURITY LAYER 4: Get chatbot configuration ======
         chatbot = await get_cached_chatbot_config(request.chatbot_id)
 
         logger.info(
@@ -105,11 +175,11 @@ async def public_chat(request: PublicChatRequest):
             )
             raise
 
-        # Generate response using the existing chat method
+        # ====== SECURITY LAYER 5: Generate response with sanitized message ======
         try:
             result = await chat_service.chat(
-                message=request.message,
-                session_id=request.session_id or "anonymous",
+                message=sanitized_message,  # Use sanitized message
+                session_id=session_id,
                 chatbot_id=request.chatbot_id,
             )
             logger.info("Chat response generated successfully")
@@ -121,15 +191,30 @@ async def public_chat(request: PublicChatRequest):
             )
             raise
 
+        # ====== SECURITY LAYER 6: Sanitize response before sending ======
+        sanitized_response = security_service.sanitize_response(result["response"])
+
+        # Log successful interaction
+        security_service.log_security_event(
+            "chat_success",
+            session_id,
+            {
+                "chatbot_id": request.chatbot_id,
+                "response_length": len(sanitized_response),
+                "client_ip": client_ip,
+            },
+            severity="INFO",
+        )
+
         return {
-            "response": result["response"],
+            "response": sanitized_response,
             "product_links": result.get("product_links", []),
             "chatbot": {
                 "name": chatbot["name"],
                 "avatar_url": chatbot.get("avatar_url"),
                 "color_hex": chatbot["color_hex"],
             },
-            "session_id": request.session_id or "anonymous",
+            "session_id": session_id,
         }
 
     except HTTPException:
