@@ -224,11 +224,13 @@ CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 EXAMPLES OF CORRECT BEHAVIOR:
 
 ✅ CONTACT INFO - Context has: "Call us at +91 75 94 94 94 06, email: support@company.com"
-   Response: "**Phone**: [+91 75 94 94 94 06](tel:+917594949406)
-**Email**: [support@company.com](mailto:support@company.com)"
+   Response: "You can reach us:
+
+📞 **Phone**: [+91 75 94 94 94 06](tel:+917594949406)
+📧 **Email**: [support@company.com](mailto:support@company.com)"
 
 ❌ WRONG - Context has phone/email
-   Response: "📞 Phone: +91 75 94 94 94 06 📧 Email: support@company.com" (Missing markdown!)
+   Response: "Phone: +91 75 94 94 94 06 Email: support@company.com" (Missing emojis and markdown!)
 
 ✅ PRODUCT INFO - Context has: "Solar Panel 500W costs ₹50,000"
    Response: "**[Solar Panel 500W](product-url)** - *High efficiency panel* - **Price**: ₹50,000"
@@ -238,7 +240,7 @@ EXAMPLES OF CORRECT BEHAVIOR:
 
 GENERAL INSTRUCTIONS:
 - ONLY provide information that exists in the context above
-- Use appropriate emojis while chatting with the user and give the response in the same language as the user's question
+- Always use appropriate emojis while chatting with the user and give the response in the same language as the user's question
 - Know the customer emotion and respond accordingly
 - If information is NOT in context, respond: "I don't have that specific information in my knowledge base"
 - Be precise and factual - accuracy is MORE important than sounding friendly
@@ -251,22 +253,20 @@ GENERAL INSTRUCTIONS:
 
 FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
-⚠️ NEVER USE EMOJIS BEFORE CONTACT INFO! ⚠️
-❌ WRONG: "📞 Phone: 123" or "📧 Email: x@y.com"
-✅ CORRECT: "**Phone**: [123](tel:123)" and "**Email**: [x@y.com](mailto:x@y.com)"
-
 1. **CONTACT INFORMATION - EXACT FORMAT REQUIRED:**
 
-   **Phone**: [number](tel:number)
-   **Email**: [email](mailto:email)
-   **Location**: *address*
+   📞 **Phone**: [number](tel:number)
+   📧 **Email**: [email](mailto:email)
+   📍 **Location**: *address*
 
    ✅ CORRECT Example:
    You can reach us through:
 
-   **Phone**: [0503789198](tel:0503789198)
-   **Email**: [support@email.com](mailto:support@email.com)
-   **Location**: *Dubai Production City, IMPZ, Dubai, UAE*
+   📞 **Phone**: [0503789198](tel:0503789198)
+   📧 **Email**: [support@email.com](mailto:support@email.com)
+   📍 **Location**: *Dubai Production City, IMPZ, Dubai, UAE*
+
+   ❌ WRONG: Missing emojis, no markdown, or plain text
 
 2. **PRODUCT INFORMATION - EXACT FORMAT:**
    **[Product Name](URL)** - *Description* - **Price**: ₹Amount
@@ -283,10 +283,14 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
    - Add blank line before contact section
    - NEVER run contact details together on one line
 
-5. **FORBIDDEN:**
-   - ❌ NO emojis before labels (📞 📧 📍)
-   - ❌ NO raw URLs
-   - ❌ NO running contact details together
+5. **EMOJIS:**
+   - ✅ ALWAYS use emojis with contact info: 📞 for phone, 📧 for email, 📍 for location
+   - ✅ Use other relevant emojis sparingly to enhance readability
+
+6. **FORBIDDEN:**
+   - ❌ NO raw URLs (always use markdown links)
+   - ❌ NO running contact details together on one line
+   - ❌ NO plain text contact info without formatting
 
 """
             return base_prompt + "\n\n" + context_section
@@ -436,7 +440,7 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
             number = match.group(1).strip()
             # Clean number for tel: link (remove spaces and dashes)
             clean_number = re.sub(r"[\s\-\(\)]", "", number)
-            return f"\n**Phone**: [{number}](tel:{clean_number})"
+            return f"\n📞 **Phone**: [{number}](tel:{clean_number})"
 
         response = re.sub(phone_pattern, format_phone, response)
 
@@ -446,7 +450,7 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
         def format_email(match):
             email = match.group(1).strip()
-            return f"\n**Email**: [{email}](mailto:{email})"
+            return f"\n📧 **Email**: [{email}](mailto:{email})"
 
         response = re.sub(email_pattern, format_email, response)
 
@@ -457,13 +461,13 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
         def format_location(match):
             location = match.group(1).strip()
-            return f"\n**Location**: *{location}*\n"
+            return f"\n📍 **Location**: *{location}*\n"
 
         response = re.sub(location_pattern, format_location, response)
 
         # Add blank line after common intro phrases before contact details
         response = re.sub(
-            r"((?:contact details?|reach (?:me|us)|get in touch):\s*)(\n\*\*(?:Phone|Email))",
+            r"((?:contact details?|reach (?:me|us)|get in touch):\s*)(\n(?:📞|📧|📍)\s*\*\*(?:Phone|Email|Location))",
             r"\1\n\2",
             response,
             flags=re.IGNORECASE,
@@ -472,8 +476,8 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
         # Clean up multiple consecutive newlines
         response = re.sub(r"\n{3,}", "\n\n", response)
 
-        # Remove emojis that are left over (already converted to markdown)
-        response = re.sub(r"[📞📧📍]\s*", "", response)
+        # Remove any duplicate emojis (but keep the formatted ones)
+        response = re.sub(r"([📞📧📍])\s*\1+", r"\1", response)
 
         response = response.strip()
 
