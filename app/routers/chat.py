@@ -10,12 +10,19 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..models import (ChatRequest, ChatResponse, ContextConfigRequest,
-                      CreateChatbotRequest, FeedbackRequest, UpdateChatbotRequest)
+from ..models import (
+    ChatRequest,
+    ChatResponse,
+    ContextConfigRequest,
+    CreateChatbotRequest,
+    FeedbackRequest,
+    UpdateChatbotRequest,
+)
 from ..services.analytics.context_analytics import context_analytics
 from ..services.analytics.context_config import context_config_manager
 from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.chat.chat_service import ChatService
+from ..services.shared import cache_service
 from ..services.storage.supabase_client import get_supabase_client
 from ..utils.error_context import ErrorContextManager
 from ..utils.error_handlers import handle_errors
@@ -66,12 +73,18 @@ def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
             chatbot = response.data[0]
             logger.info(
                 "Found chatbot for organization",
-                extra={"chatbot_name": chatbot['name'], "org_id": org_id, "chatbot_id": chatbot['id']}
+                extra={
+                    "chatbot_name": chatbot["name"],
+                    "org_id": org_id,
+                    "chatbot_id": chatbot["id"],
+                },
             )
             return chatbot
 
         # Enhanced default chatbot
-        logger.info("No chatbot found, using default configuration", extra={"org_id": org_id})
+        logger.info(
+            "No chatbot found, using default configuration", extra={"org_id": org_id}
+        )
         return {
             "id": f"default-{org_id}",
             "name": "INNOVZ Assistant",
@@ -91,7 +104,7 @@ def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
         logger.error(
             "Database connection error while fetching chatbot",
             extra={"org_id": org_id, "error": str(e)},
-            exc_info=True
+            exc_info=True,
         )
         return {
             "id": f"fallback-{org_id}",
@@ -183,7 +196,11 @@ FALLBACK: {request.fallback_message}
             created_chatbot = response.data[0]
             logger.info(
                 "Chatbot created successfully",
-                extra={"chatbot_id": chatbot_id, "org_id": org_id, "chatbot_name": created_chatbot.get("name")}
+                extra={
+                    "chatbot_id": chatbot_id,
+                    "org_id": org_id,
+                    "chatbot_name": created_chatbot.get("name"),
+                },
             )
 
             # Initialize default context config for this org if it doesn't exist
@@ -192,7 +209,11 @@ FALLBACK: {request.fallback_message}
             except (KeyError, ValueError, ConnectionError) as config_error:
                 logger.warning(
                     "Could not initialize context config for new chatbot",
-                    extra={"org_id": org_id, "chatbot_id": chatbot_id, "error": str(config_error)}
+                    extra={
+                        "org_id": org_id,
+                        "chatbot_id": chatbot_id,
+                        "error": str(config_error),
+                    },
                 )
 
             return {
@@ -205,7 +226,7 @@ FALLBACK: {request.fallback_message}
             error_msg = getattr(response, "error", "Unknown database error")
             logger.error(
                 "Database insert failed for chatbot creation",
-                extra={"error_msg": error_msg, "org_id": org_id}
+                extra={"error_msg": error_msg, "org_id": org_id},
             )
             raise HTTPException(status_code=500, detail=f"Database error: {error_msg}")
 
@@ -220,7 +241,7 @@ FALLBACK: {request.fallback_message}
         logger.error(
             "Failed to create chatbot",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to create chatbot: {str(e)}"
@@ -242,6 +263,22 @@ async def update_chatbot(
         _validate_update_data(update_data)
 
         response = _execute_chatbot_update(chatbot_id, org_id, update_data)
+
+        # Invalidate the chatbot config cache after successful update
+        if cache_service and response.data:
+            try:
+                cache_key = f"chatbot_config:{chatbot_id}"
+                await cache_service.delete(cache_key)
+                logger.info(
+                    "Chatbot cache invalidated after update",
+                    extra={"chatbot_id": chatbot_id, "cache_key": cache_key},
+                )
+            except Exception as cache_error:
+                logger.warning(
+                    "Failed to invalidate chatbot cache",
+                    extra={"error": str(cache_error), "chatbot_id": chatbot_id},
+                )
+
         return _format_update_response(response, chatbot_id)
 
     except HTTPException:
@@ -250,7 +287,7 @@ async def update_chatbot(
         logger.error(
             "Failed to update chatbot",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to update chatbot: {str(e)}"
@@ -319,7 +356,24 @@ async def delete_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_hea
         )
 
         if response.data:
-            logger.info("Chatbot deleted successfully", extra={"chatbot_id": chatbot_id})
+            # Invalidate the chatbot config cache after deletion
+            if cache_service:
+                try:
+                    cache_key = f"chatbot_config:{chatbot_id}"
+                    await cache_service.delete(cache_key)
+                    logger.info(
+                        "Chatbot cache invalidated after deletion",
+                        extra={"chatbot_id": chatbot_id, "cache_key": cache_key},
+                    )
+                except Exception as cache_error:
+                    logger.warning(
+                        "Failed to invalidate chatbot cache",
+                        extra={"error": str(cache_error), "chatbot_id": chatbot_id},
+                    )
+
+            logger.info(
+                "Chatbot deleted successfully", extra={"chatbot_id": chatbot_id}
+            )
             return {"success": True, "message": "Chatbot deleted successfully"}
         else:
             raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
@@ -330,7 +384,7 @@ async def delete_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_hea
         logger.error(
             "Failed to delete chatbot",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to delete chatbot: {str(e)}"
@@ -412,8 +466,8 @@ async def list_chatbots(
                 "org_id": org_id,
                 "page": page,
                 "total_pages": total_pages,
-                "page_size": page_size
-            }
+                "page_size": page_size,
+            },
         )
 
         return {
@@ -434,7 +488,7 @@ async def list_chatbots(
         logger.error(
             "Failed to list chatbots",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Failed to fetch chatbots") from e
 
@@ -471,9 +525,79 @@ async def get_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_header
         logger.error(
             "Failed to get chatbot",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Failed to fetch chatbot") from e
+
+
+@router.post("/chatbots/{chatbot_id}/clear-cache")
+async def clear_chatbot_cache(
+    chatbot_id: str, user=Depends(verify_jwt_token_from_header)
+):
+    """Manually clear the cache for a specific chatbot"""
+    try:
+        user_data = await get_user_with_org(user["user_id"])
+        org_id = user_data["org_id"]
+
+        # Verify the chatbot belongs to this organization
+        response = (
+            supabase.table("chatbots")
+            .select("id")
+            .eq("id", chatbot_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
+
+        # Clear the cache
+        if cache_service:
+            try:
+                cache_key = f"chatbot_config:{chatbot_id}"
+                deleted = await cache_service.delete(cache_key)
+
+                logger.info(
+                    "Chatbot cache cleared manually",
+                    extra={
+                        "chatbot_id": chatbot_id,
+                        "cache_key": cache_key,
+                        "deleted": deleted,
+                    },
+                )
+
+                return {
+                    "success": True,
+                    "message": "Chatbot cache cleared successfully",
+                    "cache_key": cache_key,
+                    "deleted": deleted,
+                }
+            except Exception as cache_error:
+                logger.error(
+                    "Failed to clear chatbot cache",
+                    extra={"error": str(cache_error), "chatbot_id": chatbot_id},
+                )
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to clear cache: {str(cache_error)}"
+                )
+        else:
+            return {
+                "success": True,
+                "message": "Cache service not available (cache not enabled)",
+                "deleted": False,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to clear chatbot cache",
+            extra={"error": str(e), "chatbot_id": chatbot_id},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Failed to clear chatbot cache: {str(e)}"
+        ) from e
 
 
 @router.post("/chatbots/{chatbot_id}/activate")
@@ -482,6 +606,14 @@ async def activate_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_h
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
+
+        # Get all chatbots in org to invalidate their cache later
+        org_chatbots_response = (
+            supabase.table("chatbots").select("id").eq("org_id", org_id).execute()
+        )
+        chatbot_ids_to_invalidate = [
+            cb["id"] for cb in (org_chatbots_response.data or [])
+        ]
 
         # Deactivate all other chatbots first (only one active at a time)
         supabase.table("chatbots").update(
@@ -506,7 +638,29 @@ async def activate_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_h
         )
 
         if response.data:
-            logger.info("Chatbot activated successfully", extra={"chatbot_id": chatbot_id})
+            # Invalidate cache for all affected chatbots
+            if cache_service:
+                for cb_id in chatbot_ids_to_invalidate:
+                    try:
+                        cache_key = f"chatbot_config:{cb_id}"
+                        await cache_service.delete(cache_key)
+                    except Exception as cache_error:
+                        logger.warning(
+                            "Failed to invalidate chatbot cache",
+                            extra={"error": str(cache_error), "chatbot_id": cb_id},
+                        )
+
+                logger.info(
+                    "Chatbot cache invalidated after activation",
+                    extra={
+                        "chatbot_id": chatbot_id,
+                        "invalidated_count": len(chatbot_ids_to_invalidate),
+                    },
+                )
+
+            logger.info(
+                "Chatbot activated successfully", extra={"chatbot_id": chatbot_id}
+            )
             return {"success": True, "message": "Chatbot activated successfully"}
         else:
             raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
@@ -517,7 +671,7 @@ async def activate_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_h
         logger.error(
             "Failed to activate chatbot",
             extra={"error": str(e), "chatbot_id": chatbot_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to activate chatbot: {str(e)}"
@@ -555,7 +709,11 @@ async def chat_conversation(
 
         logger.info(
             "Processing chat request",
-            extra={"org_id": org_id, "message_preview": request.message[:50], "chatbot_id": request.chatbot_id}
+            extra={
+                "org_id": org_id,
+                "message_preview": request.message[:50],
+                "chatbot_id": request.chatbot_id,
+            },
         )
 
         # Get chatbot config
@@ -588,7 +746,11 @@ async def chat_conversation(
 
         logger.info(
             "Chat completed successfully",
-            extra={"org_id": org_id, "processing_time_ms": total_time, "chatbot_id": request.chatbot_id}
+            extra={
+                "org_id": org_id,
+                "processing_time_ms": total_time,
+                "chatbot_id": request.chatbot_id,
+            },
         )
 
         # Handle case where conversation_id might be None (fallback response)
@@ -630,7 +792,7 @@ async def chat_conversation(
         logger.error(
             "Chat conversation failed",
             extra={"error": str(e), "processing_time_ms": error_time, "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}") from e
@@ -704,8 +866,8 @@ async def list_conversations(
                 "org_id": org_id,
                 "page": page,
                 "total_pages": total_pages,
-                "page_size": page_size
-            }
+                "page_size": page_size,
+            },
         )
 
         return {
@@ -726,7 +888,7 @@ async def list_conversations(
         logger.error(
             "Failed to list conversations",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to load conversations: {str(e)}"
@@ -754,7 +916,7 @@ async def add_feedback(
         if success:
             logger.info(
                 "Feedback added successfully",
-                extra={"message_id": request.message_id, "rating": request.rating}
+                extra={"message_id": request.message_id, "rating": request.rating},
             )
             return {"success": True, "message": "Feedback recorded successfully"}
         else:
@@ -766,7 +928,7 @@ async def add_feedback(
         logger.error(
             "Failed to add feedback",
             extra={"error": str(e), "message_id": request.message_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to add feedback: {str(e)}"
@@ -796,7 +958,7 @@ async def get_analytics_dashboard(
         logger.error(
             "Failed to get analytics dashboard",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to get analytics: {str(e)}"
@@ -822,7 +984,7 @@ async def get_context_config(user=Depends(verify_jwt_token_from_header)):
         logger.error(
             "Failed to get context config",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to get context configuration: {str(e)}"
@@ -858,7 +1020,7 @@ async def update_context_config(
         logger.error(
             "Failed to update context config",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to update context configuration: {str(e)}"
@@ -887,7 +1049,7 @@ async def get_performance_insights(user=Depends(verify_jwt_token_from_header)):
         logger.error(
             "Database connection error in performance insights",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=503, detail="Service temporarily unavailable"
@@ -896,7 +1058,7 @@ async def get_performance_insights(user=Depends(verify_jwt_token_from_header)):
         logger.error(
             "Data validation error in performance insights",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(status_code=400, detail="Invalid data format") from e
     except HTTPException:
@@ -905,7 +1067,7 @@ async def get_performance_insights(user=Depends(verify_jwt_token_from_header)):
         logger.error(
             "Failed to get performance insights",
             extra={"error": str(e), "org_id": org_id},
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500, detail=f"Failed to get performance insights: {str(e)}"
