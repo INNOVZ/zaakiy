@@ -103,9 +103,9 @@ class ChatService:
         self.context_config = None
 
         # Initialize retrieval config with defaults (will be updated per request)
-        # Optimized for faster responses - reduced from 10 to 5 initial docs
-        self.retrieval_config = {"initial": 5, "rerank": 3, "final": 3}
-        self.max_context_length = 4000
+        # EMERGENCY MODE: Minimal docs for speed
+        self.retrieval_config = {"initial": 3, "rerank": 2, "final": 2}
+        self.max_context_length = 2000  # Reduced for speed
 
         # Initialize modular services
         self._initialize_services()
@@ -186,6 +186,15 @@ class ChatService:
             )
 
         try:
+            # EMERGENCY FAST MODE: Skip vector search for simple queries
+            from .fast_chat_service import FastChatMode
+
+            fast_response = await FastChatMode.get_fast_response(
+                message, self.chatbot_config
+            )
+            if fast_response:
+                logger.info("⚡ Using fast mode - no vector search needed")
+                return fast_response
             # OPTIMIZATION: Parallelize independent operations
             # Load context config and get/create conversation in parallel
             config_task = self._load_context_config()

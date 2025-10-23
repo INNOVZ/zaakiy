@@ -526,12 +526,10 @@ GENERAL INSTRUCTIONS:
             )
             return enhanced[:5]  # Limit to 5 total queries
 
-        # OPTIMIZATION: Skip query enhancement if disabled or no OpenAI client
-        if not hasattr(self.context_config, "enable_query_rewriting"):
-            return enhanced
-
-        if not self.context_config.enable_query_rewriting or not self.openai_client:
-            return enhanced
+        # EMERGENCY MODE: Always skip query enhancement for speed
+        # Saves 500-1000ms per request!
+        logger.info("⚡ EMERGENCY MODE: Skipping query enhancement for speed")
+        return enhanced
 
         # OPTIMIZATION: Skip enhancement for very short queries or no history
         if len(query.strip()) < 10 or not history:
