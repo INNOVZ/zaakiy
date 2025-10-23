@@ -227,9 +227,17 @@ class ChatService:
                 "document_retrieval",
                 {"org_id": self.org_id, "query_count": len(enhanced_queries)},
             ):
-                documents = await self.document_retrieval.retrieve_documents(
-                    queries=enhanced_queries
-                )
+                try:
+                    documents = await self.document_retrieval.retrieve_documents(
+                        queries=enhanced_queries
+                    )
+                except Exception as retrieval_error:
+                    # If retrieval fails, continue with empty documents (fallback mode)
+                    logger.warning(
+                        "Document retrieval failed, continuing without context: %s",
+                        str(retrieval_error),
+                    )
+                    documents = []
 
             # Step 5: Generate response with context (with performance tracking)
             async with performance_monitor.track_operation(

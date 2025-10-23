@@ -118,19 +118,20 @@ class DocumentRetrievalService:
 
         # Execute all query retrievals in parallel with timeout
         try:
-            # Add timeout for document retrieval - max 10 seconds for all queries
+            # Add timeout for document retrieval - increased to 20 seconds for better reliability
             query_results = await asyncio.wait_for(
                 asyncio.gather(
                     *[retrieve_for_query(query) for query in queries],
                     return_exceptions=True,
                 ),
-                timeout=10.0,  # 10 second timeout for all vector searches
+                timeout=20.0,  # 20 second timeout for all vector searches (increased from 10s)
             )
         except asyncio.TimeoutError:
-            logger.error("Document retrieval timed out after 10 seconds")
-            raise DocumentRetrievalError(
-                "Document retrieval timed out - search took too long"
+            logger.warning(
+                "Document retrieval timed out after 20 seconds - returning empty results for fallback"
             )
+            # Return empty list instead of raising error - allows chatbot to respond without context
+            return []
         except Exception as e:
             logger.error("Parallel retrieval failed: %s", e)
             raise DocumentRetrievalError(f"Document retrieval failed: {e}") from e
