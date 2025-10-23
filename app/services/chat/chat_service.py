@@ -103,7 +103,8 @@ class ChatService:
         self.context_config = None
 
         # Initialize retrieval config with defaults (will be updated per request)
-        self.retrieval_config = {"initial": 10, "rerank": 5, "final": 3}
+        # Optimized for faster responses - reduced from 10 to 5 initial docs
+        self.retrieval_config = {"initial": 5, "rerank": 3, "final": 3}
         self.max_context_length = 4000
 
         # Initialize modular services

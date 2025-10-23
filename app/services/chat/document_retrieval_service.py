@@ -36,8 +36,8 @@ class DocumentRetrievalService:
         else:
             self.optimized_vector_search = None
 
-        # Default retrieval config
-        self.retrieval_config = {"initial": 10, "rerank": 5, "final": 3}
+        # Default retrieval config - optimized for speed
+        self.retrieval_config = {"initial": 5, "rerank": 3, "final": 3}
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
@@ -116,11 +116,20 @@ class DocumentRetrievalService:
                         f"Document retrieval failed: {e}"
                     ) from e
 
-        # Execute all query retrievals in parallel
+        # Execute all query retrievals in parallel with timeout
         try:
-            query_results = await asyncio.gather(
-                *[retrieve_for_query(query) for query in queries],
-                return_exceptions=True,
+            # Add timeout for document retrieval - max 10 seconds for all queries
+            query_results = await asyncio.wait_for(
+                asyncio.gather(
+                    *[retrieve_for_query(query) for query in queries],
+                    return_exceptions=True,
+                ),
+                timeout=10.0,  # 10 second timeout for all vector searches
+            )
+        except asyncio.TimeoutError:
+            logger.error("Document retrieval timed out after 10 seconds")
+            raise DocumentRetrievalError(
+                "Document retrieval timed out - search took too long"
             )
         except Exception as e:
             logger.error("Parallel retrieval failed: %s", e)

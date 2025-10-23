@@ -312,14 +312,31 @@ GENERAL INSTRUCTIONS:
                 )  # Changed from 0.7 to 0.1
                 logger.debug("Using temperature=%.1f for general query", temperature)
 
-            response = self.openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                frequency_penalty=0.0,
-                presence_penalty=0.0,
-            )
+            # Add timeout to prevent hanging
+            # OpenAI client is sync, so we run it in executor with timeout
+            def call_openai_api():
+                return self.openai_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    timeout=20.0,  # 20 second timeout for OpenAI call
+                )
+
+            try:
+                # Run sync OpenAI call in executor with timeout
+                loop = asyncio.get_event_loop()
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(None, call_openai_api),
+                    timeout=25.0,  # 25 second overall timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error("OpenAI API call timed out after 25 seconds")
+                raise ResponseGenerationError(
+                    "Response generation timed out - please try again"
+                )
 
             # Extract actual token usage from OpenAI response
             actual_tokens = response.usage.total_tokens if response.usage else 0
