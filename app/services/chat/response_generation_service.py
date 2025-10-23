@@ -249,35 +249,44 @@ GENERAL INSTRUCTIONS:
 - Refer to yourself as {self.chatbot_config.get('name', 'Assistant')}
 - If unsure or information seems incomplete, acknowledge the uncertainty rather than guessing
 
-FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW):
+FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
-1. **CONTACT INFORMATION MUST USE THIS EXACT FORMAT:**
+⚠️ NEVER USE EMOJIS BEFORE CONTACT INFO! ⚠️
+❌ WRONG: "📞 Phone: 123" or "📧 Email: x@y.com"
+✅ CORRECT: "**Phone**: [123](tel:123)" and "**Email**: [x@y.com](mailto:x@y.com)"
+
+1. **CONTACT INFORMATION - EXACT FORMAT REQUIRED:**
+
    **Phone**: [number](tel:number)
    **Email**: [email](mailto:email)
-   **Location**: address
+   **Location**: *address*
 
-   Example: **Phone**: [0503789198](tel:0503789198)
-   Example: **Email**: [support@email.com](mailto:support@email.com)
+   ✅ CORRECT Example:
+   You can reach us through:
 
-2. **PRODUCT INFORMATION MUST USE THIS EXACT FORMAT:**
+   **Phone**: [0503789198](tel:0503789198)
+   **Email**: [support@email.com](mailto:support@email.com)
+   **Location**: *Dubai Production City, IMPZ, Dubai, UAE*
+
+2. **PRODUCT INFORMATION - EXACT FORMAT:**
    **[Product Name](URL)** - *Description* - **Price**: ₹Amount
 
    Example: **[Solar Panel 500W](https://example.com/solar)** - *High efficiency monocrystalline panel* - **Price**: ₹25,000
 
 3. **TEXT FORMATTING:**
-   - Use **bold** for: labels, product names, prices, key terms
-   - Use *italics* for: descriptions, emphasis, supporting details
+   - Use **bold** for: labels (Phone, Email, Location), product names, prices, key terms
+   - Use *italics* for: descriptions, locations, emphasis
    - Use bullet points: Start lists with "- " (dash and space)
 
-4. **LINKS:**
-   - NEVER show raw URLs
-   - Always use: [descriptive text](URL)
-   - Phone links: [number](tel:cleanednumber)
-   - Email links: [email](mailto:email)
+4. **LINE BREAKS ARE MANDATORY:**
+   - Each contact detail MUST be on a new line
+   - Add blank line before contact section
+   - NEVER run contact details together on one line
 
-5. **LINE BREAKS:**
-   - Use single line break between items
-   - Use double line break between sections
+5. **FORBIDDEN:**
+   - ❌ NO emojis before labels (📞 📧 📍)
+   - ❌ NO raw URLs
+   - ❌ NO running contact details together
 
 """
             return base_prompt + "\n\n" + context_section
@@ -420,43 +429,53 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW):
 
         # Fix phone number formatting
         # Pattern: Find "Phone: 1234567890" or "📞 Phone: 1234567890" and convert to markdown
-        phone_pattern = r"(?:📞\s*)?(?:Phone|phone|PHONE):\s*(\+?[\d\s\-\(\)]+)"
+        # More flexible pattern to catch variations
+        phone_pattern = r"(?:📞\s*)?(?:Phone|phone|PHONE):\s*(\+?[\d\s\-\(\)]+?)(?=\s*(?:📧|Email|email|EMAIL|📍|Location|location|LOCATION|$|\n))"
 
         def format_phone(match):
             number = match.group(1).strip()
             # Clean number for tel: link (remove spaces and dashes)
             clean_number = re.sub(r"[\s\-\(\)]", "", number)
-            return f"**Phone**: [{number}](tel:{clean_number})"
+            return f"\n**Phone**: [{number}](tel:{clean_number})"
 
         response = re.sub(phone_pattern, format_phone, response)
 
         # Fix email formatting
         # Pattern: Find "Email: email@example.com" or "📧 Email: email@example.com" and convert to markdown
-        email_pattern = r"(?:📧\s*)?(?:Email|email|EMAIL):\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"
+        email_pattern = r"(?:📧\s*)?(?:Email|email|EMAIL):\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?=\s*(?:📍|Location|location|LOCATION|$|\n))"
 
         def format_email(match):
             email = match.group(1).strip()
-            return f"**Email**: [{email}](mailto:{email})"
+            return f"\n**Email**: [{email}](mailto:{email})"
 
         response = re.sub(email_pattern, format_email, response)
 
         # Fix location formatting
         # Pattern: Find "Location: address" or "📍 Location: address" and convert to markdown
-        location_pattern = r"(?:📍\s*)?(?:Location|location|LOCATION):\s*([^\n]+)"
+        # Capture until we hit a sentence ending or emoji
+        location_pattern = r"(?:📍\s*)?(?:Location|location|LOCATION):\s*([^\.!?\n]+?)(?=(?:Feel|feel|Thank|thank|$|\n|\.))"
 
         def format_location(match):
             location = match.group(1).strip()
-            return f"**Location**: *{location}*"
+            return f"\n**Location**: *{location}*\n"
 
         response = re.sub(location_pattern, format_location, response)
 
-        # Add line breaks before contact details if missing
-        # This ensures Phone, Email, Location are on separate lines
-        response = re.sub(r"(\*\*(?:Phone|Email|Location)\*\*)", r"\n\1", response)
-        response = response.strip()  # Remove leading newline
+        # Add blank line after common intro phrases before contact details
+        response = re.sub(
+            r"((?:contact details?|reach (?:me|us)|get in touch):\s*)(\n\*\*(?:Phone|Email))",
+            r"\1\n\2",
+            response,
+            flags=re.IGNORECASE,
+        )
 
-        # Ensure there's spacing after colons in contact details
-        response = re.sub(r"(\*\*(?:Phone|Email|Location)\*\*):", r"\1: ", response)
+        # Clean up multiple consecutive newlines
+        response = re.sub(r"\n{3,}", "\n\n", response)
+
+        # Remove emojis that are left over (already converted to markdown)
+        response = re.sub(r"[📞📧📍]\s*", "", response)
+
+        response = response.strip()
 
         return response
 
