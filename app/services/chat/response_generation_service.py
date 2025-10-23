@@ -222,21 +222,24 @@ CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 - If contact info is NOT in context, say "I don't have contact information available"
 
 EXAMPLES OF CORRECT BEHAVIOR:
-✅ Context has: "Call us at +91 75 94 94 94 06"
-   Response: "You can reach us at +91 75 94 94 94 06 📞"
 
-❌ WRONG - Context has: "Call us at +91 75 94 94 94 06"
-   Response: "Call us at +91 9876543210" (NEVER make up numbers!)
+✅ CONTACT INFO - Context has: "Call us at +91 75 94 94 94 06, email: support@company.com"
+   Response: "**Phone**: [+91 75 94 94 94 06](tel:+917594949406)
+**Email**: [support@company.com](mailto:support@company.com)"
 
-✅ Context has: "Solar panels cost ₹50,000"
-   Response: "Solar panels cost ₹50,000"
+❌ WRONG - Context has phone/email
+   Response: "📞 Phone: +91 75 94 94 94 06 📧 Email: support@company.com" (Missing markdown!)
 
-❌ WRONG - Context has: "Solar panels cost ₹50,000"
+✅ PRODUCT INFO - Context has: "Solar Panel 500W costs ₹50,000"
+   Response: "**[Solar Panel 500W](product-url)** - *High efficiency panel* - **Price**: ₹50,000"
+
+❌ WRONG - Context has product
    Response: "Solar panels cost around ₹40,000-60,000" (Don't modify prices!)
 
 GENERAL INSTRUCTIONS:
 - ONLY provide information that exists in the context above
-- Use emojis sparingly to enhance readability and engagement and only when appropriate
+- Use appropriate emojis while chatting with the user and give the response in the same language as the user's question
+- Know the customer emotion and respond accordingly
 - If information is NOT in context, respond: "I don't have that specific information in my knowledge base"
 - Be precise and factual - accuracy is MORE important than sounding friendly
 - Cite exact facts, numbers, prices, and details from the context without modification
@@ -246,16 +249,35 @@ GENERAL INSTRUCTIONS:
 - Refer to yourself as {self.chatbot_config.get('name', 'Assistant')}
 - If unsure or information seems incomplete, acknowledge the uncertainty rather than guessing
 
-FORMATTING REQUIREMENTS (CRITICAL):
-- ALWAYS use **bold** for important terms, product names, prices, and key information
-- ALWAYS use *italics* for emphasis, descriptions, and supporting details
-- Format lists with bullet points (- ) when listing multiple items
-- ALWAYS include clickable links for products: **[Product Name](URL)** - *Description*
-- For contact info: **Phone**: [+1234567890](tel:+1234567890) | **Email**: [email@example.com](mailto:email@example.com)
-- For URLs from context, ALWAYS format as: [descriptive text](URL) - never show raw URLs
-- Product listings format: **[Product Name](URL)** - *Brief description* - **Price**: ₹X,XXX
-- When user asks about products, ALWAYS include links if available in context
-- Highlight key information with **bold** to make responses scannable
+FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW):
+
+1. **CONTACT INFORMATION MUST USE THIS EXACT FORMAT:**
+   **Phone**: [number](tel:number)
+   **Email**: [email](mailto:email)
+   **Location**: address
+
+   Example: **Phone**: [0503789198](tel:0503789198)
+   Example: **Email**: [support@email.com](mailto:support@email.com)
+
+2. **PRODUCT INFORMATION MUST USE THIS EXACT FORMAT:**
+   **[Product Name](URL)** - *Description* - **Price**: ₹Amount
+
+   Example: **[Solar Panel 500W](https://example.com/solar)** - *High efficiency monocrystalline panel* - **Price**: ₹25,000
+
+3. **TEXT FORMATTING:**
+   - Use **bold** for: labels, product names, prices, key terms
+   - Use *italics* for: descriptions, emphasis, supporting details
+   - Use bullet points: Start lists with "- " (dash and space)
+
+4. **LINKS:**
+   - NEVER show raw URLs
+   - Always use: [descriptive text](URL)
+   - Phone links: [number](tel:cleanednumber)
+   - Email links: [email](mailto:email)
+
+5. **LINE BREAKS:**
+   - Use single line break between items
+   - Use double line break between sections
 
 """
             return base_prompt + "\n\n" + context_section
@@ -374,8 +396,11 @@ FORMATTING REQUIREMENTS (CRITICAL):
             response_text, context_data.get("context_text", "")
         )
 
+        # Post-process to ensure proper markdown formatting
+        formatted_response = self._ensure_markdown_formatting(validated_response)
+
         return {
-            "response": validated_response,
+            "response": formatted_response,
             "sources": context_data.get("sources", []),
             "context_used": context_data.get("context_text", ""),
             "context_quality": context_data.get("context_quality", {}),
@@ -389,6 +414,51 @@ FORMATTING REQUIREMENTS (CRITICAL):
                 "message_count": 1,  # Current message
             },
         }
+
+    def _ensure_markdown_formatting(self, response: str) -> str:
+        """Post-process response to ensure proper markdown formatting"""
+
+        # Fix phone number formatting
+        # Pattern: Find "Phone: 1234567890" or "📞 Phone: 1234567890" and convert to markdown
+        phone_pattern = r"(?:📞\s*)?(?:Phone|phone|PHONE):\s*(\+?[\d\s\-\(\)]+)"
+
+        def format_phone(match):
+            number = match.group(1).strip()
+            # Clean number for tel: link (remove spaces and dashes)
+            clean_number = re.sub(r"[\s\-\(\)]", "", number)
+            return f"**Phone**: [{number}](tel:{clean_number})"
+
+        response = re.sub(phone_pattern, format_phone, response)
+
+        # Fix email formatting
+        # Pattern: Find "Email: email@example.com" or "📧 Email: email@example.com" and convert to markdown
+        email_pattern = r"(?:📧\s*)?(?:Email|email|EMAIL):\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"
+
+        def format_email(match):
+            email = match.group(1).strip()
+            return f"**Email**: [{email}](mailto:{email})"
+
+        response = re.sub(email_pattern, format_email, response)
+
+        # Fix location formatting
+        # Pattern: Find "Location: address" or "📍 Location: address" and convert to markdown
+        location_pattern = r"(?:📍\s*)?(?:Location|location|LOCATION):\s*([^\n]+)"
+
+        def format_location(match):
+            location = match.group(1).strip()
+            return f"**Location**: *{location}*"
+
+        response = re.sub(location_pattern, format_location, response)
+
+        # Add line breaks before contact details if missing
+        # This ensures Phone, Email, Location are on separate lines
+        response = re.sub(r"(\*\*(?:Phone|Email|Location)\*\*)", r"\n\1", response)
+        response = response.strip()  # Remove leading newline
+
+        # Ensure there's spacing after colons in contact details
+        response = re.sub(r"(\*\*(?:Phone|Email|Location)\*\*):", r"\1: ", response)
+
+        return response
 
     def _validate_contact_info(self, response: str, context: str) -> str:
         """Validate that factual information in response exists in context - prevents hallucinations"""
