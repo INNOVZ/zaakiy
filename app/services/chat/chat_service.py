@@ -66,8 +66,6 @@ class ChatService:
         try:
             import os
 
-            import openai
-
             from ..storage.pinecone_client import get_pinecone_index
             from ..storage.supabase_client import get_supabase_client
 

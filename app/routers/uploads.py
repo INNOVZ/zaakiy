@@ -2,8 +2,9 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from ..models import SearchRequest, UpdateRequest, URLIngestRequest
@@ -283,11 +284,11 @@ async def upload_image(
 ):
     """
     Upload an image file to Supabase storage for chatbot avatars.
-    
+
     Args:
         file (UploadFile): The image file to be uploaded.
         user: The authenticated user, verified via JWT token.
-        
+
     Returns:
         dict: A dictionary containing the file URL and success message.
     """
@@ -317,7 +318,7 @@ async def upload_image(
 
         # Get file extension
         file_extension = Path(file.filename).suffix.lower()
-        
+
         # Generate unique file path
         file_id = str(uuid.uuid4())
         supabase_path = f"org-{org_id}/avatars/{file_id}{file_extension}"
@@ -346,58 +347,149 @@ async def upload_image(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.options("/avatar/{file_id}")
+async def avatar_options(file_id: str):
+    """Handle CORS preflight requests for avatar endpoint"""
+    return Response(
+        content="",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "86400",
+        },
+    )
+
+
 @router.get("/avatar/{file_id}")
-async def get_avatar_image(file_id: str):
+async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
     """
     Serve avatar images from Supabase storage.
-    
-    NOTE: This endpoint is deprecated. Avatars should use direct Supabase public URLs
-    or the /avatar/legacy/{file_path} endpoint with the full path.
+    Searches across all org directories to find the avatar file.
+
+    Args:
+        file_id: The avatar file ID (with or without extension)
+        org_id: Optional organization ID to speed up lookup
     """
     try:
-        logger.warning(f"Deprecated /avatar/{file_id} endpoint called. Use full path or public URLs instead.")
-        
-        # Try common avatar paths (much more efficient than listing all files)
-        common_paths = [
-            f"avatars/{file_id}",
-            f"avatars/{file_id}.png",
-            f"avatars/{file_id}.jpg",
-            f"avatars/{file_id}.jpeg",
-        ]
-        
-        file_content = None
-        content_type = "image/png"
-        
-        for path in common_paths:
-            try:
-                file_content = supabase.storage.from_("uploads").download(path)
-                if file_content:
-                    # Determine content type
-                    if path.endswith(('.jpg', '.jpeg')):
-                        content_type = "image/jpeg"
-                    elif path.endswith('.gif'):
-                        content_type = "image/gif"
-                    elif path.endswith('.webp'):
-                        content_type = "image/webp"
-                    break
-            except Exception:
-                continue
-        
-        if not file_content:
-            logger.warning(f"Avatar not found: {file_id}")
-            # Return a placeholder or 404
+        logger.info(f"Fetching avatar image: {file_id}, org_id: {org_id}")
+
+        # Try to list all files in uploads bucket to find the avatar
+        # This handles the org-{org_id}/avatars/{file_id} structure
+        try:
+            file_content = None
+            content_type = "image/png"
+            found_path = None
+
+            # If org_id provided, try direct path first (faster)
+            if org_id:
+                org_paths = [
+                    f"org-{org_id}/avatars/{file_id}",
+                    f"org-{org_id}/avatars/{file_id}.png",
+                    f"org-{org_id}/avatars/{file_id}.jpg",
+                    f"org-{org_id}/avatars/{file_id}.jpeg",
+                    f"org-{org_id}/avatars/{file_id}.gif",
+                    f"org-{org_id}/avatars/{file_id}.webp",
+                ]
+
+                for path in org_paths:
+                    try:
+                        test_content = supabase.storage.from_("uploads").download(path)
+                        if test_content:
+                            found_path = path
+                            logger.info(f"Found avatar at org path: {found_path}")
+                            break
+                    except Exception:
+                        continue
+
+            # If not found with org_id or no org_id provided, search all orgs
+            if not found_path:
+                # List all files in the uploads bucket
+                all_files = supabase.storage.from_("uploads").list()
+
+                # First, try to find in org directories
+                for folder in all_files:
+                    if folder.get("name", "").startswith("org-"):
+                        org_folder = folder["name"]
+                        try:
+                            # List avatars folder in this org
+                            avatar_files = supabase.storage.from_("uploads").list(
+                                f"{org_folder}/avatars"
+                            )
+
+                            # Check if our file exists
+                            for avatar_file in avatar_files:
+                                file_name = avatar_file.get("name", "")
+                                if file_name.startswith(
+                                    file_id.split(".")[0]
+                                ):  # Match file_id without extension
+                                    found_path = f"{org_folder}/avatars/{file_name}"
+                                    logger.info(f"Found avatar at: {found_path}")
+                                    break
+
+                            if found_path:
+                                break
+                        except Exception as e:
+                            logger.debug(f"Error checking {org_folder}/avatars: {e}")
+                            continue
+
+            # If still not found, try legacy paths
+            if not found_path:
+                legacy_paths = [
+                    f"avatars/{file_id}",
+                    f"avatars/{file_id}.png",
+                    f"avatars/{file_id}.jpg",
+                    f"avatars/{file_id}.jpeg",
+                    f"avatars/{file_id}.gif",
+                    f"avatars/{file_id}.webp",
+                ]
+
+                for path in legacy_paths:
+                    try:
+                        test_content = supabase.storage.from_("uploads").download(path)
+                        if test_content:
+                            found_path = path
+                            logger.info(f"Found avatar at legacy path: {found_path}")
+                            break
+                    except Exception:
+                        continue
+
+            # Download the file if found
+            if found_path:
+                file_content = supabase.storage.from_("uploads").download(found_path)
+
+                # Determine content type from file extension
+                if found_path.endswith((".jpg", ".jpeg")):
+                    content_type = "image/jpeg"
+                elif found_path.endswith(".gif"):
+                    content_type = "image/gif"
+                elif found_path.endswith(".webp"):
+                    content_type = "image/webp"
+                elif found_path.endswith(".png"):
+                    content_type = "image/png"
+
+            if not file_content:
+                logger.warning(f"Avatar not found: {file_id}")
+                raise HTTPException(status_code=404, detail="Avatar image not found")
+
+            # Return the image with proper CORS headers
+            return Response(
+                content=file_content,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000",  # 1 year cache
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error searching for avatar {file_id}: {e}", exc_info=True)
             raise HTTPException(status_code=404, detail="Avatar image not found")
-        
-        # Return the image with proper headers
-        return Response(
-            content=file_content,
-            media_type=content_type,
-            headers={
-                "Cache-Control": "public, max-age=31536000",  # 1 year cache
-                "Access-Control-Allow-Origin": "*",
-            }
-        )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -424,19 +516,19 @@ async def get_legacy_avatar_image(file_path: str):
         else:
             # Assume it's already the correct path
             supabase_path = file_path
-        
+
         # Get the file content from Supabase Storage
         file_content = supabase.storage.from_("uploads").download(supabase_path)
-        
+
         # Determine content type from file extension
         content_type = "image/png"  # default
-        if supabase_path.endswith(('.jpg', '.jpeg')):
+        if supabase_path.endswith((".jpg", ".jpeg")):
             content_type = "image/jpeg"
-        elif supabase_path.endswith('.gif'):
+        elif supabase_path.endswith(".gif"):
             content_type = "image/gif"
-        elif supabase_path.endswith('.webp'):
+        elif supabase_path.endswith(".webp"):
             content_type = "image/webp"
-        
+
         # Return the image with proper headers
         return Response(
             content=file_content,
@@ -444,12 +536,14 @@ async def get_legacy_avatar_image(file_path: str):
             headers={
                 "Cache-Control": "public, max-age=31536000",  # 1 year cache
                 "Access-Control-Allow-Origin": "*",
-            }
+            },
         )
-        
+
     except Exception as e:
         logger.error(f"Error serving legacy avatar image {file_path}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to serve legacy avatar image")
+        raise HTTPException(
+            status_code=500, detail="Failed to serve legacy avatar image"
+        )
 
 
 @router.post("/json")

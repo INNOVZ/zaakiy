@@ -83,6 +83,7 @@ class SmartCORSMiddleware(BaseHTTPMiddleware):
         """
         public_paths = [
             "/api/public/",  # All public API endpoints
+            "/api/uploads/avatar/",  # Avatar images for chatbot widgets
             "/health",  # Health check
             "/docs",  # API documentation
             "/openapi.json",  # OpenAPI schema
