@@ -67,18 +67,11 @@ class PlaywrightWebScraper:
             # Wait a bit for any lazy-loaded content
             await page.wait_for_timeout(2000)
 
-            # Extract all text content
-            text_content = await page.evaluate("() => document.body.innerText")
+            # HYBRID APPROACH: Get rendered HTML and pass to BeautifulSoup for structured parsing
+            html_content = await page.content()
 
-            # Extract contact information (phone, email) before cleaning
-            contact_info = await self._extract_contact_information(page)
-
-            # Clean and combine
-            cleaned_text = self._clean_text(text_content)
-
-            # Prepend contact info if found
-            if contact_info:
-                cleaned_text = contact_info + "\n\n" + cleaned_text
+            # Use BeautifulSoup for intelligent parsing and extraction
+            cleaned_text = self._extract_and_clean_text(html_content)
 
             logger.info(
                 f"✅ Successfully scraped {len(cleaned_text)} characters from {url}"
@@ -93,69 +86,109 @@ class PlaywrightWebScraper:
             if page:
                 await page.close()
 
-    async def _extract_contact_information(self, page: Page) -> str:
-        """Extract contact information (phone, email, address) from the page"""
-        try:
-            # Get the full HTML content
-            html_content = await page.content()
-            soup = BeautifulSoup(html_content, "html.parser")
+    def _extract_and_clean_text(self, html_content: str) -> str:
+        """
+        Extract and clean text from rendered HTML using BeautifulSoup.
 
-            contact_parts = []
-            all_text = soup.get_text()
+        HYBRID APPROACH:
+        1. Playwright renders JavaScript → Full HTML
+        2. BeautifulSoup parses HTML → Structured extraction
+        3. Remove unwanted elements (nav, footer, ads, scripts)
+        4. Extract contact information intelligently
+        5. Return clean, structured text
+        """
+        soup = BeautifulSoup(html_content, "html.parser")
 
-            # Extract phone numbers
-            phone_patterns = [
-                r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}",
-                r"\+\d{1,3}\s?\d{1,14}",
-                r"\(\d{3}\)\s?\d{3}[-.\s]?\d{4}",
-                r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}",
-                r"\d{10,}",  # 10+ digits
-            ]
+        # FIRST: Extract contact information from headers/footers before removing them
+        contact_info = self._extract_contact_information(soup)
 
-            phone_numbers = set()
-            for pattern in phone_patterns:
-                matches = re.findall(pattern, all_text)
-                for match in matches:
-                    cleaned_match = match.strip()
-                    # Only include if it has at least 10 digits
-                    if len(re.sub(r"\D", "", cleaned_match)) >= 10:
-                        phone_numbers.add(cleaned_match)
+        # Remove unwanted elements (but we already saved contact info)
+        for element in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            element.decompose()
 
-            if phone_numbers:
-                contact_parts.append(
-                    "📞 Contact Numbers: " + ", ".join(sorted(phone_numbers))
-                )
+        # Extract text
+        text = soup.get_text()
 
-            # Extract email addresses
-            email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-            emails = set(re.findall(email_pattern, all_text))
+        # Clean text - remove extra whitespace and normalize
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        cleaned_text = " ".join(chunk for chunk in chunks if chunk)
 
-            if emails:
-                contact_parts.append("📧 Email Addresses: " + ", ".join(sorted(emails)))
+        # Prepend contact information to ensure it's included in the indexed content
+        if contact_info:
+            cleaned_text = contact_info + "\n\n" + cleaned_text
 
-            return "\n".join(contact_parts) if contact_parts else ""
+        return cleaned_text.strip()
 
-        except Exception as e:
-            logger.warning(f"Failed to extract contact information: {e}")
-            return ""
+    def _extract_contact_information(self, soup: BeautifulSoup) -> str:
+        """
+        Extract contact information (phone, email, address) from BeautifulSoup object.
 
-    def _clean_text(self, text: str) -> str:
-        """Clean extracted text"""
-        if not text:
-            return ""
+        This extracts from the entire page including header/footer before they're removed.
+        """
+        contact_parts = []
 
-        # Split into lines and clean each
-        lines = text.split("\n")
-        cleaned_lines = []
+        # Find all text in the page (including header, footer, etc.)
+        all_text = soup.get_text()
 
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines and very short lines
-            if len(line) > 1:
-                cleaned_lines.append(line)
+        # Extract phone numbers using various international formats
+        phone_patterns = [
+            r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}",  # International
+            r"\+\d{1,3}\s?\d{1,14}",  # Simple international format
+            r"\(\d{3}\)\s?\d{3}[-.\s]?\d{4}",  # US format with parentheses
+            r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}",  # US format
+            r"\d{4}[-.\s]?\d{6,7}",  # Some Asian formats
+        ]
 
-        # Join with single newlines
-        return "\n".join(cleaned_lines)
+        phone_numbers = set()
+        for pattern in phone_patterns:
+            matches = re.findall(pattern, all_text)
+            for match in matches:
+                # Clean up the match and validate it looks like a real phone number
+                cleaned_match = match.strip()
+                # Filter out numbers that are likely dates or other non-phone numbers
+                if len(re.sub(r"\D", "", cleaned_match)) >= 10:  # At least 10 digits
+                    phone_numbers.add(cleaned_match)
+
+        if phone_numbers:
+            contact_parts.append(
+                "📞 Contact Numbers: " + ", ".join(sorted(phone_numbers))
+            )
+
+        # Extract email addresses
+        email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
+        emails = set(re.findall(email_pattern, all_text))
+
+        if emails:
+            contact_parts.append("📧 Email Addresses: " + ", ".join(sorted(emails)))
+
+        # Look for common contact-related elements
+        contact_keywords = ["contact", "phone", "email", "address", "call", "reach"]
+
+        # Search for elements with contact-related classes or IDs
+        for keyword in contact_keywords:
+            elements = soup.find_all(
+                ["div", "span", "p", "a"], class_=re.compile(keyword, re.IGNORECASE)
+            )
+            elements += soup.find_all(
+                ["div", "span", "p", "a"], id=re.compile(keyword, re.IGNORECASE)
+            )
+
+            for elem in elements[:3]:  # Limit to avoid too much noise
+                elem_text = elem.get_text(strip=True)
+                if elem_text and len(elem_text) < 200:  # Not too long
+                    # Check if it contains useful contact info we haven't already captured
+                    if any(phone in elem_text for phone in phone_numbers) or any(
+                        email in elem_text for email in emails
+                    ):
+                        continue  # Already captured
+
+                    # Check if it looks like contact information
+                    if re.search(r"\d{3,}", elem_text) or "@" in elem_text:
+                        if elem_text not in str(contact_parts):  # Avoid duplicates
+                            contact_parts.append(elem_text)
+
+        return "\n".join(contact_parts) if contact_parts else ""
 
 
 async def scrape_url_with_playwright(url: str) -> str:

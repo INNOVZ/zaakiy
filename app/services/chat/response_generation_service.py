@@ -4,6 +4,7 @@ Handles AI response generation and context engineering
 """
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -218,7 +219,6 @@ CONTEXT INFORMATION:
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 - Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character
-- If you see "+91 75 94 94 94 06" in context, use EXACTLY that - NOT "+91 9876543210" or any variation
 - If contact info is NOT in context, say "I don't have contact information available"
 
 EXAMPLES OF CORRECT BEHAVIOR:
@@ -236,6 +236,7 @@ EXAMPLES OF CORRECT BEHAVIOR:
 
 GENERAL INSTRUCTIONS:
 - ONLY provide information that exists in the context above
+- Use emojis sparingly to enhance readability and engagement and only when appropriate
 - If information is NOT in context, respond: "I don't have that specific information in my knowledge base"
 - Be precise and factual - accuracy is MORE important than sounding friendly
 - Cite exact facts, numbers, prices, and details from the context without modification
@@ -367,7 +368,6 @@ GENERAL INSTRUCTIONS:
 
     def _validate_contact_info(self, response: str, context: str) -> str:
         """Validate that factual information in response exists in context - prevents hallucinations"""
-        import re
 
         # 1. VALIDATE PHONE NUMBERS
         phone_pattern = (

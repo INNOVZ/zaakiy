@@ -45,7 +45,7 @@ langchain-core>=0.3.0
 langchain-openai>=0.2.0
 langchain-community>=0.3.0
 langsmith>=0.1.0
-
+langchain-text-splitters
 # Data validation and serialization
 pydantic>=2.0.0
 

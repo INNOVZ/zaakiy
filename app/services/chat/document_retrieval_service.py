@@ -120,7 +120,7 @@ class DocumentRetrievalService:
         try:
             query_results = await asyncio.gather(
                 *[retrieve_for_query(query) for query in queries],
-                return_exceptions=True
+                return_exceptions=True,
             )
         except Exception as e:
             logger.error("Parallel retrieval failed: %s", e)
@@ -131,16 +131,13 @@ class DocumentRetrievalService:
             if isinstance(result, Exception):
                 logger.error("Query retrieval error: %s", result)
                 continue
-            
+
             if not result:
                 continue
-                
+
             for doc in result:
                 doc_id = doc["id"]
-                if (
-                    doc_id not in all_docs
-                    or doc["score"] > all_docs[doc_id]["score"]
-                ):
+                if doc_id not in all_docs or doc["score"] > all_docs[doc_id]["score"]:
                     all_docs[doc_id] = doc
 
         # Return top documents sorted by score
@@ -532,7 +529,7 @@ class DocumentRetrievalService:
         """Get cached retrieval results"""
         if not cache_service:
             return None
-            
+
         try:
             cached_data = await cache_service.get(cache_key)
             if cached_data:
@@ -549,7 +546,7 @@ class DocumentRetrievalService:
         """Cache retrieval results asynchronously"""
         if not cache_service:
             return
-            
+
         try:
             # Cache for 30 minutes (1800 seconds)
             await cache_service.set(cache_key, results, 1800)

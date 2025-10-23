@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 import openai
 
 from app.services.analytics.context_config import context_config_manager
-from app.services.shared import get_client_manager
 from app.utils.error_monitoring import error_monitor
 from app.utils.performance_monitor import performance_monitor
 

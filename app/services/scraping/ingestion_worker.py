@@ -9,8 +9,8 @@ import os
 import openai
 import orjson
 import requests
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from PyPDF2 import PdfReader
 
 from ..storage.pinecone_client import get_pinecone_index
@@ -150,7 +150,10 @@ def extract_text_from_pdf_url(url: str) -> str:
 
                 pdf_buffer.write(chunk)
 
-        print(f"[Info] Successfully downloaded PDF: {total_bytes} bytes")
+        logger.info(
+            "Successfully downloaded PDF",
+            extra={"bytes": total_bytes, "size_mb": total_bytes / (1024 * 1024)},
+        )
 
         if total_bytes == 0:
             raise ValueError("Downloaded file is empty")
@@ -163,21 +166,27 @@ def extract_text_from_pdf_url(url: str) -> str:
         pdf_buffer.seek(0)  # Reset position
 
         if not first_bytes.startswith(b"%PDF"):
-            print(
-                f"[Warning] File doesn't appear to be a PDF. Content type: {response.headers.get('content-type')}"
+            logger.warning(
+                "File doesn't appear to be a PDF",
+                extra={
+                    "content_type": response.headers.get("content-type"),
+                    "first_bytes": first_bytes.hex() if first_bytes else None,
+                },
             )
-            print(f"[Warning] First bytes: {first_bytes}")
             raise ValueError("File is not a valid PDF")
 
         # Process PDF with explicit memory management
         pdf_reader = PdfReader(pdf_buffer)
         total_pages = len(pdf_reader.pages)
-        print(f"[Info] PDF has {total_pages} pages")
+        logger.info("PDF loaded successfully", extra={"total_pages": total_pages})
 
         # Limit number of pages to prevent memory exhaustion
         max_pages = 1000
         if total_pages > max_pages:
-            print(f"[Warning] PDF has {total_pages} pages, limiting to {max_pages}")
+            logger.warning(
+                "PDF has too many pages, limiting extraction",
+                extra={"total_pages": total_pages, "max_pages": max_pages},
+            )
             total_pages = max_pages
 
         # Use a list to collect text chunks, then join once (more memory efficient)
@@ -194,27 +203,39 @@ def extract_text_from_pdf_url(url: str) -> str:
 
                     # Log progress for large PDFs
                     if total_pages > 50 and (i + 1) % 10 == 0:
-                        print(f"[Info] Processed {i+1}/{total_pages} pages...")
+                        logger.info(
+                            "PDF extraction progress",
+                            extra={"processed": i + 1, "total": total_pages},
+                        )
                     elif total_pages <= 50:
-                        print(
-                            f"[Info] Extracted text from page {i+1}: {len(page_text)} chars"
+                        logger.debug(
+                            "Extracted text from PDF page",
+                            extra={"page": i + 1, "chars": len(page_text)},
                         )
                 else:
-                    print(f"[Warning] No text found on page {i+1}")
+                    logger.debug("No text found on PDF page", extra={"page": i + 1})
 
                 # Clear page reference to help garbage collection
                 del page
                 del page_text
 
             except Exception as page_error:
-                print(f"[Warning] Error extracting text from page {i+1}: {page_error}")
+                logger.warning(
+                    "Error extracting text from PDF page",
+                    extra={"page": i + 1, "error": str(page_error)},
+                )
                 continue
 
         # Join all text chunks
         text = "\n".join(text_chunks)
 
-        print(
-            f"[Info] Total text extracted: {len(text)} characters from {pages_with_text}/{total_pages} pages"
+        logger.info(
+            "PDF text extraction complete",
+            extra={
+                "total_chars": len(text),
+                "pages_with_text": pages_with_text,
+                "total_pages": total_pages,
+            },
         )
 
         if len(text.strip()) < 10:
@@ -225,17 +246,28 @@ def extract_text_from_pdf_url(url: str) -> str:
         return text.strip()
 
     except requests.RequestException as e:
-        print(
-            f"[Error] HTTP error while fetching PDF from {log_domain_safely(url)}: {e}"
+        logger.error(
+            "HTTP error while fetching PDF",
+            extra={"domain": log_domain_safely(url), "error": str(e)},
+            exc_info=True,
         )
         if hasattr(e, "response") and e.response is not None:
-            print(f"[Error] Response status: {e.response.status_code}")
             safe_headers = get_safe_headers_for_logging(dict(e.response.headers))
-            print(f"[Error] Response headers: {safe_headers}")
-            print(f"[Error] Response content: {e.response.text[:500]}")
+            logger.error(
+                "PDF download response details",
+                extra={
+                    "status_code": e.response.status_code,
+                    "headers": safe_headers,
+                    "content_preview": e.response.text[:500],
+                },
+            )
         raise ValueError(f"Failed to download PDF: {str(e)}") from e
     except Exception as e:
-        print(f"[Error] PDF processing error: {e}")
+        logger.error(
+            "PDF processing error",
+            extra={"error": str(e), "error_type": type(e).__name__},
+            exc_info=True,
+        )
         raise ValueError(f"PDF processing failed: {str(e)}") from e
     finally:
         # Comprehensive cleanup to prevent memory leaks
@@ -252,25 +284,31 @@ def extract_text_from_pdf_url(url: str) -> str:
                     pdf_reader.pages.clear()  # pylint: disable=no-member
                 del pdf_reader
             except Exception as cleanup_error:
-                print(f"[Warning] Error clearing PDF reader: {cleanup_error}")
+                logger.warning(
+                    "Error clearing PDF reader", extra={"error": str(cleanup_error)}
+                )
 
         # Close PDF buffer
         if pdf_buffer is not None:
             try:
                 pdf_buffer.close()
                 del pdf_buffer
-                print("[Info] PDF buffer closed and cleared")
+                logger.debug("PDF buffer closed and cleared")
             except Exception as cleanup_error:
-                print(f"[Warning] Error closing PDF buffer: {cleanup_error}")
+                logger.warning(
+                    "Error closing PDF buffer", extra={"error": str(cleanup_error)}
+                )
 
         # Close HTTP response
         if response is not None:
             try:
                 response.close()
                 del response
-                print("[Info] HTTP response closed and cleared")
+                logger.debug("HTTP response closed and cleared")
             except Exception as cleanup_error:
-                print(f"[Warning] Error closing HTTP response: {cleanup_error}")
+                logger.warning(
+                    "Error closing HTTP response", extra={"error": str(cleanup_error)}
+                )
 
 
 def extract_text_from_json_url(url: str) -> str:
@@ -287,7 +325,7 @@ def extract_text_from_json_url(url: str) -> str:
         if not url.startswith("http"):
             url = get_supabase_storage_url(url)
 
-        print(f"[Info] {create_safe_fetch_message(url)}")
+        logger.info(create_safe_fetch_message(url))
 
         # Use authenticated request for private buckets with streaming
         headers = get_authenticated_headers()
@@ -299,7 +337,7 @@ def extract_text_from_json_url(url: str) -> str:
         content_length = response.headers.get("content-length")
         if content_length:
             size_mb = int(content_length) / (1024 * 1024)
-            print(f"[Info] JSON size: {size_mb:.2f} MB")
+            logger.info("JSON file size", extra={"size_mb": size_mb})
 
             # Limit JSON file size to prevent memory issues
             if size_mb > 50:
@@ -320,7 +358,10 @@ def extract_text_from_json_url(url: str) -> str:
         # Join chunks
         content = "".join(content_chunks)
 
-        print(f"[Info] Successfully fetched JSON, size: {total_bytes} bytes")
+        logger.info(
+            "Successfully fetched JSON",
+            extra={"bytes": total_bytes, "size_mb": total_bytes / (1024 * 1024)},
+        )
 
         # Parse JSON
         data = json.loads(content)
@@ -343,8 +384,9 @@ def extract_text_from_json_url(url: str) -> str:
         elif isinstance(data, list):
             # Join list items (limit to prevent memory issues)
             if len(data) > 10000:
-                print(
-                    f"[Warning] Large JSON array ({len(data)} items), limiting to first 10000"
+                logger.warning(
+                    "Large JSON array, limiting items",
+                    extra={"total_items": len(data), "limit": 10000},
                 )
                 data = data[:10000]
             result = "\n".join(str(item) for item in data)
@@ -357,29 +399,44 @@ def extract_text_from_json_url(url: str) -> str:
         return result
 
     except requests.RequestException as e:
-        print(
-            f"[Error] HTTP error while extracting text from JSON {log_domain_safely(url)}: {e}"
+        logger.error(
+            "HTTP error while extracting text from JSON",
+            extra={"domain": log_domain_safely(url), "error": str(e)},
+            exc_info=True,
         )
         if hasattr(e, "response") and e.response is not None:
-            print(f"[Error] Response status: {e.response.status_code}")
-            print(f"[Error] Response content: {e.response.text[:200]}")
+            logger.error(
+                "JSON download response details",
+                extra={
+                    "status_code": e.response.status_code,
+                    "content_preview": e.response.text[:200],
+                },
+            )
         raise ValueError(f"Failed to download JSON: {str(e)}") from e
     except json.JSONDecodeError as e:
-        print(
-            f"[Error] JSON decode error while extracting text from JSON {log_domain_safely(url)}: {e}"
+        logger.error(
+            "JSON decode error",
+            extra={"domain": log_domain_safely(url), "error": str(e)},
+            exc_info=True,
         )
         raise ValueError(f"Invalid JSON format: {str(e)}") from e
     except Exception as e:
-        print(f"[Error] JSON processing error: {e}")
+        logger.error(
+            "JSON processing error",
+            extra={"error": str(e), "error_type": type(e).__name__},
+            exc_info=True,
+        )
         raise ValueError(f"JSON processing failed: {str(e)}") from e
     finally:
         # Explicit cleanup to prevent memory leaks
         if response is not None:
             try:
                 response.close()
-                print("[Info] HTTP response closed")
+                logger.debug("HTTP response closed")
             except Exception as cleanup_error:
-                print(f"[Warning] Error closing HTTP response: {cleanup_error}")
+                logger.warning(
+                    "Error closing HTTP response", extra={"error": str(cleanup_error)}
+                )
 
 
 def clean_text(text: str) -> str:
@@ -487,7 +544,7 @@ def upload_to_pinecone(
     chunks: list, vectors: list, namespace: str, upload_id: str, source_url: str = None
 ):
     if not chunks or not vectors:
-        print(f"[Warning] No chunks or vectors to upload for {upload_id}")
+        logger.warning("No chunks or vectors to upload", extra={"upload_id": upload_id})
         return
 
     # Enhanced metadata with source URL and extracted product links
@@ -510,14 +567,26 @@ def upload_to_pinecone(
 
         to_upsert.append((f"{upload_id}-{i}", vec, metadata))
 
-    print(
-        f"[Info] Uploading {len(to_upsert)} vectors to Pinecone namespace '{namespace}'"
+    logger.info(
+        "Uploading vectors to Pinecone",
+        extra={
+            "vector_count": len(to_upsert),
+            "namespace": namespace,
+            "upload_id": upload_id,
+        },
     )
     try:
         result = index.upsert(vectors=to_upsert, namespace=namespace)
-        print(f"[Info] Pinecone upsert result: {result}")
+        logger.info(
+            "Pinecone upsert successful",
+            extra={"result": str(result), "upload_id": upload_id},
+        )
     except Exception as e:
-        print(f"[Error] Pinecone upload failed: {e}")
+        logger.error(
+            "Pinecone upload failed",
+            extra={"upload_id": upload_id, "error": str(e)},
+            exc_info=True,
+        )
         raise
 
 
@@ -580,7 +649,10 @@ async def process_pending_uploads():
         result = supabase.table("uploads").select("*").eq("status", "pending").execute()
 
         uploads = result.data
-        print(f"[Multi-Tenant] Found {len(uploads)} pending uploads across all tenants")
+        logger.info(
+            "Found pending uploads across all tenants",
+            extra={"upload_count": len(uploads)},
+        )
 
         for upload in uploads:
             try:
@@ -590,10 +662,15 @@ async def process_pending_uploads():
                 doc_type = upload["type"]
                 namespace = upload["pinecone_namespace"]
 
-                print(
-                    f"[Multi-Tenant] Processing upload {upload_id} for tenant {org_id}"
+                logger.info(
+                    "Processing upload for tenant",
+                    extra={
+                        "upload_id": upload_id,
+                        "org_id": org_id,
+                        "doc_type": doc_type,
+                        "namespace": namespace,
+                    },
                 )
-                print(f"[Multi-Tenant]   Type: {doc_type}, Namespace: {namespace}")
 
                 # Extract text based on document type
                 if doc_type == "pdf":
@@ -610,7 +687,14 @@ async def process_pending_uploads():
                 if not text or len(text.strip()) < 10:
                     raise ValueError("No meaningful text content extracted")
 
-                print(f"[Info] Extracted {len(text)} characters from {doc_type}")
+                logger.info(
+                    "Text extraction successful",
+                    extra={
+                        "upload_id": upload_id,
+                        "doc_type": doc_type,
+                        "chars_extracted": len(text),
+                    },
+                )
 
                 # Process text into chunks and embeddings
                 chunks = split_into_chunks(text)
@@ -621,8 +705,13 @@ async def process_pending_uploads():
                 if not embeddings:
                     raise ValueError("No embeddings generated")
 
-                print(
-                    f"[Info] Generated {len(chunks)} chunks and {len(embeddings)} embeddings"
+                logger.info(
+                    "Chunks and embeddings generated",
+                    extra={
+                        "upload_id": upload_id,
+                        "chunk_count": len(chunks),
+                        "embedding_count": len(embeddings),
+                    },
                 )
 
                 # Upload to Pinecone with source URL for enhanced metadata
@@ -633,12 +722,21 @@ async def process_pending_uploads():
                     {"status": "completed", "error_message": None}
                 ).eq("id", upload_id).execute()
 
-                print(f"[Success] Completed processing upload {upload_id}")
+                logger.info(
+                    "Upload processing completed successfully",
+                    extra={"upload_id": upload_id, "org_id": org_id},
+                )
 
             except (ValueError, TypeError, requests.RequestException) as e:
                 error_msg = str(e)
-                print(
-                    f"[Error] Processing failed for upload {upload.get('id', 'unknown')}: {error_msg}"
+                logger.error(
+                    "Upload processing failed",
+                    extra={
+                        "upload_id": upload.get("id", "unknown"),
+                        "error": error_msg,
+                        "error_type": type(e).__name__,
+                    },
+                    exc_info=True,
                 )
 
                 # Update status to failed
@@ -647,7 +745,13 @@ async def process_pending_uploads():
                         {"status": "failed", "error_message": error_msg}
                     ).eq("id", upload["id"]).execute()
                 except (requests.RequestException, ValueError) as update_error:
-                    print(f"[Error] Failed to update error status: {update_error}")
+                    logger.error(
+                        "Failed to update upload error status",
+                        extra={
+                            "upload_id": upload.get("id"),
+                            "error": str(update_error),
+                        },
+                    )
 
     except (
         requests.RequestException,
@@ -655,7 +759,11 @@ async def process_pending_uploads():
         TypeError,
         json.JSONDecodeError,
     ) as e:
-        print(f"[Error] Failed to process pending uploads: {e}")
+        logger.error(
+            "Failed to process pending uploads",
+            extra={"error": str(e), "error_type": type(e).__name__},
+            exc_info=True,
+        )
 
     # For testing purposes
     if __name__ == "__main__":
