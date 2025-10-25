@@ -345,13 +345,14 @@ class ResponseGenerationService:
 CONTEXT INFORMATION:
 {context_text}
 
-⚠️ RESPONSE QUALITY GUIDELINES ⚠️
+⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
 
-1. USE information from the CONTEXT INFORMATION above to provide helpful answers
-2. If you can partially answer the question with available context, DO SO and be helpful
-3. You can combine and synthesize information from multiple parts of the context
-4. Only say "I don't have that specific information" if the context is completely unrelated to the question
-5. NEVER fabricate facts, numbers, prices, or contact details not in the context
+1. ONLY use EXACT information from the CONTEXT INFORMATION above
+2. If product names, prices, or details are NOT explicitly in the context, say "I don't have those specific details"
+3. NEVER make up product names, prices, descriptions, or any facts
+4. NEVER use placeholders like "XXX", "[insert X]", "around X", or "approximately"
+5. If context has partial info (e.g., product names but no prices), share what you have and say what's missing
+6. When in doubt, be conservative - accuracy over completeness
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 - Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character from context

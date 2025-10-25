@@ -106,6 +106,26 @@ class PlaywrightWebScraper:
         for element in soup(["script", "style", "nav", "header", "footer", "aside"]):
             element.decompose()
 
+        # Remove e-commerce UI clutter that adds noise
+        ui_selectors_to_remove = [
+            # Shopping cart and checkout
+            {"class_": re.compile(r"cart|checkout|basket|bag|wishlist", re.I)},
+            {"id": re.compile(r"cart|checkout|basket|bag|wishlist", re.I)},
+            # Login/signup forms
+            {"class_": re.compile(r"login|signup|sign-up|sign-in|auth|modal", re.I)},
+            {"id": re.compile(r"login|signup|sign-up|sign-in|auth|modal", re.I)},
+            # Navigation and filters
+            {"class_": re.compile(r"filter|sidebar|breadcrumb|pagination|sort", re.I)},
+            # Promotional banners
+            {"class_": re.compile(r"banner|promo|sale-banner|announcement", re.I)},
+            # Country/region selectors
+            {"class_": re.compile(r"country|region|locale|currency-selector", re.I)},
+        ]
+
+        for selector in ui_selectors_to_remove:
+            for element in soup.find_all(**selector):
+                element.decompose()
+
         # Extract text
         text = soup.get_text()
 
@@ -113,6 +133,25 @@ class PlaywrightWebScraper:
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         cleaned_text = " ".join(chunk for chunk in chunks if chunk)
+
+        # Additional cleaning: remove common e-commerce noise patterns
+        noise_patterns = [
+            r"(Sign In|Log in|Sign Up|Sign up|Create Account|Forgot Password)\??",
+            r"(Add to (cart|basket|wishlist|bag))",
+            r"(Quick (view|buy|shop))",
+            r"(Shop now|Buy now|Sold out)",
+            r"(Sort by|Filter by|Showing \d+-\d+ of \d+ Results)",
+            r"(My Account|My Orders|Track Order)",
+            r"(Cookie Policy|Privacy Policy|Terms of Service)",
+            # Remove excessive repeating state/country names
+            r"(Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia){5,}",
+        ]
+
+        for pattern in noise_patterns:
+            cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE)
+
+        # Remove extra spaces created by pattern removal
+        cleaned_text = re.sub(r"\s{2,}", " ", cleaned_text)
 
         # Prepend contact information to ensure it's included in the indexed content
         if contact_info:
