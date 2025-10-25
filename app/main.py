@@ -153,7 +153,20 @@ logger.info(
 
 @app.get("/health")
 async def health_check():
-    """Enhanced system health check endpoint"""
+    """Lightweight health check endpoint - should be <50ms"""
+    # Simple health check without database queries for fast response
+    # Use /health/detailed for comprehensive checks
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": settings.app.app_version,
+        "environment": settings.app.environment,
+    }
+
+
+@app.get("/health/database")
+async def health_check_database():
+    """Database health check endpoint (slower, use for monitoring)"""
     try:
         # Test database
         supabase = get_supabase_client()

@@ -28,16 +28,18 @@ SAMPLE_QUESTIONS = [
     "Do you ship internationally?",
 ]
 
+# TODO: Replace these with actual IDs from your database
+# Get real chatbot IDs from: SELECT id FROM chatbots LIMIT 3;
 SAMPLE_CHATBOT_IDS = [
-    "chatbot_001",
-    "chatbot_002",
-    "chatbot_003",
+    "47ccba62-2b67-42e1-882e-8a99cec0e39f",  # ⚠️ REPLACE WITH REAL CHATBOT ID
+    "65c0a93d-d62a-4397-97e6-9d85deaaaad6",  # ⚠️ REPLACE WITH REAL CHATBOT ID  # ⚠️ REPLACE WITH REAL CHATBOT ID
 ]
 
+# TODO: Replace these with actual organization IDs
+# Get real org IDs from: SELECT id FROM organizations LIMIT 3;
 SAMPLE_ORG_IDS = [
-    "org_001",
-    "org_002",
-    "org_003",
+    "21bcca33-a10c-442c-9bc5-7a0208b5928f",  # ⚠️ REPLACE WITH REAL ORG ID
+    "78851c8c-9ffb-4adf-941d-eb365983e83c",  # ⚠️ REPLACE WITH REAL ORG ID
 ]
 
 
