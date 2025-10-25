@@ -49,8 +49,9 @@ class ResponseGenerationService:
             )
             self.chatbot_config = ChatbotConfig()
 
-        # PERFORMANCE: Reduced from 4000 to 2000 for faster processing (30-50% speedup)
-        self.max_context_length = 2000
+        # Optimized context length: balanced for quality and performance
+        # Increased from 2000 to 4000 to support richer responses with more documents
+        self.max_context_length = 4000
 
         # SECURITY: Initialize security detectors
         self.injection_detector = PromptInjectionDetector()
@@ -344,15 +345,16 @@ class ResponseGenerationService:
 CONTEXT INFORMATION:
 {context_text}
 
-⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
+⚠️ RESPONSE QUALITY GUIDELINES ⚠️
 
-1. ONLY use information from the CONTEXT INFORMATION above
-2. If information is NOT in the context, say "I don't have that information in my knowledge base"
-3. NEVER generate, assume, or fabricate any information
-4. NEVER use placeholders like [insert X] or make up examples
+1. USE information from the CONTEXT INFORMATION above to provide helpful answers
+2. If you can partially answer the question with available context, DO SO and be helpful
+3. You can combine and synthesize information from multiple parts of the context
+4. Only say "I don't have that specific information" if the context is completely unrelated to the question
+5. NEVER fabricate facts, numbers, prices, or contact details not in the context
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
-- Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character
+- Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character from context
 - If contact info is NOT in context, say "I don't have contact information available"
 
 EXAMPLES OF CORRECT BEHAVIOR:
@@ -373,17 +375,18 @@ EXAMPLES OF CORRECT BEHAVIOR:
    Response: "Solar panels cost around ₹40,000-60,000" (Don't modify prices!)
 
 GENERAL INSTRUCTIONS:
-- ONLY provide information that exists in the context above
-- Always use appropriate emojis while chatting with the user and give the response in the same language as the user's question
-- Know the customer emotion and respond accordingly
-- If information is NOT in context, respond: "I don't have that specific information in my knowledge base"
-- Be precise and factual - accuracy is MORE important than sounding friendly
-- Cite exact facts, numbers, prices, and details from the context without modification
-- Use the same language as the user's question
-- Keep responses under 100 words and focused
-- Maintain {self.chatbot_config.tone} tone but prioritize accuracy over friendliness
+- Provide helpful, informative answers based on the context above
+- Be conversational and helpful - synthesize information to answer questions fully
+- Always use appropriate emojis while chatting with the user
+- Give responses in the same language as the user's question
+- For product questions: describe what's available based on context
+- For general questions: provide relevant information from the context
+- Only say "I don't have that information" if the context is COMPLETELY unrelated to the question
+- Cite exact facts, numbers, prices, and contact details from context without modification
+- Keep responses clear, friendly, and under 150 words
+- Maintain {self.chatbot_config.tone} tone
 - Refer to yourself as {self.chatbot_config.name}
-- If unsure or information seems incomplete, acknowledge the uncertainty rather than guessing
+- If you have partial information, share it and indicate what additional details you might not have
 
 FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 

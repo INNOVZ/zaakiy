@@ -36,8 +36,9 @@ class DocumentRetrievalService:
         else:
             self.optimized_vector_search = None
 
-        # Default retrieval config - EMERGENCY MODE: Minimal retrieval
-        self.retrieval_config = {"initial": 3, "rerank": 2, "final": 2}
+        # Optimized retrieval config for better response quality
+        # Increased from emergency mode (2) to production mode (5-8) for richer context
+        self.retrieval_config = {"initial": 10, "rerank": 8, "final": 5}
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
