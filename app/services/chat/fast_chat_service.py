@@ -12,73 +12,52 @@ logger = logging.getLogger(__name__)
 class FastChatMode:
     """Emergency fast mode that skips document retrieval for common queries"""
 
-    SIMPLE_PATTERNS = [
-        # Greetings
-        ("hello", "hi", "hey", "greetings"),
-        # About queries
-        ("about you", "who are you", "what are you", "tell me about"),
-        # Help
-        ("help", "can you help", "assist"),
-    ]
+    # Only handle basic greetings in fast mode
+    GREETING_PATTERNS = (
+        "hello",
+        "hi",
+        "hey",
+        "greetings",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    )
 
-    SIMPLE_RESPONSES = {
-        "greeting": "Hello! How may I help you today?",
-        "about": "I'm an AI assistant powered by your knowledge base. I can help answer questions about your business, products, and services. What would you like to know?",
-        "help": "I'm here to help! You can ask me questions about our services, products, contact information, or anything else you'd like to know.",
-    }
+    GREETING_RESPONSE = "Hello! How may I help you today?"
 
     @classmethod
-    def is_simple_query(cls, message: str) -> tuple[bool, str]:
-        """Check if query is simple and can be answered without context"""
+    def is_simple_query(cls, message: str) -> bool:
+        """Check if query is a simple greeting that can be answered without context"""
         message_lower = message.lower().strip()
 
-        # Very short messages
-        if len(message_lower) < 3:
-            return True, "greeting"
+        # Very short messages (1-2 characters only)
+        if len(message_lower) <= 2:
+            return True
 
-        # Greetings
-        if any(pattern in message_lower for pattern in cls.SIMPLE_PATTERNS[0]):
-            return True, "greeting"
+        # Only match if the ENTIRE message is a greeting (not just contains it)
+        # This prevents "hello, can you tell me about products" from being treated as simple
+        if (
+            message_lower in cls.GREETING_PATTERNS
+            or message_lower.rstrip("!?.") in cls.GREETING_PATTERNS
+        ):
+            return True
 
-        # About queries
-        if any(pattern in message_lower for pattern in cls.SIMPLE_PATTERNS[1]):
-            return True, "about"
-
-        # Help queries
-        if any(pattern in message_lower for pattern in cls.SIMPLE_PATTERNS[2]):
-            return True, "help"
-
-        return False, ""
+        return False
 
     @classmethod
     async def get_fast_response(
         cls, message: str, chatbot_config: dict
     ) -> Dict[str, Any]:
-        """Get fast response without vector search"""
-        is_simple, response_type = cls.is_simple_query(message)
+        """Get fast response for simple greetings without vector search"""
+        is_simple = cls.is_simple_query(message)
 
         if not is_simple:
             return None
 
-        # Get bot name from config
-        bot_name = chatbot_config.get("name", "Assistant")
+        # Use custom greeting from config or default
+        response = chatbot_config.get("greeting_message", cls.GREETING_RESPONSE)
 
-        # Customize response
-        if response_type == "greeting":
-            greeting = chatbot_config.get(
-                "greeting_message", cls.SIMPLE_RESPONSES["greeting"]
-            )
-            response = greeting
-        elif response_type == "about":
-            response = f"I'm {bot_name}, " + cls.SIMPLE_RESPONSES["about"]
-        else:
-            response = cls.SIMPLE_RESPONSES.get(
-                response_type, cls.SIMPLE_RESPONSES["help"]
-            )
-
-        logger.info(
-            f"⚡ FAST MODE: Responding to {response_type} query without vector search"
-        )
+        logger.info("⚡ FAST MODE: Responding to greeting without vector search")
 
         return {
             "response": response,
