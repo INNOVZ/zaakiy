@@ -222,6 +222,7 @@ class VectorCacheService:
         composite = f"{env}:{namespace}:{version}:{org_id}:{chatbot_id}:{query}:{config_str}:{params_str}"
 
         # Generate MD5 hash for consistent key length
+        # SECURITY NOTE: MD5 used for cache key generation only (non-cryptographic purpose)
         cache_hash = hashlib.md5(composite.encode("utf-8")).hexdigest()
 
         return f"{self.key_prefix}{namespace}:{version}:{org_id}:{cache_hash}"

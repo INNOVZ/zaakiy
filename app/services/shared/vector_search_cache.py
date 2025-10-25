@@ -142,6 +142,7 @@ class VectorSearchCache:
             await self._update_popular_queries(query, org_id)
 
             # Cache embeddings separately for reuse
+            # SECURITY NOTE: MD5 used for cache key generation only (non-cryptographic purpose)
             embedding_only_key = (
                 f"embedding:v1:{org_id}:{hashlib.md5(query.encode()).hexdigest()}"
             )
@@ -166,6 +167,7 @@ class VectorSearchCache:
     ) -> Optional[List[float]]:
         """Get cached embedding for a query"""
         try:
+            # SECURITY NOTE: MD5 used for cache key generation only (non-cryptographic purpose)
             embedding_key = (
                 f"embedding:v1:{org_id}:{hashlib.md5(query.encode()).hexdigest()}"
             )
@@ -198,6 +200,7 @@ class VectorSearchCache:
         }
 
         composite_str = json.dumps(composite, sort_keys=True)
+        # SECURITY NOTE: SHA-256 used for cache key generation (non-cryptographic purpose)
         cache_hash = hashlib.sha256(composite_str.encode()).hexdigest()[:16]
 
         return f"vector_exact:v2:{org_id}:{cache_hash}"
@@ -213,6 +216,7 @@ class VectorSearchCache:
         params_str = json.dumps(search_params, sort_keys=True)
 
         composite = f"{org_id}:{embedding_str}:{params_str}"
+        # SECURITY NOTE: SHA-256 used for cache key generation (non-cryptographic purpose)
         cache_hash = hashlib.sha256(composite.encode()).hexdigest()[:16]
 
         return f"vector_embed:v2:{org_id}:{cache_hash}"
@@ -325,6 +329,7 @@ class VectorSearchCache:
                 popular_queries = {}
 
             # Update query frequency
+            # SECURITY NOTE: MD5 used for cache key generation only (non-cryptographic purpose)
             query_hash = hashlib.md5(query.encode()).hexdigest()[:16]
             popular_queries[query_hash] = popular_queries.get(query_hash, 0) + 1
 

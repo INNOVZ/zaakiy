@@ -273,6 +273,8 @@ class SecureWebScraper:
 
     def _get_random_user_agent(self) -> str:
         """Get a random user agent to avoid detection"""
+        # SECURITY NOTE: random.choice() is used here for non-cryptographic purposes
+        # (selecting user agents for web scraping rotation, not security-critical)
         return random.choice(self.config.user_agents)
 
     async def _respect_rate_limit(self, domain: str):
@@ -284,6 +286,7 @@ class SecureWebScraper:
             time_since_last = now - last_request
 
             if time_since_last < self.config.min_delay:
+                # SECURITY NOTE: random.uniform() for rate limiting delays (non-cryptographic)
                 delay = random.uniform(self.config.min_delay, self.config.max_delay)
                 logger.debug(f"Rate limiting: waiting {delay:.2f}s for {domain}")
                 await asyncio.sleep(delay)
@@ -311,6 +314,7 @@ class SecureWebScraper:
 
             if attempt < self.config.max_retries - 1:
                 # Exponential backoff
+                # SECURITY NOTE: random.uniform() for exponential backoff jitter (non-cryptographic)
                 delay = (2**attempt) + random.uniform(0, 1)
                 logger.debug(
                     f"Retry {attempt + 1}/{self.config.max_retries} for {log_domain_safely(url)} after {delay:.2f}s"

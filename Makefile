@@ -1,7 +1,7 @@
 # ZaaKy Backend Makefile
 # Common development commands
 
-.PHONY: help install dev test lint format clean docker-build docker-run setup-dev setup health check-storage migrate migrate-execute
+.PHONY: help install dev test lint format clean docker-build docker-run setup-dev setup health check-storage migrate migrate-execute load-test load-test-quick load-test-normal load-test-stress load-test-monitor
 
 # Default target
 help:
@@ -22,6 +22,13 @@ help:
 	@echo "  check-storage - Check storage configuration"
 	@echo "  migrate      - Run data migration (dry run)"
 	@echo "  migrate-execute - Execute data migration"
+	@echo ""
+	@echo "Load Testing:"
+	@echo "  load-test-quick   - Quick smoke test (10 users, 1 min)"
+	@echo "  load-test-normal  - Normal load test (50 users, 5 min)"
+	@echo "  load-test-stress  - Stress test (500 users, 10 min)"
+	@echo "  load-test-web     - Start Locust web UI"
+	@echo "  load-test-monitor - Monitor system during load test"
 
 # Development environment setup
 setup-dev: install
@@ -193,3 +200,57 @@ test-all: test-unit test-integration test-security
 deploy-prep: clean format lint test security
 	@echo "Deployment preparation completed!"
 	@echo "Ready for deployment"
+
+# Load Testing commands
+load-test-quick:
+	@echo "🚀 Running quick smoke test..."
+	./tests/load/run_load_test.sh quick
+
+load-test-normal:
+	@echo "🚀 Running normal load test..."
+	./tests/load/run_load_test.sh normal
+
+load-test-peak:
+	@echo "🚀 Running peak load test..."
+	./tests/load/run_load_test.sh peak
+
+load-test-stress:
+	@echo "🚀 Running stress test..."
+	@echo "⚠️  WARNING: This will put significant load on your system"
+	./tests/load/run_load_test.sh stress
+
+load-test-spike:
+	@echo "🚀 Running spike test..."
+	./tests/load/run_load_test.sh spike
+
+load-test-web:
+	@echo "🚀 Starting Locust web UI..."
+	@echo "Open your browser to: http://localhost:8089"
+	./tests/load/run_load_test.sh web
+
+load-test-monitor:
+	@echo "📊 Starting system monitor..."
+	@echo "Run this in a separate terminal while load testing"
+	./tests/load/monitor_during_test.sh
+
+load-test-compare:
+	@echo "📊 Comparing load test results..."
+	@if [ -z "$(FILES)" ]; then \
+		python tests/load/compare_results.py reports/*_stats.csv; \
+	else \
+		python tests/load/compare_results.py $(FILES); \
+	fi
+
+load-test-check:
+	@echo "✓ Checking performance thresholds..."
+	@if [ -z "$(FILE)" ]; then \
+		echo "Usage: make load-test-check FILE=reports/your_stats.csv"; \
+	else \
+		python tests/load/check_thresholds.py $(FILE); \
+	fi
+
+# Clean load test reports
+clean-reports:
+	@echo "🗑️  Cleaning load test reports..."
+	rm -rf reports/*.html reports/*.csv reports/*.log
+	@echo "Reports cleaned"

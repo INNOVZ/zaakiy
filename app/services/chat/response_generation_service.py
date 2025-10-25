@@ -7,6 +7,9 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from .context_leakage_detector import get_context_leakage_detector
+from .prompt_sanitizer import PromptInjectionDetector
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +27,10 @@ class ResponseGenerationService:
         self.chatbot_config = chatbot_config
         self.max_context_length = 4000
 
+        # SECURITY: Initialize security detectors
+        self.injection_detector = PromptInjectionDetector()
+        self.leakage_detector = get_context_leakage_detector()
+
     async def generate_enhanced_response(
         self,
         message: str,
@@ -32,6 +39,92 @@ class ResponseGenerationService:
     ) -> Dict[str, Any]:
         """Generate response with enhanced context engineering"""
         try:
+            # SECURITY: Check user message for prompt injection attempts
+            (
+                is_injection,
+                pattern,
+                matched,
+            ) = self.injection_detector.check_for_injection(message)
+
+            if is_injection:
+                logger.warning(
+                    f"🚨 SECURITY: Blocked prompt injection attempt in user message",
+                    extra={
+                        "pattern": pattern,
+                        "matched_text": matched,
+                        "message_preview": message[:100],
+                        "org_id": self.org_id,
+                    },
+                )
+                return {
+                    "response": "I'm sorry, but I can't process that request. Please rephrase your question in a different way.",
+                    "sources": [],
+                    "tokens_used": 0,
+                    "security_blocked": True,
+                    "block_reason": "prompt_injection_attempt",
+                    "processing_time_ms": 0,
+                }
+
+            # SECURITY: Check for context extraction attempts
+            (
+                is_extraction,
+                extraction_pattern,
+                extraction_matched,
+            ) = self.leakage_detector.is_context_extraction_attempt(message)
+
+            if is_extraction:
+                logger.warning(
+                    f"🚨 SECURITY: Blocked context extraction attempt",
+                    extra={
+                        "pattern": extraction_pattern,
+                        "matched_text": extraction_matched,
+                        "message_preview": message[:100],
+                        "org_id": self.org_id,
+                    },
+                )
+                safe_message = self.leakage_detector.get_safe_response_message(
+                    extraction_pattern
+                )
+                return {
+                    "response": safe_message,
+                    "sources": [],
+                    "tokens_used": 0,
+                    "security_blocked": True,
+                    "block_reason": "context_extraction_attempt",
+                    "processing_time_ms": 0,
+                }
+
+            # SECURITY: Check for iterative extraction across conversation
+            if conversation_history:
+                previous_messages = [
+                    msg.get("content", "")
+                    for msg in conversation_history
+                    if msg.get("role") == "user"
+                ]
+                is_iterative = self.leakage_detector.check_iterative_extraction(
+                    message, previous_messages
+                )
+
+                if is_iterative:
+                    logger.warning(
+                        f"🚨 SECURITY: Blocked iterative extraction attempt",
+                        extra={
+                            "message_preview": message[:100],
+                            "conversation_length": len(previous_messages),
+                            "org_id": self.org_id,
+                        },
+                    )
+                    return {
+                        "response": self.leakage_detector.get_safe_response_message(
+                            "iterative_extraction"
+                        ),
+                        "sources": [],
+                        "tokens_used": 0,
+                        "security_blocked": True,
+                        "block_reason": "iterative_extraction_attempt",
+                        "processing_time_ms": 0,
+                    }
+
             # DEBUG: Log retrieved documents
             logger.info(
                 "📄 Retrieved %d documents for query: '%s'",
@@ -409,8 +502,16 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
             response_text, context_data.get("context_text", "")
         )
 
+        # SECURITY: Sanitize response for context leakage
+        # Check if response contains too much raw context
+        sanitized_response = self.leakage_detector.sanitize_response_for_leakage(
+            validated_response,
+            context_data.get("context_text", ""),
+            threshold=0.8,  # 80% overlap threshold
+        )
+
         # Post-process to ensure proper markdown formatting
-        formatted_response = self._ensure_markdown_formatting(validated_response)
+        formatted_response = self._ensure_markdown_formatting(sanitized_response)
 
         return {
             "response": formatted_response,

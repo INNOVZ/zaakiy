@@ -86,6 +86,11 @@ cache/
 .coverage
 htmlcov/
 
+# Load testing reports
+reports/
+*.html
+*.csv
+
 # Docker
 .dockerignore
 docker-compose.override.yml

@@ -22,7 +22,7 @@ class FastChatMode:
     ]
 
     SIMPLE_RESPONSES = {
-        "greeting": "Hello! I'm your AI assistant. How can I help you today?",
+        "greeting": "Hello! How may I help you today?",
         "about": "I'm an AI assistant powered by your knowledge base. I can help answer questions about your business, products, and services. What would you like to know?",
         "help": "I'm here to help! You can ask me questions about our services, products, contact information, or anything else you'd like to know.",
     }

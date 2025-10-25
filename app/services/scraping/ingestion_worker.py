@@ -496,11 +496,14 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
     ]
 
     # Extract URLs from text
-    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+    # SECURITY NOTE: Limited regex to prevent ReDoS (Regular Expression Denial of Service)
+    # Using {1,2000} to bound the match length and prevent catastrophic backtracking
+    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]{1,2000}'
     urls = re.findall(url_pattern, chunk)
 
     for url in urls:
         # Clean URL (remove trailing punctuation)
+        # SECURITY NOTE: Simple regex with bounded quantifier (+$) is safe - only matches end of string
         url = re.sub(r"[.,;!?]+$", "", url)
 
         # Check if URL matches product patterns

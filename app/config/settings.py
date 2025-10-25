@@ -11,6 +11,9 @@ from ..utils.env_loader import is_test_environment, safe_load_dotenv
 
 # Constants
 HTTPS_PREFIX = "https://"
+# SECURITY NOTE: HTTP_PREFIX is used for local development defaults only.
+# Production environments should use HTTPS, which is validated in AppConfig.validate()
+# and DatabaseConfig.validate() methods below.
 HTTP_PREFIX = "http://"
 
 # Load environment variables safely
@@ -140,6 +143,8 @@ class AppConfig:
     log_level: str = "INFO"
     enable_analytics: bool = True
     enable_caching: bool = True
+    # SECURITY NOTE: Default uses HTTP for local development.
+    # Production should override with HTTPS via API_BASE_URL env var.
     api_base_url: str = f"{HTTP_PREFIX}localhost:8001"
 
     def validate(self) -> Dict[str, Any]:
@@ -216,12 +221,14 @@ class WebScrapingConfig:
         if self.allowed_domains is None:
             self.allowed_domains = []
         if self.blocked_domains is None:
+            # SECURITY: Block access to cloud metadata endpoints to prevent SSRF attacks
+            # These IPs are intentionally hardcoded as part of security controls
             self.blocked_domains = [
                 "localhost",
                 "127.0.0.1",
                 "0.0.0.0",
-                "169.254.169.254",  # AWS metadata
-                "metadata.google.internal",  # GCP metadata
+                "169.254.169.254",  # AWS EC2 metadata endpoint (SSRF protection)
+                "metadata.google.internal",  # GCP metadata endpoint (SSRF protection)
             ]
 
     def validate(self) -> Dict[str, Any]:
@@ -293,6 +300,8 @@ class ConfigurationManager:
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             enable_analytics=os.getenv("ENABLE_ANALYTICS", "true").lower() == "true",
             enable_caching=os.getenv("ENABLE_CACHING", "true").lower() == "true",
+            # SECURITY NOTE: Default uses HTTP for local development only
+            # Production deployments MUST set API_BASE_URL env var with HTTPS
             api_base_url=os.getenv("API_BASE_URL", f"{HTTP_PREFIX}localhost:8001"),
         )
 
@@ -401,7 +410,7 @@ settings = ConfigurationManager()
 def validate_environment(skip_in_tests: bool = True) -> None:
     """
     Validate environment configuration on startup with proper guardrails
-    
+
     Args:
         skip_in_tests: If True, skip validation in test environments (default: True)
     """
@@ -409,7 +418,7 @@ def validate_environment(skip_in_tests: bool = True) -> None:
     if skip_in_tests and is_test_environment():
         logger.info("ℹ Skipping environment validation in test environment")
         return
-    
+
     validation = settings.validate_all()
 
     # Critical API keys that MUST be present
@@ -542,6 +551,8 @@ def is_debug_mode() -> bool:
 
 def get_cors_origins() -> List[str]:
     """Get CORS origins list"""
+    # SECURITY NOTE: HTTP default is for local development only
+    # Production should configure CORS_ORIGINS env var with HTTPS origins
     return getattr(settings.security, "cors_origins", [f"{HTTP_PREFIX}localhost:3000"])
 
 

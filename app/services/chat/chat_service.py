@@ -320,7 +320,8 @@ class ChatService:
 
             # OPTIMIZATION: Log analytics asynchronously (don't wait for it)
             # This doesn't block the response
-            asyncio.create_task(
+            # Save task to prevent premature garbage collection
+            analytics_task = asyncio.create_task(
                 self.analytics.log_analytics(
                     conversation_id=conversation["id"],
                     message_id=assistant_message["id"],

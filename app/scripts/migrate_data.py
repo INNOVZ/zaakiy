@@ -74,8 +74,10 @@ class DataMigrator:
             if not self.dry_run:
                 import json
 
-                with open(backup_path, "w") as f:
-                    json.dump(data, f, indent=2, default=str)
+                import aiofiles
+
+                async with aiofiles.open(backup_path, "w") as f:
+                    await f.write(json.dumps(data, indent=2, default=str))
 
             self.log_migration(
                 "Backup", f"Backed up {len(data)} records to {backup_path}", "success"

@@ -184,12 +184,14 @@ class ChatSecurityService:
         timestamp = str(datetime.now().timestamp())
         random_bytes = secrets.token_hex(16)
         user_part = (
+            # SECURITY NOTE: SHA-256 for session key generation (appropriate cryptographic hash)
             hashlib.sha256(user_identifier.encode()).hexdigest()[:8]
             if user_identifier
             else ""
         )
 
         session_data = f"{timestamp}-{random_bytes}-{user_part}"
+        # SECURITY NOTE: SHA-256 for session fingerprinting (appropriate cryptographic hash)
         return hashlib.sha256(session_data.encode()).hexdigest()
 
     def validate_chatbot_id(self, chatbot_id: str) -> bool:

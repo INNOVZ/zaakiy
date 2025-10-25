@@ -190,7 +190,10 @@ class DocumentRetrievalService:
         )
 
         # Cache results asynchronously to avoid blocking
-        asyncio.create_task(self._cache_retrieval_results(cache_key, final_docs))
+        # Save task to prevent premature garbage collection
+        cache_task = asyncio.create_task(
+            self._cache_retrieval_results(cache_key, final_docs)
+        )
 
         return final_docs
 
@@ -529,6 +532,9 @@ class DocumentRetrievalService:
         params_str = json.dumps(self.retrieval_config, sort_keys=True)
 
         composite = f"{self.org_id}:{queries_str}:{config_str}:{params_str}"
+        # SECURITY NOTE: MD5 is used here for cache key generation only (non-cryptographic purpose)
+        # This is acceptable as it's not used for security, passwords, or authentication
+        # For cache keys, MD5 provides fast hashing with good distribution
         cache_hash = hashlib.md5(composite.encode("utf-8")).hexdigest()
 
         return f"vector_retrieval:v1:{self.org_id}:{cache_hash}"

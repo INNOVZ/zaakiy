@@ -9,8 +9,13 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .error_context import (ErrorCategory, ErrorContext, ErrorContextManager,
-                            ErrorSeverity, error_logger)
+from .error_context import (
+    ErrorCategory,
+    ErrorContext,
+    ErrorContextManager,
+    ErrorSeverity,
+    error_logger,
+)
 from .exceptions import *
 
 logger = logging.getLogger(__name__)
@@ -276,6 +281,7 @@ def retry_with_backoff(
 
                     # Add jitter to prevent thundering herd
                     if jitter:
+                        # SECURITY NOTE: random.random() for retry jitter (non-cryptographic)
                         delay *= 0.5 + random.random() * 0.5
 
                     await asyncio.sleep(delay)

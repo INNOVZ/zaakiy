@@ -200,6 +200,7 @@ class ScrapingCacheService:
         org_namespace = org_id or "global"
 
         # Hash URL for consistent length
+        # SECURITY NOTE: SHA-256 used for cache key generation (non-cryptographic purpose)
         url_hash = hashlib.sha256(normalized_url.encode()).hexdigest()[:16]
 
         # Hash scraping parameters if provided
@@ -208,6 +209,7 @@ class ScrapingCacheService:
             params_str = orjson.dumps(
                 scraping_params, option=orjson.OPT_SORT_KEYS
             ).decode()
+            # SECURITY NOTE: MD5 used for cache key only (non-cryptographic purpose)
             params_hash = hashlib.md5(params_str.encode()).hexdigest()[:8]
 
         # Build key
@@ -226,6 +228,7 @@ class ScrapingCacheService:
 
     def _calculate_content_hash(self, content: str) -> str:
         """Calculate hash of content for deduplication"""
+        # SECURITY NOTE: SHA-256 used for content fingerprinting (non-cryptographic purpose)
         return hashlib.sha256(content.encode()).hexdigest()
 
     def _calculate_adaptive_ttl(
@@ -516,6 +519,7 @@ class ScrapingCacheService:
 
             # Normalize URL
             normalized_url = self._normalize_url(url)
+            # SECURITY NOTE: SHA-256 used for cache key generation (non-cryptographic purpose)
             url_hash = hashlib.sha256(normalized_url.encode()).hexdigest()[:16]
 
             # Build pattern

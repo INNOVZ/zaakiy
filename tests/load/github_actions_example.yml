@@ -1,0 +1,182 @@
+# Example GitHub Actions workflow for automated load testing
+# Place this in .github/workflows/load-test.yml
+
+name: Load Testing
+
+on:
+  # Run on manual trigger
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Load test scenario"
+        required: true
+        default: "quick"
+        type: choice
+        options:
+          - quick
+          - normal
+          - peak
+          - stress
+
+  # Run on specific branches
+  push:
+    branches:
+      - main
+      - staging
+    paths:
+      - "backend/**"
+      - ".github/workflows/load-test.yml"
+
+  # Run on schedule (weekly)
+  schedule:
+    - cron: "0 2 * * 0" # Every Sunday at 2 AM UTC
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    services:
+      # Redis service for caching
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up environment variables
+        run: |
+          cd backend
+          echo "ENVIRONMENT=test" >> .env
+          echo "DATABASE_URL=${{ secrets.TEST_DATABASE_URL }}" >> .env
+          echo "REDIS_URL=redis://localhost:6379" >> .env
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+          echo "PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}" >> .env
+
+      - name: Start application
+        run: |
+          cd backend
+          uvicorn app.main:app --host 0.0.0.0 --port 8001 &
+          sleep 10  # Wait for app to start
+
+      - name: Wait for application to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:8001/health; do sleep 2; done'
+
+      - name: Run load test
+        run: |
+          cd backend
+          SCENARIO=${{ github.event.inputs.scenario || 'quick' }}
+
+          locust -f tests/load/locustfile.py \
+            --host=http://localhost:8001 \
+            --users 50 \
+            --spawn-rate 5 \
+            --run-time 2m \
+            --headless \
+            --html reports/load_test_report.html \
+            --csv reports/load_test_results \
+            --only-summary
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-results
+          path: |
+            backend/reports/*.html
+            backend/reports/*.csv
+          retention-days: 30
+
+      - name: Check performance thresholds
+        run: |
+          cd backend
+          python tests/load/check_thresholds.py reports/load_test_results_stats.csv
+
+      - name: Comment on PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'backend/reports/load_test_report.html';
+
+            if (fs.existsSync(reportPath)) {
+              const comment = `
+              ## 📊 Load Test Results
+
+              Load test completed successfully!
+
+              **Configuration:**
+              - Users: 50
+              - Duration: 2 minutes
+              - Scenario: ${{ github.event.inputs.scenario || 'quick' }}
+
+              [View detailed report in artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              `;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+      - name: Fail if thresholds exceeded
+        if: failure()
+        run: |
+          echo "::error::Load test failed or performance thresholds exceeded"
+          exit 1
+
+  # K6 alternative (if you prefer K6)
+  k6-load-test:
+    runs-on: ubuntu-latest
+    if: false # Set to true to enable K6 tests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run K6 test
+        run: |
+          cd backend
+          k6 run tests/load/k6_script.js \
+            --out json=reports/k6_results.json
+
+      - name: Upload K6 results
+        uses: actions/upload-artifact@v3
+        with:
+          name: k6-results
+          path: backend/reports/k6_results.json

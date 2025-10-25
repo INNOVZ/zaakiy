@@ -12,6 +12,7 @@ from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.scraping.ingestion_worker import get_supabase_storage_url
 from ..services.storage.pinecone_client import get_pinecone_index
 from ..services.storage.supabase_client import get_supabase_client
+from ..utils.log_sanitizer import sanitize_for_log_injection
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 from ..utils.validators import validate_file_size, validate_file_type
 from ..utils.vector_operations import efficient_delete_by_upload_id
@@ -72,9 +73,15 @@ def _update_upload_helper(
         if old_source:
             try:
                 supabase.storage.from_("uploads").remove([old_source])
-                logger.info("Deleted old file from storage: %s", old_source)
+                logger.info(
+                    "Deleted old file from storage: %s",
+                    sanitize_for_log_injection(old_source),
+                )
             except Exception as e:
-                logger.warning("Failed to delete old file from storage: %s", e)
+                logger.warning(
+                    "Failed to delete old file from storage: %s",
+                    sanitize_for_log_injection(str(e)),
+                )
 
         # Upload new file to Supabase Storage
         try:
@@ -122,7 +129,9 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
         logger = logging.getLogger(__name__)
 
         logger.info(
-            "Deleting vectors for upload %s from namespace %s", upload_id, namespace
+            "Deleting vectors for upload %s from namespace %s",
+            sanitize_for_log_injection(upload_id),
+            sanitize_for_log_injection(namespace),
         )
 
         # Use Pinecone's delete by metadata filter - much more efficient!
@@ -135,14 +144,14 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
 
             logger.info(
                 "Successfully deleted vectors for upload %s using metadata filter",
-                upload_id,
+                sanitize_for_log_injection(upload_id),
             )
 
         except (TypeError, AttributeError) as filter_error:
             # Fallback for older Pinecone versions that don't support filter in delete
             logger.warning(
                 "Metadata filter delete not supported, falling back to query-then-delete: %s",
-                filter_error,
+                sanitize_for_log_injection(str(filter_error)),
             )
 
             # Fallback: Query for IDs then delete (less efficient but works)
@@ -179,10 +188,13 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
                 logger.info(
                     "Deleted %d vectors for upload %s (fallback method)",
                     len(vector_ids),
-                    upload_id,
+                    sanitize_for_log_injection(upload_id),
                 )
             else:
-                logger.info("No vectors found for upload %s", upload_id)
+                logger.info(
+                    "No vectors found for upload %s",
+                    sanitize_for_log_injection(upload_id),
+                )
 
     except Exception as e:
         import logging
@@ -190,8 +202,8 @@ def delete_vectors_from_pinecone(upload_id: str, namespace: str):
         logger = logging.getLogger(__name__)
         logger.error(
             "Failed to delete vectors from Pinecone for upload %s: %s",
-            upload_id,
-            e,
+            sanitize_for_log_injection(upload_id),
+            sanitize_for_log_injection(str(e)),
             exc_info=True,
         )
         # Don't raise exception - we still want to continue with other operations
@@ -372,7 +384,11 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
         org_id: Optional organization ID to speed up lookup
     """
     try:
-        logger.info(f"Fetching avatar image: {file_id}, org_id: {org_id}")
+        logger.info(
+            "Fetching avatar image: %s, org_id: %s",
+            sanitize_for_log_injection(file_id),
+            sanitize_for_log_injection(org_id) if org_id else "None",
+        )
 
         # Try to list all files in uploads bucket to find the avatar
         # This handles the org-{org_id}/avatars/{file_id} structure
@@ -397,7 +413,10 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
                         test_content = supabase.storage.from_("uploads").download(path)
                         if test_content:
                             found_path = path
-                            logger.info(f"Found avatar at org path: {found_path}")
+                            logger.info(
+                                "Found avatar at org path: %s",
+                                sanitize_for_log_injection(found_path),
+                            )
                             break
                     except Exception:
                         continue
@@ -424,13 +443,20 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
                                     file_id.split(".")[0]
                                 ):  # Match file_id without extension
                                     found_path = f"{org_folder}/avatars/{file_name}"
-                                    logger.info(f"Found avatar at: {found_path}")
+                                    logger.info(
+                                        "Found avatar at: %s",
+                                        sanitize_for_log_injection(found_path),
+                                    )
                                     break
 
                             if found_path:
                                 break
                         except Exception as e:
-                            logger.debug(f"Error checking {org_folder}/avatars: {e}")
+                            logger.debug(
+                                "Error checking %s/avatars: %s",
+                                sanitize_for_log_injection(org_folder),
+                                sanitize_for_log_injection(str(e)),
+                            )
                             continue
 
             # If still not found, try legacy paths
@@ -449,7 +475,10 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
                         test_content = supabase.storage.from_("uploads").download(path)
                         if test_content:
                             found_path = path
-                            logger.info(f"Found avatar at legacy path: {found_path}")
+                            logger.info(
+                                "Found avatar at legacy path: %s",
+                                sanitize_for_log_injection(found_path),
+                            )
                             break
                     except Exception:
                         continue
@@ -469,7 +498,9 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
                     content_type = "image/png"
 
             if not file_content:
-                logger.warning(f"Avatar not found: {file_id}")
+                logger.warning(
+                    "Avatar not found: %s", sanitize_for_log_injection(file_id)
+                )
                 raise HTTPException(status_code=404, detail="Avatar image not found")
 
             # Return the image with proper CORS headers
@@ -487,13 +518,23 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error searching for avatar {file_id}: {e}", exc_info=True)
+            logger.error(
+                "Error searching for avatar %s: %s",
+                sanitize_for_log_injection(file_id),
+                sanitize_for_log_injection(str(e)),
+                exc_info=True,
+            )
             raise HTTPException(status_code=404, detail="Avatar image not found")
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error serving avatar image {file_id}: {e}", exc_info=True)
+        logger.error(
+            "Error serving avatar image %s: %s",
+            sanitize_for_log_injection(file_id),
+            sanitize_for_log_injection(str(e)),
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail="Failed to serve avatar image")
 
 
@@ -540,7 +581,11 @@ async def get_legacy_avatar_image(file_path: str):
         )
 
     except Exception as e:
-        logger.error(f"Error serving legacy avatar image {file_path}: {e}")
+        logger.error(
+            "Error serving legacy avatar image %s: %s",
+            sanitize_for_log_injection(file_path),
+            sanitize_for_log_injection(str(e)),
+        )
         raise HTTPException(
             status_code=500, detail="Failed to serve legacy avatar image"
         )
@@ -810,9 +855,14 @@ async def delete_upload(upload_id: str, user=Depends(verify_jwt_token_from_heade
         if file_type in ["pdf", "json"] and source:
             try:
                 supabase.storage.from_("uploads").remove([source])
-                logger.info("Deleted file from storage: %s", source)
+                logger.info(
+                    "Deleted file from storage: %s", sanitize_for_log_injection(source)
+                )
             except Exception as e:
-                logger.warning("Failed to delete file from storage: %s", e)
+                logger.warning(
+                    "Failed to delete file from storage: %s",
+                    sanitize_for_log_injection(str(e)),
+                )
                 # Continue with database deletion even if storage deletion fails
 
         # Delete the upload record from the database

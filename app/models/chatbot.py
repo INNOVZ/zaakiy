@@ -4,9 +4,13 @@ from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
-from ..utils.validators import (sanitize_text_input, validate_chatbot_name,
-                                validate_hex_color, validate_max_tokens,
-                                validate_temperature)
+from ..utils.validators import (
+    sanitize_text_input,
+    validate_chatbot_name,
+    validate_hex_color,
+    validate_max_tokens,
+    validate_temperature,
+)
 
 
 class CreateChatbotRequest(BaseModel):
@@ -133,10 +137,13 @@ class CreateChatbotRequest(BaseModel):
         """Validate avatar URL"""
         if v is not None:
             v = v.strip()
-            
+
             # Validate URL format
             if len(v) > 500:
                 raise ValueError("Avatar URL too long")
+            # SECURITY NOTE: This is input validation, not protocol enforcement
+            # We accept both HTTP and HTTPS because avatars may come from various sources
+            # Including local dev environments. Production should use HTTPS.
             if not v.startswith(("http://", "https://")):
                 raise ValueError("Avatar URL must start with http:// or https://")
         return v
