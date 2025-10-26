@@ -136,15 +136,26 @@ class PlaywrightWebScraper:
 
         # Additional cleaning: remove common e-commerce noise patterns
         noise_patterns = [
-            r"(Sign In|Log in|Sign Up|Sign up|Create Account|Forgot Password)\??",
-            r"(Add to (cart|basket|wishlist|bag))",
-            r"(Quick (view|buy|shop))",
-            r"(Shop now|Buy now|Sold out)",
-            r"(Sort by|Filter by|Showing \d+-\d+ of \d+ Results)",
-            r"(My Account|My Orders|Track Order)",
-            r"(Cookie Policy|Privacy Policy|Terms of Service)",
-            # Remove excessive repeating state/country names
-            r"(Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia){5,}",
+            # Navigation and UI
+            r"(Sign In|Log in|Sign Up|Sign up|Create Account|My Account)\s*",
+            r"(Add to cart|Add to bag|Add to wishlist|Quick view|Quick buy)\s*",
+            r"(View Cart|Checkout|Continue shopping)\s*",
+            r"(Sort by|Filter by|Showing \d+-\d+ of \d+)\s*",
+            # Cookie and privacy
+            r"(Cookie Policy|Privacy Policy|Terms of Service|Accept Cookies)\s*",
+            # Newsletter/Marketing
+            r"(Subscribe|Newsletter|Sign up for|Email signup)\s*",
+            # Social media
+            r"(Follow us|Share|Facebook|Twitter|Instagram|Pinterest)\s*",
+            # Country/Region selectors (aggressive removal)
+            r"(United States|United Kingdom|Australia|Canada|France|Germany|Italy|Spain|Japan|China|India|Brazil)\s+"
+            * 3,  # Multiple countries
+            r"(Shipping Country|Select Country|Choose Region)\s*",
+            # Payment badges
+            r"(Visa|Mastercard|PayPal|American Express|Discover)\s*",
+            # Common footer text
+            r"Copyright\s+©\s+\d{4}\s*",
+            r"All rights reserved\s*",
         ]
 
         for pattern in noise_patterns:

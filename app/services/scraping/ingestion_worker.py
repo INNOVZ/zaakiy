@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 
 import openai
 import orjson
@@ -26,11 +27,14 @@ logger = logging.getLogger(__name__)
 
 # Import both scrapers for JavaScript and non-JavaScript sites
 try:
+    from .ecommerce_scraper import scrape_ecommerce_url
     from .playwright_scraper import scrape_url_with_playwright
 
     PLAYWRIGHT_AVAILABLE = True
+    ECOMMERCE_SCRAPER_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+    ECOMMERCE_SCRAPER_AVAILABLE = False
     logger.warning(
         "Playwright not available. JavaScript-rendered sites may not scrape correctly."
     )
@@ -593,11 +597,63 @@ def upload_to_pinecone(
         raise
 
 
+def is_ecommerce_url(url: str) -> bool:
+    """
+    Detect if URL is likely an e-commerce product or collection page.
+
+    Args:
+        url: URL to check
+
+    Returns:
+        True if URL appears to be e-commerce related
+    """
+    # Common e-commerce URL patterns
+    ecommerce_patterns = [
+        r"/product[s]?/",
+        r"/item[s]?/",
+        r"/collection[s]?/",
+        r"/catalog/",
+        r"/shop/",
+        r"/store/",
+        r"/buy/",
+        r"/cart/",
+        r"/p/",
+    ]
+
+    # Common e-commerce domains
+    ecommerce_domains = [
+        "shopify",
+        "woocommerce",
+        "bigcommerce",
+        "magento",
+        "squarespace",
+        "wix",
+        "ecwid",
+        "volusion",
+        "opencart",
+    ]
+
+    url_lower = url.lower()
+
+    # Check URL patterns
+    for pattern in ecommerce_patterns:
+        if re.search(pattern, url_lower):
+            return True
+
+    # Check domains
+    for domain in ecommerce_domains:
+        if domain in url_lower:
+            return True
+
+    return False
+
+
 async def smart_scrape_url(url: str) -> str:
     """
-    Intelligently scrape URL using Playwright first, then fallback to traditional scraper.
+    Intelligently scrape URL using the best scraper for the content type.
 
     This ensures multi-tenant SaaS customers can upload any URL type:
+    - E-commerce product pages → Enhanced e-commerce scraper (structured data)
     - JavaScript-rendered sites (React, Vue, Angular) → Playwright
     - Traditional HTML sites → Traditional scraper
 
@@ -605,9 +661,32 @@ async def smart_scrape_url(url: str) -> str:
         url: The URL to scrape
 
     Returns:
-        Extracted text content
+        Extracted text content (structured for e-commerce URLs)
     """
-    # Try Playwright first for best results
+    # Try enhanced e-commerce scraper first for e-commerce URLs
+    if ECOMMERCE_SCRAPER_AVAILABLE and is_ecommerce_url(url):
+        try:
+            logger.info(
+                f"[E-commerce] Attempting structured e-commerce scraping for: {url}"
+            )
+            result = await scrape_ecommerce_url(url)
+
+            if result and result.get("text") and len(result["text"].strip()) > 100:
+                logger.info(
+                    f"[E-commerce] ✅ Structured scraping succeeded: {len(result['text'])} chars, "
+                    f"{len(result.get('products', []))} products found"
+                )
+                return result["text"]
+            else:
+                logger.warning(
+                    f"[E-commerce] Structured scraper returned minimal content, trying Playwright"
+                )
+        except Exception as e:
+            logger.warning(
+                f"[E-commerce] Structured scraper failed: {e}, falling back to Playwright"
+            )
+
+    # Try Playwright for JavaScript-rendered content
     if PLAYWRIGHT_AVAILABLE:
         try:
             logger.info(f"[Multi-Tenant] Attempting Playwright scraping for: {url}")
