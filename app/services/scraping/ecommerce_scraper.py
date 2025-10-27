@@ -210,34 +210,45 @@ class ProductContentExtractor:
 
     @staticmethod
     def clean_product_text(text: str) -> str:
-        """Clean extracted product text"""
+        """Clean extracted product text - AGGRESSIVE cleaning for UI noise"""
 
-        # Remove common e-commerce UI patterns
+        # Remove common e-commerce UI patterns - MORE AGGRESSIVE
         noise_patterns = [
             # Navigation and UI
-            r"(Sign In|Log in|Sign Up|Sign up|Create Account|My Account)\s*",
-            r"(Add to cart|Add to bag|Add to wishlist|Quick view|Quick buy)\s*",
-            r"(View Cart|Checkout|Continue shopping)\s*",
-            r"(Sort by|Filter by|Showing \d+-\d+ of \d+)\s*",
+            r"(Sign In|Log in|Sign Up|Sign up|Create Account|My Account)",
+            r"(Add to cart|Add to bag|Add to wishlist|Quick view|Quick buy)",
+            r"(View Cart|Checkout|Continue shopping)",
+            r"(Sort by|Filter by|Showing \d+-\d+ of \d+)",
+            r"(Skip to content|Your cart is empty|Shopping cart Loading)",
+            r"(Have an account|Log in to check out faster)",
+            r"(Add note|Calculate shipping|Subtotal|Taxes and shipping calculated)",
+            r"(Update|Check out|View Cart)",
             # Cookie and privacy
-            r"(Cookie Policy|Privacy Policy|Terms of Service|Accept Cookies)\s*",
+            r"(Cookie Policy|Privacy Policy|Terms of Service|Accept Cookies)",
             # Newsletter/Marketing
-            r"(Subscribe|Newsletter|Sign up for|Email signup)\s*",
+            r"(Subscribe|Newsletter|Sign up for|Email signup)",
             # Social media
-            r"(Follow us|Share|Facebook|Twitter|Instagram|Pinterest)\s*",
-            # Country/Region selectors (aggressive removal)
-            r"(United States|United Kingdom|Australia|Canada|France|Germany|Italy|Spain|Japan|China|India|Brazil)\s+"
-            * 3,
-            r"(Shipping Country|Select Country|Choose Region)\s*",
+            r"(Follow us|Share|Facebook|Twitter|Instagram|Pinterest)",
+            # Country selectors
+            r"(Shipping Country|Select Country|Choose Region|Province|Zip/Postal Code)",
             # Payment badges
-            r"(Visa|Mastercard|PayPal|American Express|Discover)\s*",
+            r"(Visa|Mastercard|PayPal|American Express|Discover)",
             # Common footer text
-            r"Copyright\s+©\s+\d{4}\s*",
-            r"All rights reserved\s*",
+            r"Copyright\s+©\s+\d{4}",
+            r"All rights reserved",
         ]
 
         for pattern in noise_patterns:
             text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.MULTILINE)
+
+        # Remove ALL country names (very aggressive)
+        country_patterns = [
+            r"Australia|Austria|Belgium|Canada|Czechia|Denmark|Finland|France|Germany|Hong Kong SAR|Ireland|Israel|Italy|Japan|Malaysia|Netherlands|New Zealand|Norway|Poland|Portugal|Singapore|South Korea|Spain|Sweden|Switzerland|United Arab Emirates|United Kingdom|United States",
+            r"(Afghanistan|Albania|Algeria|Andorra|Angola|Argentina|Armenia|Australia|Austria|Azerbaijan|Bahamas|Bahrain|Bangladesh|Barbados|Belarus|Belgium|Belize|Benin|Bhutan|Bolivia|Bosnia|Botswana|Brazil|Brunei|Bulgaria|Burkina|Burundi|Cambodia|Cameroon|Canada|Chad|Chile|China|Colombia|Congo|Costa Rica|Croatia|Cuba|Cyprus|Czechia|Denmark|Djibouti|Dominica|Ecuador|Egypt|El Salvador|Estonia|Ethiopia|Fiji|Finland|France|Gabon|Gambia|Georgia|Germany|Ghana|Greece|Grenada|Guatemala|Guinea|Guyana|Haiti|Honduras|Hungary|Iceland|India|Indonesia|Iran|Iraq|Ireland|Israel|Italy|Jamaica|Japan|Jordan|Kazakhstan|Kenya|Korea|Kuwait|Kyrgyzstan|Laos|Latvia|Lebanon|Lesotho|Liberia|Libya|Liechtenstein|Lithuania|Luxembourg|Madagascar|Malawi|Malaysia|Maldives|Mali|Malta|Mauritania|Mauritius|Mexico|Moldova|Monaco|Mongolia|Montenegro|Morocco|Mozambique|Myanmar|Namibia|Nepal|Netherlands|New Zealand|Nicaragua|Niger|Nigeria|Norway|Oman|Pakistan|Panama|Paraguay|Peru|Philippines|Poland|Portugal|Qatar|Romania|Russia|Rwanda|Samoa|San Marino|Saudi Arabia|Senegal|Serbia|Seychelles|Singapore|Slovakia|Slovenia|Somalia|South Africa|Spain|Sri Lanka|Sudan|Suriname|Sweden|Switzerland|Syria|Taiwan|Tajikistan|Tanzania|Thailand|Togo|Trinidad|Tunisia|Turkey|Turkmenistan|Uganda|Ukraine|United Arab Emirates|United Kingdom|United States|Uruguay|Uzbekistan|Vanuatu|Venezuela|Vietnam|Yemen|Zambia|Zimbabwe)",
+        ]
+
+        for pattern in country_patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
 
         # Remove excessive country lists
         country_list = r"(?:Afghanistan|Albania|Algeria|Andorra|Angola|Argentina|Armenia|Australia|Austria|Azerbaijan|Bahamas|Bahrain|Bangladesh|Barbados|Belarus|Belgium|Belize|Benin|Bhutan|Bolivia|Bosnia|Botswana|Brazil|Brunei|Bulgaria|Burkina|Burundi|Cambodia|Cameroon|Canada|Chad|Chile|China|Colombia|Congo|Costa Rica|Croatia|Cuba|Cyprus|Czechia|Denmark|Djibouti|Dominica|Ecuador|Egypt|El Salvador|Estonia|Ethiopia|Fiji|Finland|France|Gabon|Gambia|Georgia|Germany|Ghana|Greece|Grenada|Guatemala|Guinea|Guyana|Haiti|Honduras|Hungary|Iceland|India|Indonesia|Iran|Iraq|Ireland|Israel|Italy|Jamaica|Japan|Jordan|Kazakhstan|Kenya|Korea|Kuwait|Kyrgyzstan|Laos|Latvia|Lebanon|Lesotho|Liberia|Libya|Liechtenstein|Lithuania|Luxembourg|Madagascar|Malawi|Malaysia|Maldives|Mali|Malta|Mauritania|Mauritius|Mexico|Moldova|Monaco|Mongolia|Montenegro|Morocco|Mozambique|Myanmar|Namibia|Nepal|Netherlands|New Zealand|Nicaragua|Niger|Nigeria|Norway|Oman|Pakistan|Panama|Paraguay|Peru|Philippines|Poland|Portugal|Qatar|Romania|Russia|Rwanda|Samoa|San Marino|Saudi Arabia|Senegal|Serbia|Seychelles|Singapore|Slovakia|Slovenia|Somalia|South Africa|Spain|Sri Lanka|Sudan|Suriname|Sweden|Switzerland|Syria|Taiwan|Tajikistan|Tanzania|Thailand|Togo|Trinidad|Tunisia|Turkey|Turkmenistan|Uganda|Ukraine|United Arab Emirates|United Kingdom|United States|Uruguay|Uzbekistan|Vanuatu|Venezuela|Vietnam|Yemen|Zambia|Zimbabwe)"
@@ -379,6 +390,69 @@ class EnhancedEcommerceProductScraper:
 
             final_text = "\n".join(structured_content)
 
+            # If no structured content was extracted, fall back to extracting main content
+            if not final_text.strip():
+                logger.warning(
+                    f"No structured content extracted, falling back to main content extraction"
+                )
+                main_content = self.extractor.extract_main_content(soup)
+                cleaned_content = self.extractor.clean_product_text(main_content)
+
+                # Build simple structured output
+                structured_content = []
+                if contact_info:
+                    structured_content.append(f"CONTACT INFORMATION:\n{contact_info}")
+
+                # Add collection/page title
+                title_elem = soup.find(["h1", "h2"])
+                if title_elem:
+                    structured_content.append(
+                        f"TITLE: {title_elem.get_text(strip=True)}"
+                    )
+
+                # Add cleaned main content
+                if cleaned_content and len(cleaned_content) > 100:
+                    structured_content.append(f"\n{cleaned_content}")
+
+                final_text = "\n".join(structured_content)
+
+            # If still no content, get soup text as last resort
+            if not final_text.strip():
+                logger.warning(
+                    "No content after all extractions, using soup text as fallback"
+                )
+                all_text = soup.get_text(separator=" ", strip=True)
+                # Clean it aggressively to remove all UI noise
+                all_text = self.extractor.clean_product_text(all_text)
+
+                # Additional aggressive cleaning for common patterns
+                all_text = re.sub(
+                    r"(Email|Password|Forgot your password)",
+                    "",
+                    all_text,
+                    flags=re.IGNORECASE,
+                )
+                all_text = re.sub(
+                    r"\b(Dhs\.|AED|USD|EUR|GBP)\s*\d+\.?\d*\b", "", all_text
+                )  # Remove currency amounts
+                all_text = re.sub(
+                    r"\b\d+\.\d{2}\s*(Dhs|AED|USD)\b", "", all_text
+                )  # Remove more currency patterns
+
+                # Remove empty lines and excessive whitespace
+                all_text = re.sub(r"\s{2,}", " ", all_text)
+                all_text = re.sub(r"\n{2,}", "\n", all_text)
+                all_text = all_text.strip()
+
+                # Only use if we have substantial content left
+                if len(all_text) > 200:  # At least 200 characters of meaningful content
+                    final_text = (
+                        f"PAGE CONTENT:\n{all_text[:10000]}"  # Limit to 10000 chars
+                    )
+                else:
+                    logger.warning("Cleaned text too short, using as-is")
+                    final_text = all_text
+
             logger.info(
                 f"✅ Successfully scraped e-commerce page: {len(final_text)} chars, "
                 f"{len(products)} products found, {len(product_urls)} product URLs"
@@ -513,9 +587,8 @@ class EnhancedEcommerceProductScraper:
     async def _load_page_with_fallback(self, page: Page, url: str) -> str:
         """Load page with multiple fallback strategies"""
         strategies = [
-            ("networkidle", self.timeout),
-            ("domcontentloaded", self.timeout // 2),
-            ("load", self.timeout // 3),
+            ("domcontentloaded", min(self.timeout, 15000)),  # Fastest - 15s max
+            ("load", min(self.timeout, 20000)),  # Slower - 20s max
         ]
 
         last_error = None
@@ -523,16 +596,7 @@ class EnhancedEcommerceProductScraper:
             try:
                 await page.goto(url, wait_until=wait_until, timeout=timeout)
 
-                # Wait for product grid to load (common class names)
-                try:
-                    await page.wait_for_selector(
-                        'div[class*="product"], div[class*="collection"], article[class*="product"]',
-                        timeout=5000,
-                    )
-                except:
-                    pass  # Not critical if selector not found
-
-                # Additional wait for dynamic content
+                # Wait a bit for any lazy-loaded content
                 await page.wait_for_timeout(2000)
 
                 return await page.content()
@@ -542,7 +606,12 @@ class EnhancedEcommerceProductScraper:
                 logger.warning(f"Timeout with '{wait_until}', trying next strategy")
                 continue
 
-        raise last_error or Exception("Failed to load page with all strategies")
+        # If all strategies fail, return whatever content we can get
+        logger.warning("All page load strategies failed, getting content anyway")
+        try:
+            return await page.content()
+        except:
+            raise last_error or Exception("Failed to load page")
 
     def _extract_contact_information(self, soup: BeautifulSoup) -> str:
         """Extract contact information from page"""

@@ -671,7 +671,13 @@ async def smart_scrape_url(url: str) -> str:
             logger.info(
                 f"[E-commerce] Attempting structured e-commerce scraping for: {url}"
             )
-            result = await scrape_ecommerce_url(url)
+            # Create scraper with longer timeout to handle slow sites
+            from .ecommerce_scraper import EnhancedEcommerceProductScraper
+
+            async with EnhancedEcommerceProductScraper(
+                headless=True, timeout=60000
+            ) as scraper:
+                result = await scraper.scrape_product_collection(url)
 
             if result and result.get("text") and len(result["text"].strip()) > 100:
                 logger.info(
