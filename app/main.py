@@ -26,6 +26,7 @@ from .services.storage.supabase_client import get_supabase_client
 from .utils.env_loader import is_test_environment
 from .utils.error_monitoring import error_monitor
 from .utils.logging_config import get_logger, setup_logging
+from .utils.rate_limiter import RateLimitMiddleware
 
 # Environment variables are loaded by app.config.settings (via env_loader)
 
@@ -139,6 +140,20 @@ app = FastAPI(
 app.add_middleware(
     SmartCORSMiddleware,
     allowed_origins=settings.security.cors_origins,
+)
+
+app.add_middleware(
+    RateLimitMiddleware,
+    default_limit=settings.security.rate_limit_requests,
+    default_window=settings.security.rate_limit_window,
+)
+
+logger.info(
+    "Global rate limit middleware configured",
+    extra={
+        "default_limit": settings.security.rate_limit_requests,
+        "default_window": settings.security.rate_limit_window,
+    },
 )
 
 logger.info(
