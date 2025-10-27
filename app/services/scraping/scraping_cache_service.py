@@ -25,7 +25,9 @@ class ScrapingCacheConfig:
     """Configuration for scraping cache"""
 
     # TTL settings by content type (in seconds)
-    url_content_ttl: int = 3600  # 1 hour for URL content
+    url_content_ttl: int = (
+        0  # DISABLED: Was 3600 (1 hour) - too long for iterative improvements
+    )
     pdf_content_ttl: int = 7200  # 2 hours for PDFs (expensive to extract)
     json_content_ttl: int = 1800  # 30 minutes for JSON
     embedding_ttl: int = 14400  # 4 hours for embeddings (very expensive)
@@ -38,6 +40,9 @@ class ScrapingCacheConfig:
     enable_content_hash_dedup: bool = True  # Deduplicate identical content
     enable_url_normalization: bool = True  # Normalize URLs before caching
     enable_compression: bool = True  # Compress large content
+
+    # URL scraping cache - DISABLED by default
+    enable_url_scraping_cache: bool = False  # Set to False to always fresh scrape
 
     # Monitoring
     slow_scrape_threshold_ms: int = 1000  # Cache results from slow scrapes longer

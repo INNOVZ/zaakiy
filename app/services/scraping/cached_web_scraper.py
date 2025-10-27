@@ -65,12 +65,35 @@ class CachedWebScraper(SecureWebScraper):
         Performance:
         - Cache hit: ~5-10ms (200x faster)
         - Cache miss: ~1000-3000ms (normal scrape + caching)
+
+        NOTE: URL caching is disabled by default for e-commerce URLs
+        to allow iterative improvements without stale data.
         """
         with LogContext(extra_context={"domain": log_domain_safely(url)}):
             start_time = time.time()
 
-            # Try cache first (unless bypassed)
-            if self.caching_enabled and not bypass_cache:
+            # Try cache first (unless bypassed OR URL caching disabled)
+            # Check if this is an e-commerce URL - don't cache those by default
+            is_ecommerce = (
+                any(
+                    pattern in url.lower()
+                    for pattern in [
+                        "shopify",
+                        "/products/",
+                        "/collections/",
+                        "/shop/",
+                        "ambassadorscentworks.com",
+                    ]
+                )
+                if url
+                else False
+            )
+
+            cache_enabled = (
+                self.caching_enabled and not bypass_cache and not is_ecommerce
+            )
+
+            if cache_enabled:
                 try:
                     cached_result = await scraping_cache_service.get_cached_content(
                         url=url, content_type="url", org_id=self.org_id
