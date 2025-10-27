@@ -631,6 +631,8 @@ def is_ecommerce_url(url: str) -> bool:
         "ecwid",
         "volusion",
         "opencart",
+        "cakenbake.ae",  # Specific e-commerce sites
+        "ambassadorscentworks.com",
     ]
 
     url_lower = url.lower()
