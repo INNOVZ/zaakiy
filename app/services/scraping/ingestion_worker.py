@@ -544,6 +544,55 @@ def split_into_chunks(text: str) -> list:
     return [chunk for chunk in chunks if chunk.strip()]
 
 
+def filter_noise_chunks(chunks: list) -> list:
+    """Filter out chunks that are clearly UI noise (login/cart/country lists, etc.).
+
+    The goal is to avoid embedding/upserting low-signal text that hurts search quality.
+    """
+    if not chunks:
+        return []
+
+    # Regexes target common e‑commerce UI artifacts seen in noisy chunks
+    noise_patterns = [
+        r"\b(Sign In|Sign Up|Log in|Create Account|Forgot your password)\b",
+        r"\b(Add to (cart|bag|wishlist)|Quick (view|buy)|View Cart|Checkout)\b",
+        r"\b(Sort by|Filter by|Showing \d+-\d+ of \d+)\b",
+        r"\b(Your cart is empty|Shopping cart Loading)\b",
+        r"\b(Subscribe|Newsletter|Email signup)\b",
+        r"\b(Choose Region|Select Country|Province|Zip/Postal Code)\b",
+        r"\b(Visa|Mastercard|PayPal|American Express|Discover)\b",
+    ]
+
+    import re
+
+    compiled = [re.compile(pat, re.IGNORECASE) for pat in noise_patterns]
+
+    def is_noise(text: str) -> bool:
+        if len(text.strip()) < 60:  # extremely short chunk is rarely useful here
+            return True
+        # If a chunk contains a very long list of countries (comma/space heavy), drop it
+        comma_count = text.count(",")
+        if comma_count >= 20:
+            return True
+        for c in compiled:
+            if c.search(text):
+                return True
+        return False
+
+    filtered = [c for c in chunks if not is_noise(c)]
+
+    # Deduplicate identical chunks to reduce redundant vectors
+    seen = set()
+    unique_filtered = []
+    for c in filtered:
+        key = c.strip()
+        if key not in seen:
+            seen.add(key)
+            unique_filtered.append(c)
+
+    return unique_filtered
+
+
 def get_embeddings_for_chunks(chunks: list) -> list:
     if not chunks:
         return []
@@ -882,6 +931,8 @@ async def process_pending_uploads():
 
                 # Process text into chunks and embeddings
                 chunks = split_into_chunks(text)
+                pre_filter_count = len(chunks)
+                chunks = filter_noise_chunks(chunks)
                 if not chunks:
                     raise ValueError("No text chunks generated")
 
@@ -894,6 +945,7 @@ async def process_pending_uploads():
                     extra={
                         "upload_id": upload_id,
                         "chunk_count": len(chunks),
+                        "chunk_count_before_filter": pre_filter_count,
                         "embedding_count": len(embeddings),
                     },
                 )
