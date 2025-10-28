@@ -11,6 +11,7 @@ aiofiles>=23.0.0
 
 # System monitoring (optional)
 psutil>=5.9.0
+prometheus-client>=0.20.0
 
 # Database and storage
 supabase>=2.3.0

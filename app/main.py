@@ -2,7 +2,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 from .config.settings import settings, validate_environment
 from .middleware.cors import SmartCORSMiddleware
@@ -26,6 +26,7 @@ from .services.storage.supabase_client import get_supabase_client
 from .utils.env_loader import is_test_environment
 from .utils.error_monitoring import error_monitor
 from .utils.logging_config import get_logger, setup_logging
+from .utils.metrics import MetricsMiddleware, generate_metrics_response
 from .utils.rate_limiter import RateLimitMiddleware
 
 # Environment variables are loaded by app.config.settings (via env_loader)
@@ -148,6 +149,9 @@ app.add_middleware(
     default_window=settings.security.rate_limit_window,
 )
 
+# Metrics middleware should be registered after rate limiting
+app.add_middleware(MetricsMiddleware)
+
 logger.info(
     "Global rate limit middleware configured",
     extra={
@@ -177,6 +181,11 @@ async def health_check():
         "version": settings.app.app_version,
         "environment": settings.app.environment,
     }
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return generate_metrics_response()
 
 
 @app.get("/health/database")
