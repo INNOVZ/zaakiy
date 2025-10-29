@@ -23,7 +23,9 @@ class ConversationManager:
         self.org_id = org_id
         self.supabase = supabase_client
 
-    async def get_or_create_conversation(self, session_id: str) -> Dict[str, Any]:
+    async def get_or_create_conversation(
+        self, session_id: str, chatbot_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Get existing conversation or create new one with write-through caching"""
         # Cache key for this conversation
         cache_key = f"conversation:session:{self.org_id}:{session_id}"
@@ -46,13 +48,18 @@ class ConversationManager:
                 )
 
             # Check database for existing conversation
-            response = (
+            query = (
                 self.supabase.table("conversations")
                 .select("*")
                 .eq("session_id", session_id)
                 .eq("org_id", self.org_id)
-                .execute()
             )
+
+            # If chatbot_id is provided, ensure we lookup by it as well
+            if chatbot_id:
+                query = query.eq("chatbot_id", chatbot_id)
+
+            response = query.execute()
 
             if response.data:
                 conversation = response.data[0]
@@ -70,6 +77,7 @@ class ConversationManager:
                 "id": str(uuid.uuid4()),
                 "session_id": session_id,
                 "org_id": self.org_id,
+                "chatbot_id": chatbot_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "message_count": 0,

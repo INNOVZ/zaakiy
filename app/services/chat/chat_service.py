@@ -199,7 +199,7 @@ class ChatService:
             # Load context config and get/create conversation in parallel
             config_task = self._load_context_config()
             conversation_task = self.conversation_manager.get_or_create_conversation(
-                session_id=session_id
+                session_id=session_id, chatbot_id=self.chatbot_config.get("id")
             )
 
             # Wait for both to complete
