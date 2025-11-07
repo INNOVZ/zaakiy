@@ -39,7 +39,7 @@ except ImportError:
         "Playwright not available. JavaScript-rendered sites may not scrape correctly."
     )
 
-from .web_scraper import scrape_url_text
+from .web_scraper import SecureWebScraper, scrape_url_text
 
 # Initialize clients
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -669,6 +669,39 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
     return list(set(product_links))  # Remove duplicates
 
 
+def extract_source_url_from_chunk(chunk: str, default_source: str = None) -> str:
+    """
+    Extract the actual source URL from a chunk that may contain recursive scraping markers.
+
+    When recursive scraping is used, chunks contain markers like "=== {url} ===".
+    This function extracts the URL from the chunk if present, otherwise returns the default.
+
+    Args:
+        chunk: Text chunk that may contain URL markers
+        default_source: Default source URL to use if no marker found
+
+    Returns:
+        Source URL for this chunk
+    """
+    import re
+
+    # Look for URL markers from recursive scraping: "=== {url} ==="
+    url_pattern = r"^=== (.+?) ===\s*$"
+    lines = chunk.split("\n")
+
+    # Check first few lines for URL marker
+    for line in lines[:5]:  # Check first 5 lines
+        match = re.match(url_pattern, line.strip())
+        if match:
+            url = match.group(1).strip()
+            # Validate it looks like a URL
+            if url.startswith(("http://", "https://")):
+                return url
+
+    # No marker found, return default
+    return default_source or ""
+
+
 def upload_to_pinecone(
     chunks: list, vectors: list, namespace: str, upload_id: str, source_url: str = None
 ):
@@ -679,15 +712,22 @@ def upload_to_pinecone(
     # Enhanced metadata with source URL and extracted product links
     to_upsert = []
     for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
+        # Extract actual source URL from chunk (for recursive scraping)
+        # Falls back to provided source_url if no URL marker found
+        actual_source = extract_source_url_from_chunk(chunk, source_url)
+
         metadata = {
             "chunk": chunk,
             "upload_id": upload_id,
-            "source": source_url or "",
+            "source": actual_source or source_url or "",
             "chunk_index": i,
         }
 
         # Extract potential product links from chunk content
-        product_links = extract_product_links_from_chunk(chunk, source_url)
+        # Use actual_source for better accuracy
+        product_links = extract_product_links_from_chunk(
+            chunk, actual_source or source_url
+        )
         if product_links:
             metadata["product_links"] = product_links
             metadata["has_products"] = True
@@ -855,6 +895,60 @@ async def smart_scrape_url(url: str) -> str:
     return text
 
 
+async def recursive_scrape_website(
+    start_url: str, max_pages: int = None, max_depth: int = None
+) -> str:
+    """
+    Recursively scrape a website using SecureWebScraper.
+
+    Args:
+        start_url: The starting URL to scrape
+        max_pages: Maximum number of pages to scrape (default: from config)
+        max_depth: Maximum crawl depth (default: from config)
+
+    Returns:
+        Combined text content from all scraped pages
+    """
+    try:
+        logger.info(
+            f"Starting recursive scrape for {start_url} (max_pages={max_pages}, max_depth={max_depth})"
+        )
+
+        # Create scraper instance
+        scraper = SecureWebScraper()
+
+        # Perform recursive scrape
+        scraped_pages = await scraper.scrape_website_recursive(
+            start_url=start_url,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            same_domain_only=True,  # Only scrape same domain
+        )
+
+        if not scraped_pages:
+            logger.warning("No pages were scraped recursively")
+            return ""
+
+        # Combine all scraped content
+        combined_content = []
+        for url, text in scraped_pages.items():
+            combined_content.append(f"\n=== {url} ===\n\n{text}\n")
+
+        final_text = "\n".join(combined_content)
+        logger.info(
+            f"Recursive scrape completed: {len(scraped_pages)} pages scraped, "
+            f"{len(final_text)} total characters"
+        )
+
+        return final_text
+
+    except Exception as e:
+        logger.error(f"Recursive scrape failed: {e}")
+        # Fallback to single page scraping
+        logger.info("Falling back to single page scrape")
+        return await smart_scrape_url(start_url)
+
+
 async def process_pending_uploads():
     """
     Main function to process all pending uploads with authenticated storage access.
@@ -909,8 +1003,33 @@ async def process_pending_uploads():
                 if doc_type == "pdf":
                     text = extract_text_from_pdf_url(source)
                 elif doc_type == "url":
-                    # Use smart scraping with Playwright + fallback
-                    text = await smart_scrape_url(source)
+                    # Check if source is JSON (recursive scraping config) or plain URL
+                    try:
+                        source_data = json.loads(source)
+                        if isinstance(source_data, dict) and "url" in source_data:
+                            # This is a recursive scraping configuration
+                            url = source_data["url"]
+                            recursive_config = source_data
+                            logger.info(
+                                f"Recursive scraping enabled for {url}",
+                                extra={
+                                    "upload_id": upload_id,
+                                    "max_pages": recursive_config.get("max_pages"),
+                                    "max_depth": recursive_config.get("max_depth"),
+                                },
+                            )
+                            # Use recursive scraper
+                            text = await recursive_scrape_website(
+                                start_url=url,
+                                max_pages=recursive_config.get("max_pages"),
+                                max_depth=recursive_config.get("max_depth"),
+                            )
+                        else:
+                            # Invalid JSON, fall back to regular scraping
+                            text = await smart_scrape_url(source)
+                    except (json.JSONDecodeError, TypeError):
+                        # Not JSON, treat as regular URL
+                        text = await smart_scrape_url(source)
                 elif doc_type == "json":
                     text = extract_text_from_json_url(source)
                 else:

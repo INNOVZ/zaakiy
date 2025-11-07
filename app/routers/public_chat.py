@@ -7,7 +7,7 @@ from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
 from ..services.chat.security_service import get_security_service
 from ..services.shared import cache_service
-from ..services.storage.supabase_client import get_supabase_client
+from ..services.storage.supabase_client import get_supabase_client, run_supabase
 from ..utils.logging_config import get_logger
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 
@@ -18,9 +18,6 @@ CHATBOT_CACHE_TTL = 300  # Cache chatbot config for 5 minutes
 
 # Get logger
 logger = get_logger(__name__)
-
-# Get centralized Supabase client
-supabase = get_supabase_client()
 
 router = APIRouter()
 
@@ -41,12 +38,15 @@ async def get_cached_chatbot_config(chatbot_id: str):
 
     # Cache miss - fetch from database
     logger.debug(f"Chatbot config cache MISS for {chatbot_id}")
-    response = (
-        supabase.table("chatbots")
-        .select("*")
-        .eq("id", chatbot_id)
-        .eq("chain_status", "active")
-        .execute()
+    response = await run_supabase(
+        lambda: (
+            get_supabase_client()
+            .table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
+        )
     )
 
     if not response.data or len(response.data) == 0:
@@ -242,13 +242,16 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
 async def get_public_chatbot_config(chatbot_id: str):
     """Get public chatbot configuration for embedding"""
     try:
-        # Use proper Supabase client
-        response = (
-            supabase.table("chatbots")
-            .select("*")
-            .eq("id", chatbot_id)
-            .eq("chain_status", "active")
-            .execute()
+        # Use proper Supabase client (get fresh client per request for thread safety)
+        response = await run_supabase(
+            lambda: (
+                get_supabase_client()
+                .table("chatbots")
+                .select("*")
+                .eq("id", chatbot_id)
+                .eq("chain_status", "active")
+                .execute()
+            )
         )
 
         if not response.data or len(response.data) == 0:
@@ -286,13 +289,16 @@ async def get_public_chatbot_config(chatbot_id: str):
 async def get_chatbot_widget_code(chatbot_id: str):
     """Get embeddable widget code for a chatbot - FIXED XSS vulnerability"""
     try:
-        # Get chatbot config
-        response = (
-            supabase.table("chatbots")
-            .select("*")
-            .eq("id", chatbot_id)
-            .eq("chain_status", "active")
-            .execute()
+        # Get chatbot config (get fresh client per request for thread safety)
+        response = await run_supabase(
+            lambda: (
+                get_supabase_client()
+                .table("chatbots")
+                .select("*")
+                .eq("id", chatbot_id)
+                .eq("chain_status", "active")
+                .execute()
+            )
         )
 
         if not response.data or len(response.data) == 0:
@@ -361,13 +367,16 @@ async def get_chatbot_widget_code(chatbot_id: str):
 async def get_chatbot_widget_js(chatbot_id: str):
     """Serve the JavaScript widget file - Enhanced security"""
     try:
-        # Get chatbot config for defaults
-        response = (
-            supabase.table("chatbots")
-            .select("*")
-            .eq("id", chatbot_id)
-            .eq("chain_status", "active")
-            .execute()
+        # Get chatbot config for defaults (get fresh client per request for thread safety)
+        response = await run_supabase(
+            lambda: (
+                get_supabase_client()
+                .table("chatbots")
+                .select("*")
+                .eq("id", chatbot_id)
+                .eq("chain_status", "active")
+                .execute()
+            )
         )
 
         if not response.data or len(response.data) == 0:

@@ -179,7 +179,6 @@ class ResponseGenerationService:
             is_contact_query = self._is_contact_information_query(message)
 
             # DEBUG: Check if phone numbers are in context
-            import re
 
             phone_pattern = r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
             phones_in_context = re.findall(phone_pattern, context_text)

@@ -170,7 +170,7 @@ async def get_user_role(user_id: str) -> Optional[UserRole]:
         logger.error(
             "Error fetching user role",
             extra={"user_id": user_id, "error": str(e)},
-            exc_info=True
+            exc_info=True,
         )
         return UserRole.USER  # Default role
 
@@ -197,7 +197,7 @@ async def check_user_permission(user_id: str, permission: Permission) -> bool:
         logger.error(
             "Error checking user permission",
             extra={"user_id": user_id, "permission": permission, "error": str(e)},
-            exc_info=True
+            exc_info=True,
         )
         return False
 
@@ -254,8 +254,13 @@ async def check_org_permission(
     except Exception as e:
         logger.error(
             "Error checking organization permission",
-            extra={"user_id": user_id, "org_id": org_id, "permission": permission, "error": str(e)},
-            exc_info=True
+            extra={
+                "user_id": user_id,
+                "org_id": org_id,
+                "permission": permission,
+                "error": str(e),
+            },
+            exc_info=True,
         )
         return False
 
@@ -314,7 +319,7 @@ async def get_user_organizations(user_id: str) -> List[Dict[str, Any]]:
         logger.error(
             "Error fetching user organizations",
             extra={"user_id": user_id, "error": str(e)},
-            exc_info=True
+            exc_info=True,
         )
         return []
 
@@ -340,8 +345,8 @@ async def update_user_role(user_id: str, new_role: UserRole) -> bool:
     except Exception as e:
         logger.error(
             "Error updating user role",
-            extra={"user_id": user_id, "role": role, "error": str(e)},
-            exc_info=True
+            extra={"user_id": user_id, "role": new_role, "error": str(e)},
+            exc_info=True,
         )
         return False
 

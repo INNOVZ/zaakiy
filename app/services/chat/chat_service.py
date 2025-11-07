@@ -1,6 +1,5 @@
 """
-Main Chat Service Orchestrator
-Lightweight coordinator that integrates all modular chat services
+Main Chat Service to implement the AI chat functionality
 """
 import asyncio
 import logging
@@ -9,18 +8,19 @@ from typing import Any, Dict, List, Optional
 
 import openai
 
+from app.models.subscription import Channel
 from app.services.analytics.context_config import context_config_manager
 from app.utils.error_monitoring import error_monitor
 from app.utils.performance_monitor import performance_monitor
 
-from .analytics_service import AnalyticsService
-from .chat_utilities import ChatUtilities
-
-# Import services
-from .conversation_manager import ConversationManager
-from .document_retrieval_service import DocumentRetrievalService
-from .error_handling_service import ErrorHandlingService
-from .response_generation_service import ResponseGenerationService
+from .service_factory import (
+    get_analytics_service,
+    get_chat_utilities,
+    get_conversation_manager,
+    get_document_retrieval_service,
+    get_error_handling_service,
+    get_response_generation_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,6 @@ class ResponseGenerationError(ChatServiceError):
 class ChatService:
     """
     Main chat service orchestrator that coordinates modular services.
-
-    This class has been refactored from a monolithic 1355-line file into a clean
-    orchestrator pattern that delegates to specialized services for maintainability.
     """
 
     def __init__(
@@ -62,42 +59,16 @@ class ChatService:
         self.entity_id = entity_id  # User ID or Organization ID for token consumption
         self.entity_type = entity_type  # "user" or "organization"
 
-        # Initialize clients with lazy loading (avoid blocking initialization)
-        try:
-            import os
+        # Use lazy property access for clients (non-blocking initialization)
+        # Clients are singletons, so we just store references to getter functions
+        # This avoids blocking initialization and makes failures recoverable
+        self._supabase = None
+        self._index = None
+        self._openai_client = None
+        self._token_middleware = None
 
-            from ..storage.pinecone_client import get_pinecone_index
-            from ..storage.supabase_client import get_supabase_client
-
-            # Initialize clients on demand
-            self.supabase = get_supabase_client()
-            self.index = get_pinecone_index()
-
-            # Initialize OpenAI client
-            openai_key = os.getenv("OPENAI_API_KEY")
-            if openai_key:
-                self.openai_client = openai.OpenAI(api_key=openai_key)
-            else:
-                self.openai_client = None
-                logger.warning("OpenAI API key not found")
-
-            # Initialize billing middleware for token consumption
-            from ..auth.billing_middleware import TokenValidationMiddleware
-
-            self.token_middleware = TokenValidationMiddleware(self.supabase)
-
-            logger.info(
-                "✅ ChatService initialized with direct clients for org %s", org_id
-            )
-
-        except Exception as e:
-            error_monitor.record_error(
-                error_type="ChatServiceInitializationError",
-                severity="critical",
-                service="chat_service",
-                category="initialization",
-            )
-            raise ChatServiceError(f"Service initialization failed: {e}") from e
+        # Store initialization errors for graceful handling
+        self._init_errors = {}
 
         # Context engineering config will be loaded per request
         self.context_config = None
@@ -106,61 +77,110 @@ class ChatService:
         # EMERGENCY MODE: Minimal docs for speed
         self.retrieval_config = {"initial": 3, "rerank": 2, "final": 2}
         self.max_context_length = 2000  # Reduced for speed
+        self._background_tasks = set()
 
-        # Initialize modular services
+        # Initialize modular services (uses lazy-loaded clients)
         self._initialize_services()
 
+    @property
+    def supabase(self):
+        """Lazy-load Supabase client (singleton, non-blocking)"""
+        if self._supabase is None:
+            try:
+                from ..storage.supabase_client import get_supabase_client
+
+                self._supabase = get_supabase_client()
+            except Exception as e:
+                logger.warning("Failed to get Supabase client: %s", e)
+                raise ChatServiceError(f"Supabase client unavailable: {e}") from e
+        return self._supabase
+
+    @property
+    def index(self):
+        """Lazy-load Pinecone index (singleton, non-blocking)"""
+        if self._index is None:
+            try:
+                from ..storage.pinecone_client import get_pinecone_index
+
+                self._index = get_pinecone_index()
+            except Exception as e:
+                self._init_errors["pinecone"] = e
+                logger.warning("Failed to get Pinecone index: %s", e)
+                # Don't raise - document retrieval will handle this gracefully
+                return None
+        return self._index
+
+    @property
+    def openai_client(self):
+        """Lazy-load OpenAI client (shared singleton, non-blocking)"""
+        if self._openai_client is None:
+            try:
+                # Use shared client manager instead of creating new client
+                from ..shared import get_openai_client
+
+                self._openai_client = get_openai_client()
+                if self._openai_client is None:
+                    # Fallback: try direct initialization if shared client not available
+                    import os
+
+                    openai_key = os.getenv("OPENAI_API_KEY")
+                    if openai_key:
+                        self._openai_client = openai.OpenAI(api_key=openai_key)
+                    else:
+                        logger.warning(
+                            "OpenAI API key not found - some features may be unavailable"
+                        )
+            except Exception as e:
+                self._init_errors["openai"] = e
+                logger.warning("Failed to get OpenAI client: %s", e)
+                # Don't raise - validation happens when actually used
+                return None
+        return self._openai_client
+
+    @property
+    def token_middleware(self):
+        """Lazy-load token middleware (cached per supabase client)"""
+        if self._token_middleware is None:
+            try:
+                from ..auth.billing_middleware import TokenValidationMiddleware
+
+                # Use property to get supabase (lazy-loaded)
+                self._token_middleware = TokenValidationMiddleware(self.supabase)
+            except Exception as e:
+                logger.warning("Failed to initialize token middleware: %s", e)
+                raise ChatServiceError(f"Token middleware unavailable: {e}") from e
+        return self._token_middleware
+
     def _initialize_services(self):
-        """Initialize all modular services"""
+        """
+        Initialize all modular services using the service factory.
+        Services are cached and reused to avoid expensive re-initialization.
+        Clients are lazy-loaded, so validation happens when actually used.
+        """
         try:
-            # Validate critical dependencies
-            if self.openai_client is None:
-                raise ChatServiceError(
-                    "OpenAI client not initialized. Please check OPENAI_API_KEY environment variable."
-                )
+            # Conversation management service (shared per org, safe to cache)
+            self.conversation_manager = get_conversation_manager(org_id=self.org_id)
 
-            if self.index is None:
-                logger.warning(
-                    "Pinecone index not initialized - document retrieval may fail"
-                )
-
-            # Conversation management service
-            self.conversation_manager = ConversationManager(
-                org_id=self.org_id, supabase_client=self.supabase
+            # Per-request services (fresh instances to avoid context leakage)
+            self.document_retrieval = get_document_retrieval_service(
+                org_id=self.org_id, context_config=None
             )
-
-            # Document retrieval service
-            self.document_retrieval = DocumentRetrievalService(
+            self.response_generator = get_response_generation_service(
                 org_id=self.org_id,
-                openai_client=self.openai_client,
-                pinecone_index=self.index,
-                context_config=None,  # Will be set per request
-            )
-
-            # Response generation service
-            self.response_generator = ResponseGenerationService(
-                org_id=self.org_id,
-                openai_client=self.openai_client,
-                context_config=None,  # Will be set per request
                 chatbot_config=self.chatbot_config,
+                context_config=None,
+            )
+            self.analytics = get_analytics_service(
+                org_id=self.org_id, context_config=None
             )
 
-            # Analytics service
-            self.analytics = AnalyticsService(
-                org_id=self.org_id,
-                supabase_client=self.supabase,
-                context_config=None,  # Will be set per request
+            # Stateless utilities and shared error handler
+            self.utilities = get_chat_utilities()
+            self.error_handler = get_error_handling_service(org_id=self.org_id)
+
+            logger.info(
+                "✅ ChatService dependencies initialized for org %s", self.org_id
             )
-
-            # Utilities service
-            self.utilities = ChatUtilities()
-
-            # Error handling service
-            self.error_handler = ErrorHandlingService(
-                org_id=self.org_id, error_monitor=error_monitor
-            )
-
-            logger.info("✅ All modular services initialized for org %s", self.org_id)
 
         except Exception as e:
             logger.error("Failed to initialize modular services: %s", e)
@@ -170,6 +190,7 @@ class ChatService:
         self,
         message: str,
         session_id: str,
+        channel: Optional[Channel] = None,
     ) -> Dict[str, Any]:
         """
         Main entry point for processing chat messages.
@@ -198,8 +219,16 @@ class ChatService:
             # OPTIMIZATION: Parallelize independent operations
             # Load context config and get/create conversation in parallel
             config_task = self._load_context_config()
+            # Prepare metadata for conversation
+            conversation_metadata = {}
+            if channel:
+                conversation_metadata["channel"] = channel.value
+
             conversation_task = self.conversation_manager.get_or_create_conversation(
-                session_id=session_id, chatbot_id=self.chatbot_config.get("id")
+                session_id=session_id,
+                chatbot_id=self.chatbot_config.get("id"),
+                channel=channel.value if channel else None,
+                metadata=conversation_metadata if conversation_metadata else None,
             )
 
             # Wait for both to complete
@@ -263,25 +292,12 @@ class ChatService:
             # Step 5.5: Consume tokens if entity information is available
             if self.entity_id and self.entity_type and "tokens_used" in response_data:
                 try:
-                    from app.models.subscription import Channel, TokenUsageRequest
-
-                    # Determine channel based on context (default to website for now)
-                    channel = (
-                        Channel.WEBSITE
-                    )  # Could be enhanced to detect actual channel
-
-                    token_request = TokenUsageRequest(
-                        entity_id=self.entity_id,
-                        entity_type=self.entity_type,
-                        tokens_consumed=response_data["tokens_used"],
-                        operation_type="chat",
-                        channel=channel,
-                        chatbot_id=self.chatbot_config.get("id"),
-                        session_id=session_id,
-                        user_identifier=self.entity_id,  # Use entity_id as user identifier
-                    )
+                    # Use provided channel or default to website
+                    if channel is None:
+                        channel = Channel.WEBSITE
 
                     # Consume tokens using the middleware
+                    # The middleware creates TokenUsageRequest internally from these parameters
                     await self.token_middleware.validate_and_consume_tokens(
                         entity_id=self.entity_id,
                         entity_type=self.entity_type,
@@ -330,6 +346,7 @@ class ChatService:
                     processing_time=processing_time,
                 )
             )
+            self._track_background_task(analytics_task)
 
             # Step 8: Return comprehensive response
             return {
@@ -500,8 +517,30 @@ class ChatService:
     # ==========================================
 
     async def chat(
-        self, message: str, session_id: str, chatbot_id: Optional[str] = None
+        self,
+        message: str,
+        session_id: str,
+        chatbot_id: Optional[str] = None,
+        channel: Optional[Channel] = None,
     ) -> Dict[str, Any]:
         """Backward compatibility method that wraps process_message"""
         # chatbot_id is ignored since chatbot_config is set during initialization
-        return await self.process_message(message=message, session_id=session_id)
+        return await self.process_message(
+            message=message, session_id=session_id, channel=channel
+        )
+
+    def _track_background_task(self, task: asyncio.Task):
+        """Keep track of detached tasks so failures surface in logs."""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._log_background_task_error)
+
+    @staticmethod
+    def _log_background_task_error(task: asyncio.Task):
+        """Log any exception raised by a detached analytics task."""
+        try:
+            exception = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exception:
+            logger.warning("Background task failed: %s", exception)

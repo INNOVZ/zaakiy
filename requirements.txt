@@ -36,7 +36,9 @@ lxml>=5.0.0
 playwright>=1.40.0  # For JavaScript-rendered websites (React, Vue, Angular)
 
 # Task scheduling
-apscheduler==3.10.4
+apscheduler==3.10.4  # Legacy scheduler (can be replaced with Celery)
+celery[redis]==5.3.4  # Distributed task queue
+nest-asyncio==1.5.8  # For running async functions in Celery tasks
 
 # WebSocket support
 websockets>=12.0
@@ -63,3 +65,6 @@ pytest-asyncio>=0.20.0
 pytest-mock>=3.10.0
 pytest-cov>=4.0.0
 locust>=2.0.0  # Load testing
+
+# WhatsApp messaging
+twilio>=8.0.0

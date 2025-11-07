@@ -1,8 +1,9 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, TypeVar
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 from supabase import Client, create_client
 
 from ...config.settings import get_database_config
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 _client: Optional[httpx.AsyncClient] = None
 _supabase: Optional[Client] = None
 _config_error: Optional[str] = None
+T = TypeVar("T")
 
 
 @dataclass
@@ -180,3 +182,13 @@ def get_connection_stats() -> dict:
         "failed_connections": 0,
         "client_initialized": current_supabase is not None,
     }
+
+
+async def run_supabase(operation: Callable[[], T]) -> T:
+    """
+    Execute a blocking Supabase operation inside a threadpool.
+
+    This keeps async endpoints responsive while still using the
+    synchronous Supabase Python client.
+    """
+    return await run_in_threadpool(operation)

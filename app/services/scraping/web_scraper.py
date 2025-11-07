@@ -17,11 +17,10 @@ from urllib.robotparser import RobotFileParser
 import httpx
 from bs4 import BeautifulSoup
 
-from ...config.settings import get_performance_config, get_web_scraping_config
-from ...utils.error_handlers import ErrorHandler, handle_errors
+from ...config.settings import get_web_scraping_config
+from ...utils.error_handlers import handle_errors
 from ...utils.logging_config import LogContext, PerformanceLogger, get_logger
 from .url_utils import (
-    URLSanitizer,
     create_safe_error_message,
     create_safe_fetch_message,
     create_safe_success_message,
@@ -197,6 +196,16 @@ class URLSecurityValidator:
             return False, f"URL validation error: {str(e)}"
 
 
+@dataclass
+class ScrapedPage:
+    """Structured result for a scraped page."""
+
+    text: str
+    html: str
+    content_type: str
+    content_length: int
+
+
 class RobotsTxtChecker:
     """Check robots.txt compliance"""
 
@@ -227,11 +236,7 @@ class RobotsTxtChecker:
                     if response.status_code == 200:
                         rp = RobotFileParser()
                         rp.set_url(robots_url)
-                        rp.read()
-                        # Parse the content
-                        lines = response.text.splitlines()
-                        for line in lines:
-                            rp.read()
+                        rp.parse(response.text.splitlines())
 
                         self.cache[cache_key] = (rp, now)
                         return rp.can_fetch(user_agent, url)
@@ -331,8 +336,29 @@ class SecureWebScraper:
         contact_info = self._extract_contact_information(soup)
 
         # Remove unwanted elements (but we already saved contact info)
-        for element in soup(["script", "style", "nav", "header", "footer", "aside"]):
+        removable_tags = [
+            "script",
+            "style",
+            "nav",
+            "header",
+            "footer",
+            "aside",
+            "button",
+        ]
+        for element in soup(removable_tags):
             element.decompose()
+
+        # CTA buttons are frequently implemented as anchors with button-style classes
+        cta_pattern = re.compile(r"\b(btn|button|cta|call[-_]?to[-_]?action)\b", re.I)
+        for anchor in soup.find_all("a"):
+            class_attr = anchor.get("class", [])
+            if isinstance(class_attr, (list, tuple)):
+                classes = " ".join(class_attr)
+            else:
+                classes = str(class_attr or "")
+            role = anchor.get("role", "")
+            if role.lower() == "button" or (classes and cta_pattern.search(classes)):
+                anchor.decompose()
 
         # Extract text
         text = soup.get_text()
@@ -417,14 +443,21 @@ class SecureWebScraper:
         """
         Securely scrape text from a single URL with comprehensive protection
         """
-        with LogContext(extra_context={"domain": log_domain_safely(url)}) as ctx:
+        page = await self._scrape_page(url, user_agent=user_agent)
+        return page.text
+
+    async def _scrape_page(
+        self, url: str, user_agent: Optional[str] = None
+    ) -> ScrapedPage:
+        """Execute secure scraping workflow and return structured result."""
+        with LogContext(extra_context={"domain": log_domain_safely(url)}):
             logger.info("Starting secure scrape of %s", create_safe_fetch_message(url))
 
             # Security validation
             if self.app_config.enable_ssrf_protection:
-                is_valid, error_msg = URLSecurityValidator.validate_url(url)
+                is_valid, error_msg = await self._validate_url_async(url)
                 if not is_valid:
-                    raise ValueError("URL security validation failed: %s", error_msg)
+                    raise ValueError(f"URL security validation failed: {error_msg}")
 
             # Domain allow/block list validation
             domain = urlparse(url).netloc.lower()
@@ -432,13 +465,13 @@ class SecureWebScraper:
                 self.app_config.blocked_domains
                 and domain in self.app_config.blocked_domains
             ):
-                raise ValueError("Domain is blocked: %s", domain)
+                raise ValueError(f"Domain is blocked: {domain}")
 
             if (
                 self.app_config.allowed_domains
                 and domain not in self.app_config.allowed_domains
             ):
-                raise ValueError("Domain not in allowed list: %s", domain)
+                raise ValueError(f"Domain not in allowed list: {domain}")
 
             # Check robots.txt compliance
             user_agent_str = user_agent or self._get_random_user_agent()
@@ -446,10 +479,9 @@ class SecureWebScraper:
                 self.app_config.respect_robots_txt
                 and not await self.robots_checker.can_fetch(url, user_agent_str)
             ):
-                raise ValueError("URL blocked by robots.txt: %s", url)
+                raise ValueError(f"URL blocked by robots.txt: {url}")
 
             # Rate limiting
-            domain = urlparse(url).netloc.lower()
             await self._respect_rate_limit(domain)
 
             with PerformanceLogger(f"scrape_url_{domain}"):
@@ -462,47 +494,6 @@ class SecureWebScraper:
                         ),
                     ) as client:
                         response = await self._fetch_with_retries(client, url)
-
-                        # Check content size
-                        content_length = response.headers.get("content-length")
-                        if (
-                            content_length
-                            and int(content_length) > self.config.max_content_size
-                        ):
-                            raise ValueError(
-                                f"Content too large: {content_length} bytes"
-                            )
-
-                        # Check content type
-                        content_type = response.headers.get("content-type", "").lower()
-                        if not any(
-                            ct in content_type
-                            for ct in self.config.allowed_content_types
-                        ):
-                            raise ValueError(
-                                f"Unsupported content type: {content_type}"
-                            )
-
-                        # Check actual response size
-                        if len(response.content) > self.config.max_content_size:
-                            raise ValueError(
-                                f"Response too large: {len(response.content)} bytes"
-                            )
-
-                        # Extract text
-                        text = self._extract_and_clean_text(response.text)
-
-                        if len(text.strip()) < 10:
-                            raise ValueError("No meaningful text content found")
-
-                        logger.info(
-                            "%s",
-                            create_safe_success_message(
-                                url, f"{len(text)} characters scraped"
-                            ),
-                        )
-                        return text
-
                 except httpx.HTTPStatusError as e:
                     logger.error(
                         "%s",
@@ -512,10 +503,12 @@ class SecureWebScraper:
                     )
                     raise ValueError(
                         f"HTTP {e.response.status_code}: {e.response.reason_phrase}"
-                    )
-                except httpx.TimeoutException:
+                    ) from e
+                except httpx.TimeoutException as e:
                     logger.error("%s", create_safe_error_message(url, "timeout"))
-                    raise ValueError(f"Request timeout after {self.config.timeout}s")
+                    raise ValueError(
+                        f"Request timeout after {self.config.timeout}s"
+                    ) from e
                 except Exception as e:
                     logger.error(
                         "%s",
@@ -523,7 +516,47 @@ class SecureWebScraper:
                             url, f"unexpected error: {type(e).__name__}"
                         ),
                     )
-                    raise ValueError(f"Scraping failed: {str(e)}")
+                    raise ValueError(f"Scraping failed: {str(e)}") from e
+
+                # Check content size
+                content_length_header = response.headers.get("content-length")
+                if (
+                    content_length_header
+                    and int(content_length_header) > self.config.max_content_size
+                ):
+                    raise ValueError(
+                        f"Content too large: {content_length_header} bytes"
+                    )
+
+                # Check content type
+                content_type = response.headers.get("content-type", "").lower()
+                if not any(
+                    ct in content_type for ct in self.config.allowed_content_types
+                ):
+                    raise ValueError(f"Unsupported content type: {content_type}")
+
+                # Check actual response size
+                if len(response.content) > self.config.max_content_size:
+                    raise ValueError(
+                        f"Response too large: {len(response.content)} bytes"
+                    )
+
+                # Extract text
+                text = self._extract_and_clean_text(response.text)
+
+                if len(text.strip()) < 10:
+                    raise ValueError("No meaningful text content found")
+
+                logger.info(
+                    "%s",
+                    create_safe_success_message(url, f"{len(text)} characters scraped"),
+                )
+                return ScrapedPage(
+                    text=text,
+                    html=response.text,
+                    content_type=content_type,
+                    content_length=len(response.content),
+                )
 
     @handle_errors(context="secure_web_scraper.scrape_website_recursive")
     async def scrape_website_recursive(
@@ -557,124 +590,126 @@ class SecureWebScraper:
 
             # Validate starting URL
             if self.app_config.enable_ssrf_protection:
-                is_valid, error_msg = URLSecurityValidator.validate_url(start_url)
+                is_valid, error_msg = await self._validate_url_async(start_url)
                 if not is_valid:
                     raise ValueError(
                         f"Start URL security validation failed: {error_msg}"
                     )
 
-            scraped_pages = {}
-            visited_urls = set()
-            url_queue = deque([(start_url, 0)])
-            start_domain = urlparse(start_url).netloc.lower()
+        scraped_pages: Dict[str, str] = {}
+        visited_urls: Set[str] = set()
+        enqueued_urls: Set[str] = {start_url}
+        url_queue = deque([(start_url, 0)])
+        start_domain = urlparse(start_url).netloc.lower()
 
-            # Semaphore to limit concurrent requests
-            semaphore = asyncio.Semaphore(concurrent_requests)
+        semaphore = asyncio.Semaphore(concurrent_requests)
+        pending: Dict[asyncio.Task, Tuple[str, int]] = {}
 
-            async def scrape_single_url(
-                url: str, depth: int
-            ) -> Optional[Tuple[str, str]]:
-                """Scrape a single URL with semaphore protection"""
-                async with semaphore:
-                    try:
-                        text = await self.scrape_url_text(url)
-                        return (url, text)
-                    except Exception as e:
-                        logger.warning(
-                            "%s",
-                            create_safe_error_message(
-                                url, f"scraping failed: {type(e).__name__}"
-                            ),
-                        )
-                        return None
+        async def scrape_single_url(url: str, depth: int) -> Optional[ScrapedPage]:
+            """Scrape a single URL with semaphore protection."""
+            async with semaphore:
+                try:
+                    return await self._scrape_page(url)
+                except Exception as e:
+                    logger.warning(
+                        "%s",
+                        create_safe_error_message(
+                            url, f"scraping failed: {type(e).__name__}"
+                        ),
+                    )
+                    return None
 
-        while url_queue and len(scraped_pages) < max_pages:
-            current_url, depth = url_queue.popleft()
-
-            # Skip if already visited or max depth reached
-            if current_url in visited_urls or depth > max_depth:
-                continue
-
-            visited_urls.add(current_url)
-
-            # Validate URL before scraping
+        async def can_enqueue(url: str) -> bool:
+            if url in visited_urls:
+                return False
             if self.app_config.enable_ssrf_protection:
-                is_valid, error_msg = URLSecurityValidator.validate_url(current_url)
+                is_valid, error_msg = await self._validate_url_async(url)
                 if not is_valid:
                     logger.warning(
                         "Skipping invalid URL %s: %s",
-                        log_domain_safely(current_url),
+                        log_domain_safely(url),
                         error_msg,
+                    )
+                    return False
+            return True
+
+        while (url_queue or pending) and len(scraped_pages) < max_pages:
+            while (
+                url_queue
+                and len(pending) < concurrent_requests
+                and len(scraped_pages) + len(pending) < max_pages
+            ):
+                current_url, depth = url_queue.popleft()
+                enqueued_urls.discard(current_url)
+                if depth > max_depth or not await can_enqueue(current_url):
+                    continue
+                visited_urls.add(current_url)
+                task = asyncio.create_task(scrape_single_url(current_url, depth))
+                pending[task] = (current_url, depth)
+
+            if not pending:
+                break
+
+            done, _ = await asyncio.wait(
+                set(pending.keys()), return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                current_url, depth = pending.pop(task)
+                try:
+                    page = task.result()
+                except Exception as e:
+                    logger.error(
+                        "%s",
+                        create_safe_error_message(
+                            current_url, f"processing error: {type(e).__name__}"
+                        ),
                     )
                     continue
 
-            try:
-                # Scrape current page
-                result = await scrape_single_url(current_url, depth)
-                if result:
-                    url, text = result
-                    scraped_pages[url] = text
+                if not page:
+                    continue
 
-                    # If not at max depth, find more links
-                    if depth < max_depth:
-                        # Parse the page again to find links (we already have the text)
-                        try:
-                            async with httpx.AsyncClient(
-                                timeout=httpx.Timeout(10),
-                                headers={"User-Agent": self._get_random_user_agent()},
-                            ) as client:
-                                response = await client.get(current_url)
-                                soup = BeautifulSoup(response.text, "html.parser")
+                scraped_pages[current_url] = page.text
 
-                                for link in soup.find_all("a", href=True):
-                                    href = link["href"]
-                                    absolute_url = urljoin(current_url, href)
-                                    absolute_url, _ = urldefrag(
-                                        absolute_url
-                                    )  # Remove fragment
+                if depth >= max_depth or len(scraped_pages) >= max_pages:
+                    continue
 
-                                    # Security validation for new URL
-                                    (
-                                        is_link_valid,
-                                        _,
-                                    ) = URLSecurityValidator.validate_url(absolute_url)
-                                    if not is_link_valid:
-                                        continue
+                try:
+                    soup = BeautifulSoup(page.html, "html.parser")
+                except Exception as e:
+                    logger.warning(
+                        "Failed to parse HTML from %s: %s",
+                        log_domain_safely(current_url),
+                        type(e).__name__,
+                    )
+                    continue
 
-                                    # Domain restriction
-                                    if (
-                                        same_domain_only
-                                        and urlparse(absolute_url).netloc.lower()
-                                        != start_domain
-                                    ):
-                                        continue
+                for link in soup.find_all("a", href=True):
+                    href = link["href"]
+                    absolute_url = urljoin(current_url, href)
+                    absolute_url, _ = urldefrag(absolute_url)
 
-                                    # Add to queue if not visited
-                                    if (
-                                        absolute_url not in visited_urls
-                                        and absolute_url
-                                        not in [u for u, d in url_queue]
-                                    ):
-                                        url_queue.append((absolute_url, depth + 1))
+                    if same_domain_only and (
+                        urlparse(absolute_url).netloc.lower() != start_domain
+                    ):
+                        continue
 
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to extract links from %s: %s",
-                                log_domain_safely(current_url),
-                                type(e).__name__,
-                            )
-
-            except Exception as e:
-                logger.error(
-                    "%s",
-                    create_safe_error_message(
-                        current_url, f"processing error: {type(e).__name__}"
-                    ),
-                )
-                continue
+                    if (
+                        absolute_url not in enqueued_urls
+                        and absolute_url not in visited_urls
+                        and await can_enqueue(absolute_url)
+                    ):
+                        url_queue.append((absolute_url, depth + 1))
+                        enqueued_urls.add(absolute_url)
 
         logger.info("Recursive scrape completed: %s pages scraped", len(scraped_pages))
         return scraped_pages
+
+    async def _validate_url_async(self, url: str) -> Tuple[bool, str]:
+        """Run synchronous URL validation in a thread to avoid blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, URLSecurityValidator.validate_url, url)
 
 
 # Global scraper instance with default configuration

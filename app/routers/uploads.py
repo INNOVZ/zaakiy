@@ -11,7 +11,7 @@ from ..models import SearchRequest, UpdateRequest, URLIngestRequest
 from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.scraping.ingestion_worker import get_supabase_storage_url
 from ..services.storage.pinecone_client import get_pinecone_index
-from ..services.storage.supabase_client import get_supabase_client
+from ..services.storage.supabase_client import get_supabase_client, run_supabase
 from ..utils.log_sanitizer import sanitize_for_log_injection
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 from ..utils.validators import validate_file_size, validate_file_type
@@ -26,7 +26,7 @@ supabase = get_supabase_client()
 index = get_pinecone_index()
 
 
-def _update_upload_helper(
+async def _update_upload_helper(
     upload_id: str,
     org_id: str,
     file_type: str,
@@ -49,12 +49,14 @@ def _update_upload_helper(
         Success response dictionary
     """
     # Fetch the existing upload record
-    upload_result = (
-        supabase.table("uploads")
-        .select("*")
-        .eq("id", upload_id)
-        .eq("org_id", org_id)
-        .execute()
+    upload_result = await run_supabase(
+        lambda: (
+            supabase.table("uploads")
+            .select("*")
+            .eq("id", upload_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
     )
 
     if not upload_result.data:
@@ -72,7 +74,9 @@ def _update_upload_helper(
         # Delete old file from storage if it exists
         if old_source:
             try:
-                supabase.storage.from_("uploads").remove([old_source])
+                await run_supabase(
+                    lambda: supabase.storage.from_("uploads").remove([old_source])
+                )
                 logger.info(
                     "Deleted old file from storage: %s",
                     sanitize_for_log_injection(old_source),
@@ -85,8 +89,10 @@ def _update_upload_helper(
 
         # Upload new file to Supabase Storage
         try:
-            storage_result = supabase.storage.from_("uploads").upload(
-                new_source, file_content
+            storage_result = await run_supabase(
+                lambda: supabase.storage.from_("uploads").upload(
+                    new_source, file_content
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -94,19 +100,21 @@ def _update_upload_helper(
             ) from e
 
     # Update the upload record in database
-    db_result = (
-        supabase.table("uploads")
-        .update(
-            {
-                "source": new_source,
-                "status": "pending",
-                "error_message": None,
-                "updated_at": "now()",
-            }
+    db_result = await run_supabase(
+        lambda: (
+            supabase.table("uploads")
+            .update(
+                {
+                    "source": new_source,
+                    "status": "pending",
+                    "error_message": None,
+                    "updated_at": "now()",
+                }
+            )
+            .eq("id", upload_id)
+            .eq("org_id", org_id)
+            .execute()
         )
-        .eq("id", upload_id)
-        .eq("org_id", org_id)
-        .execute()
     )
 
     return {
@@ -256,8 +264,10 @@ async def upload_pdf(
 
         # Upload to Supabase Storage
         try:
-            storage_result = supabase.storage.from_("uploads").upload(
-                supabase_path, file_content
+            storage_result = await run_supabase(
+                lambda: supabase.storage.from_("uploads").upload(
+                    supabase_path, file_content
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -265,18 +275,20 @@ async def upload_pdf(
             ) from e
 
         # Insert record directly into database
-        db_result = (
-            supabase.table("uploads")
-            .insert(
-                {
-                    "org_id": org_id,
-                    "type": "pdf",
-                    "source": supabase_path,
-                    "pinecone_namespace": f"org-{org_id}",
-                    "status": "pending",
-                }
+        db_result = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .insert(
+                    {
+                        "org_id": org_id,
+                        "type": "pdf",
+                        "source": supabase_path,
+                        "pinecone_namespace": f"org-{org_id}",
+                        "status": "pending",
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
 
         return {
@@ -337,8 +349,10 @@ async def upload_image(
 
         # Upload to Supabase Storage
         try:
-            storage_result = supabase.storage.from_("uploads").upload(
-                supabase_path, file_content
+            storage_result = await run_supabase(
+                lambda: supabase.storage.from_("uploads").upload(
+                    supabase_path, file_content
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -390,6 +404,8 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
             sanitize_for_log_injection(org_id) if org_id else "None",
         )
 
+        storage_bucket = supabase.storage.from_("uploads")
+
         # Try to list all files in uploads bucket to find the avatar
         # This handles the org-{org_id}/avatars/{file_id} structure
         try:
@@ -410,7 +426,9 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
 
                 for path in org_paths:
                     try:
-                        test_content = supabase.storage.from_("uploads").download(path)
+                        test_content = await run_supabase(
+                            lambda: storage_bucket.download(path)
+                        )
                         if test_content:
                             found_path = path
                             logger.info(
@@ -424,7 +442,7 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
             # If not found with org_id or no org_id provided, search all orgs
             if not found_path:
                 # List all files in the uploads bucket
-                all_files = supabase.storage.from_("uploads").list()
+                all_files = await run_supabase(lambda: storage_bucket.list())
 
                 # First, try to find in org directories
                 for folder in all_files:
@@ -432,8 +450,8 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
                         org_folder = folder["name"]
                         try:
                             # List avatars folder in this org
-                            avatar_files = supabase.storage.from_("uploads").list(
-                                f"{org_folder}/avatars"
+                            avatar_files = await run_supabase(
+                                lambda: storage_bucket.list(f"{org_folder}/avatars")
                             )
 
                             # Check if our file exists
@@ -472,7 +490,9 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
 
                 for path in legacy_paths:
                     try:
-                        test_content = supabase.storage.from_("uploads").download(path)
+                        test_content = await run_supabase(
+                            lambda: storage_bucket.download(path)
+                        )
                         if test_content:
                             found_path = path
                             logger.info(
@@ -485,7 +505,9 @@ async def get_avatar_image(file_id: str, org_id: Optional[str] = Query(None)):
 
             # Download the file if found
             if found_path:
-                file_content = supabase.storage.from_("uploads").download(found_path)
+                file_content = await run_supabase(
+                    lambda: storage_bucket.download(found_path)
+                )
 
                 # Determine content type from file extension
                 if found_path.endswith((".jpg", ".jpeg")):
@@ -559,7 +581,9 @@ async def get_legacy_avatar_image(file_path: str):
             supabase_path = file_path
 
         # Get the file content from Supabase Storage
-        file_content = supabase.storage.from_("uploads").download(supabase_path)
+        file_content = await run_supabase(
+            lambda: supabase.storage.from_("uploads").download(supabase_path)
+        )
 
         # Determine content type from file extension
         content_type = "image/png"  # default
@@ -639,8 +663,10 @@ async def upload_json(
 
         # Upload to Supabase Storage
         try:
-            storage_result = supabase.storage.from_("uploads").upload(
-                supabase_path, file_content
+            storage_result = await run_supabase(
+                lambda: supabase.storage.from_("uploads").upload(
+                    supabase_path, file_content
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -648,18 +674,20 @@ async def upload_json(
             ) from e
 
         # Insert record directly into database
-        db_result = (
-            supabase.table("uploads")
-            .insert(
-                {
-                    "org_id": org_id,
-                    "type": "json",
-                    "source": supabase_path,
-                    "pinecone_namespace": f"org-{org_id}",
-                    "status": "pending",
-                }
+        db_result = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .insert(
+                    {
+                        "org_id": org_id,
+                        "type": "json",
+                        "source": supabase_path,
+                        "pinecone_namespace": f"org-{org_id}",
+                        "status": "pending",
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
 
         return {
@@ -694,22 +722,41 @@ async def ingest_url(
         dict: A dictionary containing the upload ID and a success message.
     """
     try:
+        import json
+
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
+        # Build source URL with metadata for recursive scraping
+        source_data = {"url": request.url}
+        if request.recursive:
+            source_data["recursive"] = True
+            if request.max_pages:
+                source_data["max_pages"] = request.max_pages
+            if request.max_depth:
+                source_data["max_depth"] = request.max_depth
+
+        # Store configuration as JSON in source field if recursive
+        if request.recursive:
+            source = json.dumps(source_data)
+        else:
+            source = request.url
+
         # Insert URL record directly into database
-        db_result = (
-            supabase.table("uploads")
-            .insert(
-                {
-                    "org_id": org_id,
-                    "type": "url",
-                    "source": request.url,
-                    "pinecone_namespace": f"org-{org_id}",
-                    "status": "pending",
-                }
+        db_result = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .insert(
+                    {
+                        "org_id": org_id,
+                        "type": "url",
+                        "source": source,
+                        "pinecone_namespace": f"org-{org_id}",
+                        "status": "pending",
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
 
         return {
@@ -779,10 +826,12 @@ async def list_uploads(
             query = query.eq("type", type)
 
         # Apply pagination and ordering
-        result = (
-            query.order("created_at", desc=True)
-            .range(offset, offset + page_size - 1)
-            .execute()
+        result = await run_supabase(
+            lambda: (
+                query.order("created_at", desc=True)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
         )
 
         # Get total count
@@ -814,7 +863,11 @@ async def list_uploads(
 @router.get("/{upload_id}/status")
 async def get_upload_status(upload_id: str, user=Depends(verify_jwt_token_from_header)):
     try:
-        result = supabase.table("uploads").select("*").eq("id", upload_id).execute()
+        result = await run_supabase(
+            lambda: (
+                supabase.table("uploads").select("*").eq("id", upload_id).execute()
+            )
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Upload not found")
@@ -832,12 +885,14 @@ async def delete_upload(upload_id: str, user=Depends(verify_jwt_token_from_heade
         org_id = user_data["org_id"]
 
         # Fetch the complete upload record
-        upload_result = (
-            supabase.table("uploads")
-            .select("*")
-            .eq("id", upload_id)
-            .eq("org_id", org_id)
-            .execute()
+        upload_result = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .select("*")
+                .eq("id", upload_id)
+                .eq("org_id", org_id)
+                .execute()
+            )
         )
 
         if not upload_result.data:
@@ -854,7 +909,9 @@ async def delete_upload(upload_id: str, user=Depends(verify_jwt_token_from_heade
         # Delete file from Supabase storage if it's a file upload (not URL)
         if file_type in ["pdf", "json"] and source:
             try:
-                supabase.storage.from_("uploads").remove([source])
+                await run_supabase(
+                    lambda: supabase.storage.from_("uploads").remove([source])
+                )
                 logger.info(
                     "Deleted file from storage: %s", sanitize_for_log_injection(source)
                 )
@@ -866,9 +923,15 @@ async def delete_upload(upload_id: str, user=Depends(verify_jwt_token_from_heade
                 # Continue with database deletion even if storage deletion fails
 
         # Delete the upload record from the database
-        supabase.table("uploads").delete().eq("id", upload_id).eq(
-            "org_id", org_id
-        ).execute()
+        await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .delete()
+                .eq("id", upload_id)
+                .eq("org_id", org_id)
+                .execute()
+            )
+        )
 
         return {
             "message": "Upload deleted successfully",
@@ -886,11 +949,13 @@ async def update_upload_status(
 ):
     try:
         # Update the upload status in the database
-        result = (
-            supabase.table("uploads")
-            .update({"status": status})
-            .eq("id", upload_id)
-            .execute()
+        result = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .update({"status": status})
+                .eq("id", upload_id)
+                .execute()
+            )
         )
 
         if not result.data:
@@ -931,7 +996,7 @@ async def update_pdf_upload(
             raise HTTPException(status_code=400, detail=str(e))
 
         # Use helper function to update
-        return _update_upload_helper(
+        return await _update_upload_helper(
             upload_id=upload_id,
             org_id=org_id,
             file_type="pdf",
@@ -982,7 +1047,7 @@ async def update_json_upload(
             raise HTTPException(status_code=400, detail="Invalid JSON format")
 
         # Use helper function to update
-        return _update_upload_helper(
+        return await _update_upload_helper(
             upload_id=upload_id,
             org_id=org_id,
             file_type="json",
@@ -1006,7 +1071,7 @@ async def update_url_upload(
         org_id = user_data["org_id"]
 
         # Use helper function to update (no file content for URLs)
-        return _update_upload_helper(
+        return await _update_upload_helper(
             upload_id=upload_id,
             org_id=org_id,
             file_type="url",
@@ -1118,12 +1183,14 @@ async def reprocess_upload(upload_id: str, user=Depends(verify_jwt_token_from_he
         org_id = user_data["org_id"]
 
         # Check if upload exists and belongs to user's org
-        upload_result = (
-            supabase.table("uploads")
-            .select("*")
-            .eq("id", upload_id)
-            .eq("org_id", org_id)
-            .execute()
+        upload_result = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .select("*")
+                .eq("id", upload_id)
+                .eq("org_id", org_id)
+                .execute()
+            )
         )
 
         if not upload_result.data:
@@ -1136,9 +1203,17 @@ async def reprocess_upload(upload_id: str, user=Depends(verify_jwt_token_from_he
         delete_vectors_from_pinecone(upload_id, namespace)
 
         # Reset status to pending
-        supabase.table("uploads").update(
-            {"status": "pending", "error_message": None, "updated_at": "now()"}
-        ).eq("id", upload_id).eq("org_id", org_id).execute()
+        await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .update(
+                    {"status": "pending", "error_message": None, "updated_at": "now()"}
+                )
+                .eq("id", upload_id)
+                .eq("org_id", org_id)
+                .execute()
+            )
+        )
 
         return {
             "message": "Upload queued for reprocessing",
@@ -1158,11 +1233,13 @@ async def get_upload_stats(user=Depends(verify_jwt_token_from_header)):
         org_id = user_data["org_id"]
 
         # Get upload counts by status
-        uploads = (
-            supabase.table("uploads")
-            .select("status, type")
-            .eq("org_id", org_id)
-            .execute()
+        uploads = await run_supabase(
+            lambda: (
+                supabase.table("uploads")
+                .select("status, type")
+                .eq("org_id", org_id)
+                .execute()
+            )
         )
 
         stats = {"total_uploads": len(uploads.data), "by_status": {}, "by_type": {}}

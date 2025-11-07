@@ -24,7 +24,11 @@ class ConversationManager:
         self.supabase = supabase_client
 
     async def get_or_create_conversation(
-        self, session_id: str, chatbot_id: Optional[str] = None
+        self,
+        session_id: str,
+        chatbot_id: Optional[str] = None,
+        channel: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get existing conversation or create new one with write-through caching"""
         # Cache key for this conversation
@@ -72,17 +76,31 @@ class ConversationManager:
                 logger.debug("Found existing conversation for session %s", session_id)
                 return conversation
 
-            # Create new conversation
+            # Create new conversation with consistent metadata handling
             conversation_data = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_id,
                 "org_id": self.org_id,
                 "chatbot_id": chatbot_id,
+                "channel": channel or "website",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "message_count": 0,
                 "status": "active",
             }
+
+            # Handle metadata consistently: merge channel into metadata if provided
+            if metadata:
+                # If metadata is provided, ensure channel is included if channel was specified
+                if channel and "channel" not in metadata:
+                    metadata = {**metadata, "channel": channel}
+                conversation_data["metadata"] = metadata
+            elif channel:
+                # If only channel is provided, store it in metadata for consistency
+                conversation_data["metadata"] = {"channel": channel}
+            else:
+                # No metadata or channel, use empty dict for consistency
+                conversation_data["metadata"] = {}
 
             # Insert into database (Write-Through caching)
             response = (

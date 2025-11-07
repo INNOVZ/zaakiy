@@ -3,6 +3,7 @@ Document Retrieval Service
 Handles all vector search and document retrieval operations
 """
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,7 @@ class DocumentRetrievalService:
         self.openai_client = openai_client
         self.pinecone_index = pinecone_index
         self.context_config = context_config
+        self._background_tasks = set()
 
         # Initialize optimized vector search
         if self.openai_client:
@@ -58,20 +60,9 @@ class DocumentRetrievalService:
         all_docs = {}
 
         # Get retrieval strategy from context config
-        if self.context_config and hasattr(self.context_config, "retrieval_strategy"):
-            strategy = self.context_config.retrieval_strategy
-            semantic_weight = self.context_config.semantic_weight
-            keyword_weight = self.context_config.keyword_weight
-        elif self.context_config and isinstance(self.context_config, dict):
-            # Handle dict-based config
-            strategy = self.context_config.get("retrieval_strategy", "vector_search")
-            semantic_weight = self.context_config.get("semantic_weight", 0.8)
-            keyword_weight = self.context_config.get("keyword_weight", 0.2)
-        else:
-            # Handle None or invalid config - use defaults
-            strategy = "vector_search"
-            semantic_weight = 0.8
-            keyword_weight = 0.2
+        strategy = self._get_context_value("retrieval_strategy", "vector_search")
+        semantic_weight = self._get_context_value("semantic_weight", 0.8)
+        keyword_weight = self._get_context_value("keyword_weight", 0.2)
 
         logger.info(
             "Using retrieval strategy: %s (semantic: %s, keyword: %s)",
@@ -195,6 +186,7 @@ class DocumentRetrievalService:
         cache_task = asyncio.create_task(
             self._cache_retrieval_results(cache_key, final_docs)
         )
+        self._track_background_task(cache_task)
 
         return final_docs
 
@@ -282,12 +274,20 @@ class DocumentRetrievalService:
         """Fallback semantic search without optimization"""
         try:
             embedding = await self._generate_embedding(query)
-            results = self.pinecone_index.query(
-                vector=embedding,
-                top_k=self.retrieval_config["initial"],
-                namespace=self.namespace,
-                include_metadata=True,
-            )
+            if not self.pinecone_index:
+                raise DocumentRetrievalError("Pinecone index not configured")
+
+            loop = asyncio.get_running_loop()
+
+            def _query_pinecone():
+                return self.pinecone_index.query(
+                    vector=embedding,
+                    top_k=self.retrieval_config["initial"],
+                    namespace=self.namespace,
+                    include_metadata=True,
+                )
+
+            results = await loop.run_in_executor(None, _query_pinecone)
 
             docs = []
             for match in results.matches:
@@ -319,7 +319,9 @@ class DocumentRetrievalService:
             semantic_docs = await self._semantic_retrieval(query)
 
             # Get keyword results
-            keyword_docs = await self._keyword_matching(query)
+            keyword_docs = await self._keyword_matching(
+                query, candidate_docs=semantic_docs
+            )
 
             # Combine and reweight scores
             combined_docs = {}
@@ -403,8 +405,10 @@ class DocumentRetrievalService:
             logger.error("Domain-specific retrieval failed: %s", e)
             return await self._semantic_retrieval(query)
 
-    async def _keyword_matching(self, query: str) -> List[Dict[str, Any]]:
-        """Basic keyword matching using metadata filters"""
+    async def _keyword_matching(
+        self, query: str, candidate_docs: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
+        """Keyword matching using extracted terms against candidate chunks."""
         try:
             # Extract keywords from query
             keywords = self._extract_keywords(query)
@@ -412,11 +416,33 @@ class DocumentRetrievalService:
             if not keywords:
                 return []
 
-            # This is a simplified implementation
-            # In a real system, you'd use full-text search or metadata filtering
+            docs_to_check = candidate_docs
+            if docs_to_check is None:
+                docs_to_check = await self._semantic_retrieval(query)
 
-            # For now, return empty list as we don't have keyword search implemented
-            return []
+            keyword_results: List[Dict[str, Any]] = []
+            for doc in docs_to_check:
+                chunk_text = doc.get("chunk", "").lower()
+                if not chunk_text:
+                    continue
+
+                matches = sum(
+                    1 for keyword in keywords if keyword.lower() in chunk_text
+                )
+                if matches == 0:
+                    continue
+
+                score = matches / len(keywords)
+                keyword_results.append(
+                    {
+                        **doc,
+                        "score": score,
+                        "keyword_matches": matches,
+                        "retrieval_method": "keyword_match",
+                    }
+                )
+
+            return sorted(keyword_results, key=lambda x: x["score"], reverse=True)
 
         except Exception as e:
             logger.error("Keyword matching failed: %s", e)
@@ -490,12 +516,7 @@ class DocumentRetrievalService:
         """Generate embedding with error handling"""
         try:
             # Get embedding model from config
-            if hasattr(self.context_config, "embedding_model"):
-                model = self.context_config.embedding_model
-            else:
-                model = self.context_config.get(
-                    "embedding_model", "text-embedding-3-small"
-                )
+            model = self._get_context_value("embedding_model", "text-embedding-3-small")
 
             response = self.openai_client.embeddings.create(model=model, input=text)
             return response.data[0].embedding
@@ -513,23 +534,9 @@ class DocumentRetrievalService:
         queries_str = json.dumps(sorted(queries), sort_keys=True)
 
         # Handle both dict and object with dict() method - exclude datetime fields
-        if hasattr(self.context_config, "dict"):
-            config_dict = self.context_config.dict()
-            # Remove datetime fields that can't be JSON serialized
-            json_safe_config = {
-                k: v
-                for k, v in config_dict.items()
-                if not str(type(v)).startswith("<class 'datetime")
-            }
-            config_str = json.dumps(json_safe_config, sort_keys=True)
-        else:
-            # For plain dict, filter out datetime objects
-            json_safe_config = {
-                k: v
-                for k, v in self.context_config.items()
-                if not str(type(v)).startswith("<class 'datetime")
-            }
-            config_str = json.dumps(json_safe_config, sort_keys=True)
+        config_dict = self._context_config_as_dict()
+        json_safe_config = self._filter_json_safe(config_dict)
+        config_str = json.dumps(json_safe_config, sort_keys=True)
         params_str = json.dumps(self.retrieval_config, sort_keys=True)
 
         composite = f"{self.org_id}:{queries_str}:{config_str}:{params_str}"
@@ -594,3 +601,85 @@ class DocumentRetrievalService:
         except Exception as e:
             logger.error("Failed to warm vector cache: %s", e)
             return {"error": str(e)}
+
+    def _get_context_value(self, key: str, default: Any) -> Any:
+        """Safely extract a value from the context configuration."""
+        cfg = self.context_config
+        if not cfg:
+            return default
+
+        if hasattr(cfg, "model_dump"):
+            data = cfg.model_dump()
+            return data.get(key, default)
+
+        if hasattr(cfg, "dict"):
+            try:
+                data = cfg.dict()
+            except TypeError:
+                data = dict(cfg)
+            return data.get(key, default)
+
+        if isinstance(cfg, dict):
+            return cfg.get(key, default)
+
+        return getattr(cfg, key, default)
+
+    def _context_config_as_dict(self) -> Dict[str, Any]:
+        """Return context configuration as a dictionary."""
+        cfg = self.context_config
+        if not cfg:
+            return {}
+
+        if hasattr(cfg, "model_dump"):
+            return cfg.model_dump()
+        if hasattr(cfg, "dict"):
+            return cfg.dict()
+        if isinstance(cfg, dict):
+            return cfg
+
+        return {}
+
+    def _filter_json_safe(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop values that can't be serialized to JSON. Handle nested structures recursively."""
+
+        def _filter_value(value: Any) -> Any:
+            """Recursively filter a value to ensure JSON serializability."""
+            if isinstance(value, dict):
+                return self._filter_json_safe(value)
+            elif isinstance(value, list):
+                filtered_list = []
+                for item in value:
+                    filtered_item = _filter_value(item)
+                    if filtered_item is not None:
+                        filtered_list.append(filtered_item)
+                return filtered_list
+            else:
+                # For primitive values, check if serializable
+                try:
+                    json.dumps(value)
+                    return value
+                except (TypeError, ValueError):
+                    return None
+
+        safe: Dict[str, Any] = {}
+        for key, value in data.items():
+            filtered_value = _filter_value(value)
+            if filtered_value is not None:
+                safe[key] = filtered_value
+        return safe
+
+    def _track_background_task(self, task: asyncio.Task):
+        """Track background tasks to surface exceptions."""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._log_background_task_error)
+
+    @staticmethod
+    def _log_background_task_error(task: asyncio.Task):
+        """Log exceptions raised in detached tasks."""
+        try:
+            exception = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exception:
+            logger.warning("Background task failed: %s", exception)

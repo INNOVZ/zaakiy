@@ -9,10 +9,15 @@ from typing import Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
-from app.models.subscription import (Channel, OnboardingRequest, OnboardingResponse,
-                                     SubscriptionPlan, TokenUsageRequest)
+from app.models.subscription import (
+    Channel,
+    OnboardingRequest,
+    OnboardingResponse,
+    SubscriptionPlan,
+    TokenUsageRequest,
+)
 from app.services.auth import CurrentUser
-from app.services.storage.supabase_client import get_supabase_client
+from app.services.storage.supabase_client import get_supabase_client, run_supabase
 from app.services.subscription import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -491,7 +496,9 @@ async def _check_email_availability(email: str, supabase: Client) -> None:
     """
     try:
         # Check users table
-        user_result = supabase.table("users").select("id").eq("email", email).execute()
+        user_result = await run_supabase(
+            lambda: supabase.table("users").select("id").eq("email", email).execute()
+        )
         if user_result.data:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -499,8 +506,13 @@ async def _check_email_availability(email: str, supabase: Client) -> None:
             )
 
         # Check organizations table
-        org_result = (
-            supabase.table("organizations").select("id").eq("email", email).execute()
+        org_result = await run_supabase(
+            lambda: (
+                supabase.table("organizations")
+                .select("id")
+                .eq("email", email)
+                .execute()
+            )
         )
         if org_result.data:
             raise HTTPException(
@@ -765,7 +777,7 @@ async def get_channel_trends(
             days_back = 1
         elif days_back > 365:
             days_back = 365
-        
+
         # Verify access
         if not await _verify_subscription_access(current_user, subscription_id):
             raise HTTPException(

@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     message: str
     chatbot_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    channel: Optional[str] = None
 
     @field_validator("message")
     @classmethod
