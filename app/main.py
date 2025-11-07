@@ -84,8 +84,13 @@ async def lifespan(fastapi_app: FastAPI):
             logger.info("All API clients initialized successfully")
 
     except Exception as e:
-        logger.error("Client initialization failed: %s", str(e))
-        raise SystemExit(1) from e
+        logger.error(
+            "Client initialization failed: %s - Server will continue but some features may be unavailable",
+            str(e),
+            exc_info=True,
+        )
+        # Don't fail startup - allow health endpoint to respond
+        # This allows Railway to detect the service is running even if clients fail
 
     # Start background services (optional - Celery can be used instead)
     if not USE_CELERY:
@@ -94,8 +99,12 @@ async def lifespan(fastapi_app: FastAPI):
             start_background_worker()
             logger.info("Background worker started successfully")
         except Exception as e:
-            logger.error("Failed to start background worker: %s", str(e))
-            raise SystemExit(1) from e
+            logger.error(
+                "Failed to start background worker: %s - Server will continue without background tasks",
+                str(e),
+                exc_info=True,
+            )
+            # Don't fail startup - background worker is optional
     else:
         logger.info("Celery is enabled - background workers run separately")
         logger.info("Start Celery worker with: python scripts/start_celery_worker.py")
