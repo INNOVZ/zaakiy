@@ -197,6 +197,44 @@ class ResponseGenerationService:
                     },
                 )
 
+            # CRITICAL: Log if no documents found for a specific query
+            if not retrieved_documents:
+                # Check if query seems specific (contains product/price/contact keywords)
+                specific_keywords = [
+                    "product",
+                    "price",
+                    "cost",
+                    "plan",
+                    "pricing",
+                    "contact",
+                    "phone",
+                    "email",
+                    "address",
+                    "location",
+                    "buy",
+                    "purchase",
+                    "service",
+                    "feature",
+                    "what",
+                    "which",
+                    "how much",
+                ]
+                query_lower = message.lower()
+                is_specific_query = any(
+                    keyword in query_lower for keyword in specific_keywords
+                )
+
+                if is_specific_query:
+                    logger.warning(
+                        "⚠️ WARNING: Specific query but NO documents retrieved",
+                        extra={
+                            "org_id": self.org_id,
+                            "query": message,
+                            "query_type": "specific",
+                            "suggested_action": "Check if documents are indexed in namespace",
+                        },
+                    )
+
             # Detect if this is a contact information query - if so, use ZERO temperature
             is_contact_query = self._is_contact_information_query(message)
 
@@ -490,10 +528,43 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 """
             return base_prompt + "\n\n" + context_section
         else:
-            return (
-                base_prompt
-                + "\n\nNo specific context information is available for this query."
-            )
+            # CRITICAL: When no context is available, be explicit about limitations
+            no_context_section = f"""
+⚠️ IMPORTANT: NO CONTEXT INFORMATION AVAILABLE ⚠️
+
+No specific documents or knowledge base information is available for this query.
+
+RESPONSE GUIDELINES WHEN NO CONTEXT:
+1. You may use your general knowledge to provide helpful information
+2. ALWAYS indicate when you're providing general information vs. specific company information
+3. For specific questions about products, prices, or company details:
+   - If you don't have specific information, say: "I don't have specific details about [topic] in my knowledge base. Please check our website or contact our support team for accurate information."
+4. For general questions, you can provide helpful general information but clarify it's general knowledge
+5. NEVER make up specific product names, prices, or company details that aren't in your general knowledge
+6. Be helpful but honest about limitations
+
+EXAMPLES:
+
+✅ GOOD - General question:
+   User: "What is AI?"
+   Response: "AI (Artificial Intelligence) is technology that enables machines to learn and make decisions. [General explanation]..."
+
+✅ GOOD - Specific question without context:
+   User: "What products do you have?"
+   Response: "I don't have specific product details available in my knowledge base. Please check our website or contact our sales team for the most up-to-date product information. I'm here to help with general questions though!"
+
+❌ BAD - Making up specific details:
+   User: "What products do you have?"
+   Response: "We offer Product A, Product B, and Product C..." (Don't make up product names!)
+
+GENERAL INSTRUCTIONS:
+- Be helpful and conversational
+- Use appropriate emojis
+- Maintain {self.chatbot_config.tone} tone
+- Refer to yourself as {self.chatbot_config.name}
+- When in doubt, direct users to the website or support team for specific information
+"""
+            return base_prompt + "\n\n" + no_context_section
 
     def _build_conversation_messages(
         self, system_prompt: str, history: List[Dict[str, Any]], current_message: str
@@ -867,7 +938,7 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
     async def enhance_query(
         self, query: str, history: List[Dict[str, Any]]
     ) -> List[str]:
-        """Enhance query with context from conversation history - OPTIMIZED"""
+        """Enhance query with context from conversation history - IMPROVED"""
         enhanced = [query]  # Always include original query
 
         # SPECIAL CASE: Always enhance contact-related queries regardless of settings
@@ -881,75 +952,74 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
             )
             return enhanced[:5]  # Limit to 5 total queries
 
-        # EMERGENCY MODE: Always skip query enhancement for speed
-        # Saves 500-1000ms per request!
-        logger.info("⚡ EMERGENCY MODE: Skipping query enhancement for speed")
-        return enhanced
+        # IMPROVED: Generate query variations for better retrieval
+        # This helps when the exact query doesn't match indexed documents
+        query_lower = query.lower().strip()
 
-        # OPTIMIZATION: Skip enhancement for very short queries or no history
-        if len(query.strip()) < 10 or not history:
-            return enhanced
+        # Generate semantic variations for common query types
+        variations = []
 
-        try:
-            # Get recent context from conversation
-            recent_messages = history[-3:] if history else []
-            context_summary = self._summarize_recent_context(recent_messages)
+        # Product/Service queries
+        if any(
+            word in query_lower
+            for word in ["product", "service", "offer", "have", "sell"]
+        ):
+            variations.extend(
+                [
+                    query,  # Original
+                    query + " details",  # Add "details"
+                    query + " information",  # Add "information"
+                    query.replace("what", "list").replace(
+                        "which", "list"
+                    ),  # Change question word
+                ]
+            )
 
-            if not context_summary:
-                return enhanced
+        # Pricing queries
+        elif any(
+            word in query_lower
+            for word in ["price", "cost", "pricing", "plan", "plans"]
+        ):
+            variations.extend(
+                [
+                    query,
+                    query + " plans",
+                    query.replace("what's", "what are").replace("what is", "what are"),
+                    "pricing information " + query,
+                ]
+            )
 
-            # OPTIMIZATION: Add timeout to query enhancement (max 1 second)
-            # This prevents slow OpenAI calls from blocking the entire request
-            try:
-                # Generate enhanced query using OpenAI
-                enhancement_prompt = f"""
-Given this conversation context and user query, generate 1-2 alternative ways to ask the same question that might help find more relevant information.
+        # General queries - add context words
+        else:
+            variations = [query]
+            # Add variations with common business terms
+            if len(query.split()) <= 5:  # Only for short queries
+                variations.append(query + " company")
+                variations.append(query + " business")
 
-Conversation Context:
-{context_summary}
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_variations = []
+        for v in variations:
+            v_lower = v.lower().strip()
+            if v_lower not in seen and len(v.strip()) > 0:
+                seen.add(v_lower)
+                unique_variations.append(v)
 
-Original Query: {query}
+        # Limit to 3-4 variations to balance speed and coverage
+        final_queries = unique_variations[:4]
 
-Alternative queries (one per line, no numbering):"""
+        logger.info(
+            "🔍 Query enhancement: Generated %d variations",
+            len(final_queries),
+            extra={
+                "org_id": self.org_id,
+                "original": query,
+                "variations": final_queries,
+            },
+        )
 
-                # Wrap the OpenAI call with a timeout
-                async def enhance_with_openai():
-                    return self.openai_client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[{"role": "user", "content": enhancement_prompt}],
-                        temperature=0.3,
-                        max_tokens=100,  # Reduced from 150 for faster response
-                    )
-
-                response = await asyncio.wait_for(enhance_with_openai(), timeout=1.0)
-
-                # Parse enhanced queries
-                enhanced_queries = (
-                    response.choices[0].message.content.strip().split("\n")
-                )
-
-                for enhanced_query in enhanced_queries:
-                    enhanced_query = enhanced_query.strip()
-                    if (
-                        enhanced_query
-                        and enhanced_query != query
-                        and len(enhanced_query) > 5
-                    ):
-                        enhanced.append(enhanced_query)
-
-                # Limit to max query variants
-                max_variants = getattr(self.context_config, "max_query_variants", 3)
-                return enhanced[:max_variants]
-
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Query enhancement timed out after 1s - using original query only"
-                )
-                return enhanced
-
-        except Exception as e:
-            logger.warning("Query enhancement failed: %s", e)
-            return enhanced
+        return final_queries
 
     def _is_contact_information_query(self, query: str) -> bool:
         """Detect if the query is asking for contact information"""
