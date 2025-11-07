@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.services.shared import cache_service
+from app.services.storage.supabase_client import run_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +53,21 @@ class ConversationManager:
                 )
 
             # Check database for existing conversation
-            query = (
-                self.supabase.table("conversations")
-                .select("*")
-                .eq("session_id", session_id)
-                .eq("org_id", self.org_id)
-            )
+            def _query_conversation():
+                query = (
+                    self.supabase.table("conversations")
+                    .select("*")
+                    .eq("session_id", session_id)
+                    .eq("org_id", self.org_id)
+                )
 
-            # If chatbot_id is provided, ensure we lookup by it as well
-            if chatbot_id:
-                query = query.eq("chatbot_id", chatbot_id)
+                # If chatbot_id is provided, ensure we lookup by it as well
+                if chatbot_id:
+                    query = query.eq("chatbot_id", chatbot_id)
 
-            response = query.execute()
+                return query.execute()
+
+            response = await run_supabase(_query_conversation)
 
             if response.data:
                 conversation = response.data[0]
@@ -103,8 +107,10 @@ class ConversationManager:
                 conversation_data["metadata"] = {}
 
             # Insert into database (Write-Through caching)
-            response = (
-                self.supabase.table("conversations").insert(conversation_data).execute()
+            response = await run_supabase(
+                lambda: self.supabase.table("conversations")
+                .insert(conversation_data)
+                .execute()
             )
 
             if response.data:
@@ -145,16 +151,21 @@ class ConversationManager:
             }
 
             # Insert message into database
-            response = self.supabase.table("messages").insert(message_data).execute()
+            response = await run_supabase(
+                lambda: self.supabase.table("messages").insert(message_data).execute()
+            )
 
             if response.data:
                 message = response.data[0]
 
                 # Update conversation's updated_at
                 # Note: We skip message_count update for now to avoid RPC issues
-                self.supabase.table("conversations").update(
-                    {"updated_at": datetime.now(timezone.utc).isoformat()}
-                ).eq("id", conversation_id).execute()
+                await run_supabase(
+                    lambda: self.supabase.table("conversations")
+                    .update({"updated_at": datetime.now(timezone.utc).isoformat()})
+                    .eq("id", conversation_id)
+                    .execute()
+                )
 
                 # Update caches
                 await self._update_message_caches(conversation_id, message)
@@ -237,13 +248,15 @@ class ConversationManager:
                 return limited_history
 
             # Fetch from database
-            response = (
-                self.supabase.table("messages")
-                .select("*")
-                .eq("conversation_id", conversation_id)
-                .order("created_at", desc=False)
-                .limit(limit)
-                .execute()
+            response = await run_supabase(
+                lambda: (
+                    self.supabase.table("messages")
+                    .select("*")
+                    .eq("conversation_id", conversation_id)
+                    .order("created_at", desc=False)
+                    .limit(limit)
+                    .execute()
+                )
             )
 
             history = response.data or []
@@ -271,17 +284,19 @@ class ConversationManager:
     ) -> bool:
         """Update conversation metadata"""
         try:
-            response = (
-                self.supabase.table("conversations")
-                .update(
-                    {
-                        "metadata": metadata,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+            response = await run_supabase(
+                lambda: (
+                    self.supabase.table("conversations")
+                    .update(
+                        {
+                            "metadata": metadata,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    .eq("id", conversation_id)
+                    .eq("org_id", self.org_id)
+                    .execute()
                 )
-                .eq("id", conversation_id)
-                .eq("org_id", self.org_id)
-                .execute()
             )
 
             if response.data:
@@ -304,18 +319,20 @@ class ConversationManager:
     async def close_conversation(self, conversation_id: str) -> bool:
         """Mark conversation as closed"""
         try:
-            response = (
-                self.supabase.table("conversations")
-                .update(
-                    {
-                        "status": "closed",
-                        "closed_at": datetime.now(timezone.utc).isoformat(),
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+            response = await run_supabase(
+                lambda: (
+                    self.supabase.table("conversations")
+                    .update(
+                        {
+                            "status": "closed",
+                            "closed_at": datetime.now(timezone.utc).isoformat(),
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    .eq("id", conversation_id)
+                    .eq("org_id", self.org_id)
+                    .execute()
                 )
-                .eq("id", conversation_id)
-                .eq("org_id", self.org_id)
-                .execute()
             )
 
             if response.data:
@@ -342,11 +359,13 @@ class ConversationManager:
         """Get statistics for a conversation"""
         try:
             # Get message count by role
-            response = (
-                self.supabase.table("messages")
-                .select("role")
-                .eq("conversation_id", conversation_id)
-                .execute()
+            response = await run_supabase(
+                lambda: (
+                    self.supabase.table("messages")
+                    .select("role")
+                    .eq("conversation_id", conversation_id)
+                    .execute()
+                )
             )
 
             messages = response.data or []
@@ -370,13 +389,15 @@ class ConversationManager:
     async def get_recent_conversations(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get recent conversations for this organization"""
         try:
-            response = (
-                self.supabase.table("conversations")
-                .select("*, messages!inner(content)")
-                .eq("org_id", self.org_id)
-                .order("updated_at", desc=True)
-                .limit(limit)
-                .execute()
+            response = await run_supabase(
+                lambda: (
+                    self.supabase.table("conversations")
+                    .select("*, messages!inner(content)")
+                    .eq("org_id", self.org_id)
+                    .order("updated_at", desc=True)
+                    .limit(limit)
+                    .execute()
+                )
             )
 
             return response.data or []

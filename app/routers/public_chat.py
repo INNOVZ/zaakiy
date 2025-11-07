@@ -184,16 +184,42 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
                 session_id=session_id,
                 chatbot_id=request.chatbot_id,
             )
-            logger.info("Chat response generated successfully")
+            logger.info(
+                "Chat response generated successfully",
+                extra={
+                    "chatbot_id": request.chatbot_id,
+                    "has_response": bool(result.get("response")),
+                    "conversation_id": result.get("conversation_id"),
+                },
+            )
         except Exception as chat_error:
             logger.error(
                 "Failed to generate chat response",
-                extra={"error": str(chat_error)},
+                extra={
+                    "error": str(chat_error),
+                    "error_type": type(chat_error).__name__,
+                    "chatbot_id": request.chatbot_id,
+                    "session_id": session_id,
+                },
                 exc_info=True,
             )
+            # Re-raise to be caught by outer exception handler
             raise
 
-        # ====== SECURITY LAYER 6: Sanitize response before sending ======
+        # ====== SECURITY LAYER 6: Validate and sanitize response before sending ======
+        if not result or "response" not in result:
+            logger.error(
+                "Chat service returned invalid result",
+                extra={
+                    "chatbot_id": request.chatbot_id,
+                    "result_keys": list(result.keys()) if result else None,
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Chat service returned an invalid response. Please try again.",
+            )
+
         sanitized_response = security_service.sanitize_response(result["response"])
 
         # Log successful interaction
@@ -228,13 +254,35 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "chatbot_id": request.chatbot_id,
+                "session_id": session_id,
+                "client_ip": client_ip,
             },
             exc_info=True,
         )
-        # Return more detailed error for debugging
-        error_detail = f"Chat service unavailable: {type(e).__name__}"
-        if hasattr(e, "args") and e.args:
-            error_detail += f" - {str(e.args[0])[:100]}"
+
+        # Handle specific error types with appropriate status codes
+        from app.services.chat.conversation_manager import ConversationManagerError
+
+        if isinstance(e, ConversationManagerError):
+            logger.warning(
+                "Conversation management error in public chat",
+                extra={"error": str(e), "chatbot_id": request.chatbot_id},
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to process conversation. Please try again.",
+            ) from e
+
+        # Return user-friendly error message
+        error_detail = "I apologize, but I encountered an issue processing your request. Please try again."
+        # In development, include more details
+        import os
+
+        if os.getenv("ENVIRONMENT") == "development":
+            error_detail = f"Chat service error: {type(e).__name__}"
+            if hasattr(e, "args") and e.args:
+                error_detail += f" - {str(e.args[0])[:200]}"
+
         raise HTTPException(status_code=500, detail=error_detail) from e
 
 

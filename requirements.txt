@@ -1,10 +1,10 @@
 # Core FastAPI and web framework
-fastapi==0.104.1
-uvicorn==0.24.0
-python-multipart==0.0.6
+fastapi>=0.104.1
+uvicorn>=0.24.0
+python-multipart>=0.0.6
 
 # Environment and configuration
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
 
 # Async file I/O
 aiofiles>=23.0.0
@@ -18,46 +18,46 @@ supabase>=2.3.0
 redis>=5.0.0
 
 # Authentication and security
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]>=3.3.0
 
 # HTTP client
-httpx[http2]>=0.24,<0.28
-requests>=2.31.0,<2.33.0  # Compatible with Locust
+httpx[http2]>=0.24.0
+requests>=2.31.0  # Compatible with Locust
 
 # Vector database
-pinecone-client==3.1.0
+pinecone-client>=3.1.0
 
 # Document processing
-PyPDF2==3.0.1
+PyPDF2>=3.0.1
 
 # Web scraping
-beautifulsoup4==4.12.2
+beautifulsoup4>=4.12.2
 lxml>=5.0.0
 playwright>=1.40.0  # For JavaScript-rendered websites (React, Vue, Angular)
 
 # Task scheduling
-apscheduler==3.10.4  # Legacy scheduler (can be replaced with Celery)
-celery[redis]==5.3.4  # Distributed task queue
-nest-asyncio==1.5.8  # For running async functions in Celery tasks
+apscheduler>=3.10.4  # Legacy scheduler (can be replaced with Celery)
+celery[redis]>=5.3.4  # Distributed task queue
+nest-asyncio>=1.5.8  # For running async functions in Celery tasks
 
 # WebSocket support
 websockets>=12.0
 realtime>=2.0.0
 
 # AI and LangChain packages
-openai>=1.86.0,<2.0.0
+openai>=1.86.0
 langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-openai>=0.2.0
 langchain-community>=0.3.0
 langsmith>=0.1.0
-langchain-text-splitters
+langchain-text-splitters>=0.3.0
 # Data validation and serialization
-pydantic>=2.0.0
+pydantic>=2.0.0,<3.0.0
 
 # Additional dependencies
 typing-extensions>=4.0.0
-orjson>=3.10.0,<4.0.0
+orjson>=3.10.0
 
 # Testing dependencies
 pytest>=7.0.0
