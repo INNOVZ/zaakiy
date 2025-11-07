@@ -102,6 +102,15 @@ validate_environment() {
     log_success "Environment configuration validated"
 }
 
+# Clean Python bytecode cache
+clean_python_cache() {
+    log_info "Cleaning Python bytecode cache..."
+    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    find . -name "*.pyc" -delete 2>/dev/null || true
+    find . -name "*.pyo" -delete 2>/dev/null || true
+    log_success "Python cache cleaned"
+}
+
 # Build Docker image
 build_image() {
     log_info "Building Docker image..."
@@ -109,11 +118,28 @@ build_image() {
     log_success "Docker image built successfully"
 }
 
+# Build Docker image without cache (force rebuild)
+build_image_no_cache() {
+    log_info "Building Docker image WITHOUT cache (force rebuild)..."
+    docker build --no-cache -t "$DOCKER_IMAGE:latest" .
+    log_success "Docker image built successfully (no cache)"
+}
+
 # Stop existing containers
 stop_containers() {
     log_info "Stopping existing containers..."
     docker-compose -f "$COMPOSE_FILE" down --remove-orphans || true
     log_success "Existing containers stopped"
+}
+
+# Force remove containers and images
+force_cleanup() {
+    log_info "Force cleaning containers and images..."
+    # Stop and remove containers
+    docker-compose -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans || true
+    # Remove the specific image if it exists
+    docker rmi "$DOCKER_IMAGE:latest" 2>/dev/null || true
+    log_success "Force cleanup completed"
 }
 
 # Start production containers
@@ -154,7 +180,7 @@ show_status() {
     docker-compose -f "$COMPOSE_FILE" ps
     echo ""
     log_info "Application URLs:"
-    echo "  - API: anhttp://localhost:8001"
+    echo "  - API: http://localhost:8001"
     echo "  - Health: http://localhost:8001/health"
     echo "  - Docs: http://localhost:8001/docs"
     echo ""
@@ -177,6 +203,7 @@ deploy() {
     check_root
     check_prerequisites
     validate_environment
+    clean_python_cache
     build_image
     stop_containers
     start_containers
@@ -189,10 +216,34 @@ deploy() {
     log_info "Your ZaaKy AI Platform is now running in production mode"
 }
 
+# Force rebuild deployment (no cache, complete cleanup)
+force_deploy() {
+    log_info "Starting FORCE rebuild deployment (no cache)..."
+    echo ""
+
+    check_root
+    check_prerequisites
+    validate_environment
+    clean_python_cache
+    force_cleanup
+    build_image_no_cache
+    start_containers
+    wait_for_health
+    show_status
+    cleanup_images
+
+    echo ""
+    log_success "🎉 Force deployment completed successfully!"
+    log_info "Your ZaaKy AI Platform is now running in production mode (fresh build)"
+}
+
 # Handle script arguments
 case "${1:-deploy}" in
     "deploy")
         deploy
+        ;;
+    "force"|"force-deploy"|"rebuild")
+        force_deploy
         ;;
     "stop")
         log_info "Stopping production containers..."
@@ -204,6 +255,11 @@ case "${1:-deploy}" in
         docker-compose -f "$COMPOSE_FILE" restart
         log_success "Containers restarted"
         ;;
+    "clean")
+        log_info "Cleaning Python cache..."
+        clean_python_cache
+        log_success "Cache cleaned"
+        ;;
     "logs")
         docker-compose -f "$COMPOSE_FILE" logs -f
         ;;
@@ -214,15 +270,17 @@ case "${1:-deploy}" in
         curl -f http://localhost:8001/health || log_error "Health check failed"
         ;;
     *)
-        echo "Usage: $0 {deploy|stop|restart|logs|status|health}"
+        echo "Usage: $0 {deploy|force|stop|restart|logs|status|health|clean}"
         echo ""
         echo "Commands:"
-        echo "  deploy  - Deploy the application (default)"
-        echo "  stop    - Stop all containers"
-        echo "  restart - Restart all containers"
-        echo "  logs    - Show container logs"
-        echo "  status  - Show container status"
-        echo "  health  - Check application health"
+        echo "  deploy       - Deploy the application (default)"
+        echo "  force        - Force rebuild without cache (use when code reverted)"
+        echo "  stop         - Stop all containers"
+        echo "  restart      - Restart all containers"
+        echo "  clean        - Clean Python bytecode cache"
+        echo "  logs         - Show container logs"
+        echo "  status       - Show container status"
+        echo "  health       - Check application health"
         exit 1
         ;;
 esac

@@ -49,6 +49,11 @@ RUN playwright install-deps chromium
 # Copy application code
 COPY . .
 
+# Clean any Python cache files that might have been copied
+RUN find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /app -name "*.pyc" -delete 2>/dev/null || true && \
+    find /app -name "*.pyo" -delete 2>/dev/null || true
+
 # Create logs directory and set permissions
 RUN mkdir -p /app/logs && \
     chown -R zaakiy:zaakiy /app && \
