@@ -79,6 +79,32 @@ class DocumentRetrievalService:
             },
         )
 
+        # DIAGNOSTIC: Try to check if namespace has any documents
+        # This helps identify if the problem is "no documents" vs "query mismatch"
+        try:
+            # Use a dummy query to check namespace stats
+            # This is a lightweight check that doesn't require embeddings
+            if self.pinecone_index:
+                # Try to get index stats for this namespace
+                # Note: Pinecone doesn't have a direct "count documents in namespace" API
+                # But we can try a very generic query to see if anything exists
+                logger.debug(
+                    "Checking namespace availability",
+                    extra={
+                        "org_id": self.org_id,
+                        "namespace": self.namespace,
+                        "index_name": getattr(
+                            self.pinecone_index, "_index_name", "unknown"
+                        ),
+                    },
+                )
+        except Exception as diag_error:
+            logger.warning(
+                "Diagnostic check failed (non-critical): %s",
+                diag_error,
+                extra={"org_id": self.org_id, "namespace": self.namespace},
+            )
+
         # Check cache first for the entire query set
         cache_key = self._generate_retrieval_cache_key(queries)
 

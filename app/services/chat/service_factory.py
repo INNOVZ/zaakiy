@@ -59,7 +59,17 @@ def _get_shared_clients() -> Tuple:
                 _shared_supabase = get_supabase_client()
 
             if _shared_pinecone_index is None:
-                _shared_pinecone_index = get_pinecone_index()
+                try:
+                    _shared_pinecone_index = get_pinecone_index()
+                    if _shared_pinecone_index is None:
+                        logger.error("🚨 CRITICAL: get_pinecone_index() returned None")
+                except Exception as e:
+                    logger.error(
+                        "🚨 CRITICAL: Failed to initialize Pinecone index: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    _shared_pinecone_index = None
 
             if _shared_openai_client is None:
                 try:
