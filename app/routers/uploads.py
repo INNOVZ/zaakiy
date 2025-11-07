@@ -694,8 +694,25 @@ async def ingest_url(
         dict: A dictionary containing the upload ID and a success message.
     """
     try:
+        import json
+
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
+
+        # Build source URL with metadata for recursive scraping
+        source_data = {"url": request.url}
+        if request.recursive:
+            source_data["recursive"] = True
+            if request.max_pages:
+                source_data["max_pages"] = request.max_pages
+            if request.max_depth:
+                source_data["max_depth"] = request.max_depth
+
+        # Store configuration as JSON in source field if recursive
+        if request.recursive:
+            source = json.dumps(source_data)
+        else:
+            source = request.url
 
         # Insert URL record directly into database
         db_result = (
@@ -704,7 +721,7 @@ async def ingest_url(
                 {
                     "org_id": org_id,
                     "type": "url",
-                    "source": request.url,
+                    "source": source,
                     "pinecone_namespace": f"org-{org_id}",
                     "status": "pending",
                 }
