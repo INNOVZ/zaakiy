@@ -1,37 +1,11 @@
 import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
-
-with patch("pinecone.Pinecone") as MockPinecone:
-    MockPinecone.return_value = MagicMock()
-    from app.services.storage import pinecone_client
-
-pinecone_client._pc = MagicMock()
-pinecone_client._index = MagicMock()
+from unittest.mock import MagicMock, patch
 
 
-async def app_services_worker_call():
-    # Import inside function so each test can patch module-level globals safely
-    from app.services.scraping.ingestion_worker import process_pending_uploads
+def test_ingestion_worker_best_case(monkeypatch):
+    """Best-case: URL upload, scrape returns text, embeddings and pinecone succeed"""
 
-    await process_pending_uploads()
-
-
-def _build_fake_supabase(upload):
-    fake_table = MagicMock()
-    fake_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[upload]
-    )
-    fake_table.update.return_value.eq.return_value.execute.return_value = MagicMock()
-
-    fake_supabase = MagicMock()
-    fake_supabase.table.return_value = fake_table
-    return fake_supabase, fake_table
-
-
-def test_ingestion_worker_best_case():
-    """URL ingestion succeeds, embeddings generated, upload stored"""
-
+    # Prepare a fake pending upload
     fake_upload = {
         "id": "u1",
         "org_id": "org1",
@@ -41,31 +15,42 @@ def test_ingestion_worker_best_case():
         "status": "pending",
     }
 
-    fake_supabase, _ = _build_fake_supabase(fake_upload)
+    # Patch supabase client used in the ingestion worker
+    fake_table = MagicMock()
+    fake_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[fake_upload]
+    )
 
-    async def fake_scrape(_url: str):
-        return "This is some example text content for testing." * 5
+    fake_supabase = MagicMock()
+    fake_supabase.table.return_value = fake_table
 
+    async def fake_scrape(url: str):
+        return "This is some example text content for testing." * 10
+
+    # Patch OpenAIEmbeddings.embed_documents with a simple sync function wrapper
     with patch("app.services.scraping.ingestion_worker.supabase", fake_supabase), patch(
         "app.services.scraping.ingestion_worker.scrape_url_text", new=fake_scrape
     ), patch(
-        "app.services.scraping.ingestion_worker.OpenAIEmbeddings"
-    ) as MockEmbeddings, patch(
-        "app.services.scraping.ingestion_worker.upload_to_pinecone"
-    ) as mock_upload:
-        mock_embedder = MockEmbeddings.return_value
-        mock_embedder.embed_documents.side_effect = lambda chunks: [
-            [0.01] * 3 for _ in chunks
-        ]
+        "app.services.scraping.ingestion_worker.OpenAIEmbeddings.embed_documents"
+    ) as mock_embed, patch(
+        "app.services.scraping.ingestion_worker.index"
+    ) as mock_index:
+        # Make embeddings return a vector per chunk
+        mock_embed.return_value = [[0.01] * 1536]
 
+        # Make pinecone upsert return a success dict
+        mock_index.upsert.return_value = {"upserted_count": 1}
+
+        # Run the worker synchronously
         asyncio.run(app_services_worker_call())
 
-        assert mock_embedder.embed_documents.called
-        mock_upload.assert_called_once()
+        # Assertions: embeddings called and pinecone upsert called
+        assert mock_embed.called
+        assert mock_index.upsert.called
 
 
-def test_ingestion_worker_worst_case_large_json():
-    """JSON ingestion fails when file is too large and upload marked failed"""
+def test_ingestion_worker_worst_case_large_json(monkeypatch):
+    """Worst-case: JSON file too large triggers ValueError and upload marked failed"""
 
     fake_upload = {
         "id": "u2",
@@ -76,8 +61,16 @@ def test_ingestion_worker_worst_case_large_json():
         "status": "pending",
     }
 
-    fake_supabase, _ = _build_fake_supabase(fake_upload)
+    # Patch supabase table select to return the fake upload
+    fake_table = MagicMock()
+    fake_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[fake_upload]
+    )
 
+    fake_supabase = MagicMock()
+    fake_supabase.table.return_value = fake_table
+
+    # Patch requests.get to return a response with huge content-length
     class FakeResponse:
         def __init__(self):
             self.headers = {"content-length": str(60 * 1024 * 1024)}  # 60 MB
@@ -86,7 +79,9 @@ def test_ingestion_worker_worst_case_large_json():
             return None
 
         def iter_content(self, chunk_size=8192, decode_unicode=False):
-            yield b"x" * chunk_size
+            # yield some chunks but overall > 50MB will be enforced by the ingestion code
+            for _ in range(10):
+                yield b"x" * 8192
 
         def close(self):
             return None
@@ -94,63 +89,16 @@ def test_ingestion_worker_worst_case_large_json():
     with patch("app.services.scraping.ingestion_worker.supabase", fake_supabase), patch(
         "app.services.scraping.ingestion_worker.requests.get",
         return_value=FakeResponse(),
-    ), patch(
-        "app.services.scraping.ingestion_worker.upload_to_pinecone"
-    ) as mock_upload:
+    ):
+        # Run the worker synchronously (worker handles errors internally)
         asyncio.run(app_services_worker_call())
 
+        # Ensure supabase.update was called to mark failed
         assert fake_supabase.table.return_value.update.called
-        mock_upload.assert_not_called()
 
 
-def test_recursive_url_ingestion():
-    """Recursive URL configuration is honored and uploads complete"""
+async def app_services_worker_call():
+    # Import inside function to ensure patches apply
+    from app.services.scraping.ingestion_worker import process_pending_uploads
 
-    recursive_config = {
-        "url": "https://example.com/start",
-        "max_pages": 3,
-        "max_depth": 2,
-    }
-
-    fake_upload = {
-        "id": "recursive1",
-        "org_id": "org_recursive",
-        "type": "url",
-        "source": json.dumps(recursive_config),
-        "pinecone_namespace": "ns_recursive",
-        "status": "pending",
-    }
-
-    fake_supabase, fake_table = _build_fake_supabase(fake_upload)
-
-    fake_recursive = AsyncMock(
-        return_value="Recursive scrape content from multiple pages. " * 5
-    )
-
-    with patch("app.services.scraping.ingestion_worker.supabase", fake_supabase), patch(
-        "app.services.scraping.ingestion_worker.recursive_scrape_website",
-        new=fake_recursive,
-    ), patch(
-        "app.services.scraping.ingestion_worker.OpenAIEmbeddings"
-    ) as MockEmbeddings, patch(
-        "app.services.scraping.ingestion_worker.upload_to_pinecone"
-    ) as mock_upload:
-        mock_embedder = MockEmbeddings.return_value
-        mock_embedder.embed_documents.side_effect = lambda chunks: [
-            [0.02] * 3 for _ in chunks
-        ]
-
-        asyncio.run(app_services_worker_call())
-
-        fake_recursive.assert_awaited_once_with(
-            start_url=recursive_config["url"],
-            max_pages=recursive_config["max_pages"],
-            max_depth=recursive_config["max_depth"],
-        )
-        assert mock_embedder.embed_documents.called
-        mock_upload.assert_called_once()
-
-    # Verify Supabase marked upload as completed
-    update_calls = fake_table.update.call_args_list
-    assert update_calls
-    assert update_calls[0].args[0]["status"] == "completed"
+    await process_pending_uploads()

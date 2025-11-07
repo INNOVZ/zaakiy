@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 from app.models.chatbot_config import ChatbotConfig
 from app.services.shared import cache_service
@@ -173,72 +173,13 @@ class ResponseGenerationService:
 
             # DEBUG: Log context information
             context_text = context_data.get("context_text", "")
-            logger.info(
-                "📝 Context built",
-                extra={
-                    "org_id": self.org_id,
-                    "context_length": len(context_text),
-                    "documents_count": len(retrieved_documents),
-                    "has_context": len(context_text) > 0,
-                    "context_preview": context_text[:200] if context_text else "EMPTY",
-                },
-            )
-
-            # CRITICAL: Log if context is empty but documents were retrieved
-            if not context_text and retrieved_documents:
-                logger.error(
-                    "🚨 CRITICAL: Documents retrieved but context is EMPTY!",
-                    extra={
-                        "org_id": self.org_id,
-                        "documents_retrieved": len(retrieved_documents),
-                        "document_ids": [
-                            doc.get("id", "unknown") for doc in retrieved_documents[:5]
-                        ],
-                    },
-                )
-
-            # CRITICAL: Log if no documents found for a specific query
-            if not retrieved_documents:
-                # Check if query seems specific (contains product/price/contact keywords)
-                specific_keywords = [
-                    "product",
-                    "price",
-                    "cost",
-                    "plan",
-                    "pricing",
-                    "contact",
-                    "phone",
-                    "email",
-                    "address",
-                    "location",
-                    "buy",
-                    "purchase",
-                    "service",
-                    "feature",
-                    "what",
-                    "which",
-                    "how much",
-                ]
-                query_lower = message.lower()
-                is_specific_query = any(
-                    keyword in query_lower for keyword in specific_keywords
-                )
-
-                if is_specific_query:
-                    logger.warning(
-                        "⚠️ WARNING: Specific query but NO documents retrieved",
-                        extra={
-                            "org_id": self.org_id,
-                            "query": message,
-                            "query_type": "specific",
-                            "suggested_action": "Check if documents are indexed in namespace",
-                        },
-                    )
+            logger.info("📝 Context length: %d characters", len(context_text))
 
             # Detect if this is a contact information query - if so, use ZERO temperature
             is_contact_query = self._is_contact_information_query(message)
 
             # DEBUG: Check if phone numbers are in context
+            import re
 
             phone_pattern = r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
             phones_in_context = re.findall(phone_pattern, context_text)
@@ -304,38 +245,13 @@ class ResponseGenerationService:
             raise ResponseGenerationError(f"Response generation failed: {e}") from e
 
     def _build_context(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Build context from retrieved documents and fallback org knowledge"""
+        """Build context from retrieved documents"""
         try:
-            # Track whether we had to rely on context config fallback
-            fallback_sections_used: List[str] = []
-
             if not documents:
-                (
-                    fallback_text,
-                    fallback_sections_used,
-                ) = self._build_context_from_config()
-                if fallback_text:
-                    return {
-                        "context_text": fallback_text,
-                        "sources": [
-                            f"context_config.{section}"
-                            for section in fallback_sections_used
-                        ],
-                        "context_quality": {
-                            "coverage_score": 0.3,
-                            "relevance_score": 0.5,
-                            "fallback_context_used": True,
-                            "fallback_sections": fallback_sections_used,
-                        },
-                    }
                 return {
                     "context_text": "",
                     "sources": [],
-                    "context_quality": {
-                        "coverage_score": 0.0,
-                        "relevance_score": 0.0,
-                        "fallback_context_used": False,
-                    },
+                    "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
                 }
 
             # Combine document chunks
@@ -347,28 +263,6 @@ class ResponseGenerationService:
                 chunk_text = doc.get("chunk", "")
                 source = doc.get("source", "")
                 score = doc.get("score", 0)
-
-                # Log document structure for debugging
-                if idx == 0:  # Log first document structure
-                    logger.info(
-                        "📄 Document structure check",
-                        extra={
-                            "org_id": self.org_id,
-                            "has_chunk": "chunk" in doc,
-                            "has_content": "content" in doc,
-                            "has_text": "text" in doc,
-                            "doc_keys": list(doc.keys()),
-                            "chunk_length": len(chunk_text) if chunk_text else 0,
-                        },
-                    )
-
-                # Try multiple possible field names for chunk content
-                if not chunk_text:
-                    chunk_text = (
-                        doc.get("content", "")
-                        or doc.get("text", "")
-                        or doc.get("metadata", {}).get("text", "")
-                    )
 
                 if chunk_text and len(chunk_text.strip()) > 10:
                     context_chunks.append(chunk_text)
@@ -384,33 +278,9 @@ class ResponseGenerationService:
                         len(chunk_text),
                         chunk_text[:100],
                     )
-                else:
-                    logger.warning(
-                        "⚠️ Skipping document %d - no valid chunk content",
-                        idx + 1,
-                        extra={
-                            "org_id": self.org_id,
-                            "score": score,
-                            "chunk_length": len(chunk_text) if chunk_text else 0,
-                            "has_chunk": "chunk" in doc,
-                            "has_content": "content" in doc,
-                        },
-                    )
 
             # Combine context with length limit
             context_text = self._combine_context_chunks(context_chunks)
-
-            # Append fallback org knowledge if available (helps when docs are sparse)
-            fallback_text, fallback_sections_used = self._build_context_from_config()
-            if fallback_text:
-                if context_text:
-                    context_text = f"{context_text}\n\n---\n\n{fallback_text}"
-                else:
-                    context_text = fallback_text
-                for section in fallback_sections_used:
-                    source_key = f"context_config.{section}"
-                    if source_key not in sources:
-                        sources.append(source_key)
 
             # Calculate quality metrics
             avg_score = total_score / len(documents) if documents else 0
@@ -423,10 +293,6 @@ class ResponseGenerationService:
                     "coverage_score": coverage_score,
                     "relevance_score": avg_score,
                     "document_count": len(documents),
-                    "fallback_context_used": bool(
-                        fallback_sections_used and not documents
-                    ),
-                    "fallback_sections": fallback_sections_used,
                 },
             }
 
@@ -435,62 +301,8 @@ class ResponseGenerationService:
             return {
                 "context_text": "",
                 "sources": [],
-                "context_quality": {
-                    "coverage_score": 0.0,
-                    "relevance_score": 0.0,
-                    "fallback_context_used": False,
-                },
+                "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
             }
-
-    def _build_context_from_config(self) -> Tuple[str, List[str]]:
-        """Construct fallback context text from stored context configuration."""
-        cfg_data = self._context_config_as_dict()
-        if not cfg_data:
-            return "", []
-
-        sections = []
-        sections_used = []
-        field_mappings = [
-            ("business_context", "BUSINESS OVERVIEW"),
-            ("domain_knowledge", "DOMAIN KNOWLEDGE"),
-            ("specialized_instructions", "SPECIAL GUIDANCE"),
-        ]
-
-        for field_name, heading in field_mappings:
-            value = cfg_data.get(field_name)
-            if isinstance(value, str):
-                value = value.strip()
-            if value:
-                sections.append(f"{heading}:\n{value}")
-                sections_used.append(field_name)
-
-        if not sections:
-            return "", []
-
-        return "\n\n".join(sections), sections_used
-
-    def _context_config_as_dict(self) -> Dict[str, Any]:
-        """Return context_config as plain dict regardless of underlying type."""
-        config = getattr(self, "context_config", None)
-        if not config:
-            return {}
-
-        if isinstance(config, dict):
-            return config
-
-        if hasattr(config, "model_dump"):
-            try:
-                return config.model_dump()
-            except Exception:
-                pass
-
-        if hasattr(config, "__dict__"):
-            try:
-                return dict(config.__dict__)
-            except Exception:
-                return {}
-
-        return {}
 
     def _combine_context_chunks(self, chunks: List[str]) -> str:
         """Combine context chunks with length limits"""
@@ -535,14 +347,12 @@ CONTEXT INFORMATION:
 
 ⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
 
-1. USE information from the CONTEXT INFORMATION above to provide helpful, accurate answers
-2. SYNTHESIZE and COMBINE information from multiple parts of the context to answer questions fully
-3. If the context contains relevant information (even if not exact), USE IT to provide a helpful answer
-4. NEVER make up product names, prices, descriptions, or any facts that aren't in the context
-5. NEVER use placeholders like "XXX", "[insert X]", "around X", or "approximately" for specific details
-6. If context has partial info (e.g., product names but no prices), share what you have and indicate what's missing
-7. Only say "I don't have that information" if the context is COMPLETELY unrelated to the question
-8. Be helpful and informative - use all available context to provide the best possible answer
+1. ONLY use EXACT information from the CONTEXT INFORMATION above
+2. If product names, prices, or details are NOT explicitly in the context, say "I don't have those specific details"
+3. NEVER make up product names, prices, descriptions, or any facts
+4. NEVER use placeholders like "XXX", "[insert X]", "around X", or "approximately"
+5. If context has partial info (e.g., product names but no prices), share what you have and say what's missing
+6. When in doubt, be conservative - accuracy over completeness
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 - Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character from context
@@ -623,43 +433,10 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 """
             return base_prompt + "\n\n" + context_section
         else:
-            # CRITICAL: When no context is available, be explicit about limitations
-            no_context_section = f"""
-⚠️ IMPORTANT: NO CONTEXT INFORMATION AVAILABLE ⚠️
-
-No specific documents or knowledge base information is available for this query.
-
-RESPONSE GUIDELINES WHEN NO CONTEXT:
-1. You may use your general knowledge to provide helpful information
-2. ALWAYS indicate when you're providing general information vs. specific company information
-3. For specific questions about products, prices, or company details:
-   - If you don't have specific information, say: "I don't have specific details about [topic] in my knowledge base. Please check our website or contact our support team for accurate information."
-4. For general questions, you can provide helpful general information but clarify it's general knowledge
-5. NEVER make up specific product names, prices, or company details that aren't in your general knowledge
-6. Be helpful but honest about limitations
-
-EXAMPLES:
-
-✅ GOOD - General question:
-   User: "What is AI?"
-   Response: "AI (Artificial Intelligence) is technology that enables machines to learn and make decisions. [General explanation]..."
-
-✅ GOOD - Specific question without context:
-   User: "What products do you have?"
-   Response: "I don't have specific product details available in my knowledge base. Please check our website or contact our sales team for the most up-to-date product information. I'm here to help with general questions though!"
-
-❌ BAD - Making up specific details:
-   User: "What products do you have?"
-   Response: "We offer Product A, Product B, and Product C..." (Don't make up product names!)
-
-GENERAL INSTRUCTIONS:
-- Be helpful and conversational
-- Use appropriate emojis
-- Maintain {self.chatbot_config.tone} tone
-- Refer to yourself as {self.chatbot_config.name}
-- When in doubt, direct users to the website or support team for specific information
-"""
-            return base_prompt + "\n\n" + no_context_section
+            return (
+                base_prompt
+                + "\n\nNo specific context information is available for this query."
+            )
 
     def _build_conversation_messages(
         self, system_prompt: str, history: List[Dict[str, Any]], current_message: str
@@ -1033,7 +810,7 @@ GENERAL INSTRUCTIONS:
     async def enhance_query(
         self, query: str, history: List[Dict[str, Any]]
     ) -> List[str]:
-        """Enhance query with context from conversation history - IMPROVED"""
+        """Enhance query with context from conversation history - OPTIMIZED"""
         enhanced = [query]  # Always include original query
 
         # SPECIAL CASE: Always enhance contact-related queries regardless of settings
@@ -1047,74 +824,75 @@ GENERAL INSTRUCTIONS:
             )
             return enhanced[:5]  # Limit to 5 total queries
 
-        # IMPROVED: Generate query variations for better retrieval
-        # This helps when the exact query doesn't match indexed documents
-        query_lower = query.lower().strip()
+        # EMERGENCY MODE: Always skip query enhancement for speed
+        # Saves 500-1000ms per request!
+        logger.info("⚡ EMERGENCY MODE: Skipping query enhancement for speed")
+        return enhanced
 
-        # Generate semantic variations for common query types
-        variations = []
+        # OPTIMIZATION: Skip enhancement for very short queries or no history
+        if len(query.strip()) < 10 or not history:
+            return enhanced
 
-        # Product/Service queries
-        if any(
-            word in query_lower
-            for word in ["product", "service", "offer", "have", "sell"]
-        ):
-            variations.extend(
-                [
-                    query,  # Original
-                    query + " details",  # Add "details"
-                    query + " information",  # Add "information"
-                    query.replace("what", "list").replace(
-                        "which", "list"
-                    ),  # Change question word
-                ]
-            )
+        try:
+            # Get recent context from conversation
+            recent_messages = history[-3:] if history else []
+            context_summary = self._summarize_recent_context(recent_messages)
 
-        # Pricing queries
-        elif any(
-            word in query_lower
-            for word in ["price", "cost", "pricing", "plan", "plans"]
-        ):
-            variations.extend(
-                [
-                    query,
-                    query + " plans",
-                    query.replace("what's", "what are").replace("what is", "what are"),
-                    "pricing information " + query,
-                ]
-            )
+            if not context_summary:
+                return enhanced
 
-        # General queries - add context words
-        else:
-            variations = [query]
-            # Add variations with common business terms
-            if len(query.split()) <= 5:  # Only for short queries
-                variations.append(query + " company")
-                variations.append(query + " business")
+            # OPTIMIZATION: Add timeout to query enhancement (max 1 second)
+            # This prevents slow OpenAI calls from blocking the entire request
+            try:
+                # Generate enhanced query using OpenAI
+                enhancement_prompt = f"""
+Given this conversation context and user query, generate 1-2 alternative ways to ask the same question that might help find more relevant information.
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_variations = []
-        for v in variations:
-            v_lower = v.lower().strip()
-            if v_lower not in seen and len(v.strip()) > 0:
-                seen.add(v_lower)
-                unique_variations.append(v)
+Conversation Context:
+{context_summary}
 
-        # Limit to 3-4 variations to balance speed and coverage
-        final_queries = unique_variations[:4]
+Original Query: {query}
 
-        logger.info(
-            "🔍 Query enhancement: Generated %d variations",
-            len(final_queries),
-            extra={
-                "org_id": self.org_id,
-                "original": query,
-                "variations": final_queries,
-            },
-        )
+Alternative queries (one per line, no numbering):"""
 
-        return final_queries
+                # Wrap the OpenAI call with a timeout
+                async def enhance_with_openai():
+                    return self.openai_client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": enhancement_prompt}],
+                        temperature=0.3,
+                        max_tokens=100,  # Reduced from 150 for faster response
+                    )
+
+                response = await asyncio.wait_for(enhance_with_openai(), timeout=1.0)
+
+                # Parse enhanced queries
+                enhanced_queries = (
+                    response.choices[0].message.content.strip().split("\n")
+                )
+
+                for enhanced_query in enhanced_queries:
+                    enhanced_query = enhanced_query.strip()
+                    if (
+                        enhanced_query
+                        and enhanced_query != query
+                        and len(enhanced_query) > 5
+                    ):
+                        enhanced.append(enhanced_query)
+
+                # Limit to max query variants
+                max_variants = getattr(self.context_config, "max_query_variants", 3)
+                return enhanced[:max_variants]
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Query enhancement timed out after 1s - using original query only"
+                )
+                return enhanced
+
+        except Exception as e:
+            logger.warning("Query enhancement failed: %s", e)
+            return enhanced
 
     def _is_contact_information_query(self, query: str) -> bool:
         """Detect if the query is asking for contact information"""

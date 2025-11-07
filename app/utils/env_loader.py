@@ -6,8 +6,7 @@ Handles dotenv loading gracefully for both production and test environments.
 import os
 import sys
 from pathlib import Path
-
-from dotenv import find_dotenv, load_dotenv
+from typing import Optional
 
 
 def is_test_environment() -> bool:
@@ -35,6 +34,8 @@ def safe_load_dotenv(verbose: bool = False) -> bool:
         bool: True if .env was loaded successfully, False otherwise
     """
     try:
+        from dotenv import find_dotenv, load_dotenv
+
         # Try to find .env file starting from current directory
         # Use find_dotenv with usecwd=True to start from current directory
         # If it fails, try from the project root

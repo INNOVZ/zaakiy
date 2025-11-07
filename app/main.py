@@ -16,20 +16,12 @@ from .routers import (
     public_chat,
     uploads,
     users,
-    whatsapp,
-    whatsapp_config,
 )
 from .services.shared import get_client_manager
-
-# Background worker - can use Celery (recommended) or APScheduler (legacy)
-# Set USE_CELERY=true to use Celery instead of APScheduler
-USE_CELERY = os.getenv("USE_CELERY", "false").lower() == "true"
-
-if not USE_CELERY:
-    from .services.shared.worker_scheduler import (
-        start_background_worker,
-        stop_background_worker,
-    )
+from .services.shared.worker_scheduler import (
+    start_background_worker,
+    stop_background_worker,
+)
 from .services.storage.supabase_client import get_supabase_client
 from .utils.env_loader import is_test_environment
 from .utils.error_monitoring import error_monitor
@@ -84,31 +76,17 @@ async def lifespan(fastapi_app: FastAPI):
             logger.info("All API clients initialized successfully")
 
     except Exception as e:
-        logger.error(
-            "Client initialization failed: %s - Server will continue but some features may be unavailable",
-            str(e),
-            exc_info=True,
-        )
-        # Don't fail startup - allow health endpoint to respond
-        # This allows Railway to detect the service is running even if clients fail
+        logger.error("Client initialization failed: %s", str(e))
+        raise SystemExit(1) from e
 
-    # Start background services (optional - Celery can be used instead)
-    if not USE_CELERY:
-        logger.info("Starting background worker (APScheduler)")
-        try:
-            start_background_worker()
-            logger.info("Background worker started successfully")
-        except Exception as e:
-            logger.error(
-                "Failed to start background worker: %s - Server will continue without background tasks",
-                str(e),
-                exc_info=True,
-            )
-            # Don't fail startup - background worker is optional
-    else:
-        logger.info("Celery is enabled - background workers run separately")
-        logger.info("Start Celery worker with: python scripts/start_celery_worker.py")
-        logger.info("Start Celery beat with: python scripts/start_celery_beat.py")
+    # Start background services
+    logger.info("Starting background worker")
+    try:
+        start_background_worker()
+        logger.info("Background worker started successfully")
+    except Exception as e:
+        logger.error("Failed to start background worker: %s", str(e))
+        raise SystemExit(1) from e
 
     # Start error monitoring
     logger.info("Starting error monitoring")
@@ -132,12 +110,11 @@ async def lifespan(fastapi_app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down ZaaKy AI Platform")
-    if not USE_CELERY:
-        try:
-            stop_background_worker()
-            logger.info("Background worker stopped successfully")
-        except Exception as e:
-            logger.error("Error stopping background worker: %s", str(e))
+    try:
+        stop_background_worker()
+        logger.info("Background worker stopped successfully")
+    except Exception as e:
+        logger.error("Error stopping background worker: %s", str(e))
 
     # Stop error monitoring
     try:
@@ -319,8 +296,6 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(public_chat.router, prefix="/api/public", tags=["public"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
-app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
-app.include_router(whatsapp_config.router, prefix="/api/whatsapp", tags=["whatsapp"])
 logger.info("All API routes registered successfully")
 
 

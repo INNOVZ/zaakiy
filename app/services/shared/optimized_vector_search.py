@@ -27,23 +27,7 @@ class OptimizedVectorSearch:
         self.openai_client = openai_client
         self.org_id = org_id
         self.embedding_model = embedding_model
-
-        # CRITICAL: Handle Pinecone initialization failures gracefully
-        try:
-            self.pinecone_index = get_pinecone_index()
-            if self.pinecone_index is None:
-                logger.error(
-                    "🚨 CRITICAL: get_pinecone_index() returned None for org %s",
-                    org_id,
-                )
-        except Exception as e:
-            logger.error(
-                "🚨 CRITICAL: Failed to initialize Pinecone index in OptimizedVectorSearch: %s",
-                e,
-                exc_info=True,
-            )
-            self.pinecone_index = None
-
+        self.pinecone_index = get_pinecone_index()
         self.embedding_cache = {}  # Local embedding cache
 
     async def search_with_caching(
@@ -135,65 +119,16 @@ class OptimizedVectorSearch:
             search_start_time = datetime.now(timezone.utc)
 
             if not self.pinecone_index:
-                logger.error(
-                    "🚨 CRITICAL: Pinecone index not available in OptimizedVectorSearch",
-                    extra={"namespace": namespace, "query_preview": query[:50]},
-                )
-                # Return empty results instead of raising - allows graceful degradation
-                performance_metrics["total_time_ms"] = (
-                    datetime.now(timezone.utc) - search_start
-                ).total_seconds() * 1000
-                return {
-                    "matches": [],
-                    "performance": performance_metrics,
-                    "total_results": 0,
-                    "namespace": namespace,
-                }
+                raise Exception("Pinecone index not available")
 
-            # Execute vector search with detailed logging
-            logger.debug(
-                "Executing Pinecone query",
-                extra={
-                    "namespace": namespace,
-                    "top_k": top_k,
-                    "query_preview": query[:50],
-                    "embedding_length": len(query_embedding),
-                },
+            # Execute vector search
+            search_results = self.pinecone_index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                namespace=namespace,
+                include_metadata=include_metadata,
+                **search_params
             )
-
-            try:
-                search_results = self.pinecone_index.query(
-                    vector=query_embedding,
-                    top_k=top_k,
-                    namespace=namespace,
-                    include_metadata=include_metadata,
-                    **search_params,
-                )
-
-                logger.info(
-                    "Pinecone query completed",
-                    extra={
-                        "namespace": namespace,
-                        "matches_returned": len(search_results.matches)
-                        if search_results.matches
-                        else 0,
-                        "has_matches": bool(
-                            search_results.matches and len(search_results.matches) > 0
-                        ),
-                    },
-                )
-            except Exception as query_error:
-                logger.error(
-                    "🚨 CRITICAL: Pinecone query failed",
-                    extra={
-                        "namespace": namespace,
-                        "query_preview": query[:50],
-                        "error": str(query_error),
-                        "error_type": type(query_error).__name__,
-                    },
-                    exc_info=True,
-                )
-                raise
 
             performance_metrics["search_time_ms"] = (
                 datetime.now(timezone.utc) - search_start_time
@@ -201,30 +136,6 @@ class OptimizedVectorSearch:
 
             # Step 3: Process and format results
             formatted_results = []
-
-            # CRITICAL: Log if no matches found
-            if not search_results.matches or len(search_results.matches) == 0:
-                logger.warning(
-                    "🚨 CRITICAL: Pinecone query returned ZERO matches",
-                    extra={
-                        "namespace": namespace,
-                        "query_preview": query[:50],
-                        "top_k": top_k,
-                        "namespace_format": f"Expected: org-{{org_id}}",
-                    },
-                )
-            else:
-                logger.info(
-                    "Pinecone query returned matches",
-                    extra={
-                        "namespace": namespace,
-                        "matches_count": len(search_results.matches),
-                        "top_score": float(search_results.matches[0].score)
-                        if search_results.matches
-                        else 0,
-                    },
-                )
-
             for match in search_results.matches:
                 formatted_results.append(
                     {

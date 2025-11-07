@@ -58,18 +58,12 @@ class ClientManager:
             # Initialize Supabase using centralized client
             try:
                 self.supabase = _get_supabase_client()
+                logger.info("✅ Supabase client initialized")
             except Exception as e:
                 logger.error("❌ Failed to initialize Supabase: %s", e)
                 self.supabase = None
             else:
-                supabase_config_error = getattr(self.supabase, "_error", None)
-                if supabase_config_error:
-                    logger.warning(
-                        "⚠️ Supabase configuration not found: %s",
-                        supabase_config_error,
-                    )
-                else:
-                    logger.info("✅ Supabase client initialized")
+                logger.warning("⚠️ Supabase configuration not found")
 
             # Initialize Redis
             redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")

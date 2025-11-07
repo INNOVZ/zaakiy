@@ -3,7 +3,6 @@ Document Retrieval Service
 Handles all vector search and document retrieval operations
 """
 import asyncio
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -26,7 +25,6 @@ class DocumentRetrievalService:
         self.openai_client = openai_client
         self.pinecone_index = pinecone_index
         self.context_config = context_config
-        self._background_tasks = set()
 
         # Initialize optimized vector search
         if self.openai_client:
@@ -44,98 +42,36 @@ class DocumentRetrievalService:
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
-        # CRITICAL: Early validation
-        if not self.pinecone_index:
-            logger.error(
-                "🚨 CRITICAL: Pinecone index is None - cannot retrieve documents",
-                extra={
-                    "org_id": self.org_id,
-                    "namespace": self.namespace,
-                    "query_count": len(queries),
-                },
-            )
-            return []
-
-        if not self.openai_client:
-            logger.error(
-                "🚨 CRITICAL: OpenAI client is None - cannot generate embeddings",
-                extra={
-                    "org_id": self.org_id,
-                    "namespace": self.namespace,
-                    "query_count": len(queries),
-                },
-            )
-            return []
-
-        logger.info(
-            "Document retrieval started",
-            extra={
-                "org_id": self.org_id,
-                "namespace": self.namespace,
-                "query_count": len(queries),
-                "has_pinecone_index": self.pinecone_index is not None,
-                "has_openai_client": self.openai_client is not None,
-                "queries": queries[:3],  # Log first 3 queries for debugging
-            },
-        )
-
-        # DIAGNOSTIC: Try to check if namespace has any documents
-        # This helps identify if the problem is "no documents" vs "query mismatch"
-        try:
-            # Use a dummy query to check namespace stats
-            # This is a lightweight check that doesn't require embeddings
-            if self.pinecone_index:
-                # Try to get index stats for this namespace
-                # Note: Pinecone doesn't have a direct "count documents in namespace" API
-                # But we can try a very generic query to see if anything exists
-                logger.debug(
-                    "Checking namespace availability",
-                    extra={
-                        "org_id": self.org_id,
-                        "namespace": self.namespace,
-                        "index_name": getattr(
-                            self.pinecone_index, "_index_name", "unknown"
-                        ),
-                    },
-                )
-        except Exception as diag_error:
-            logger.warning(
-                "Diagnostic check failed (non-critical): %s",
-                diag_error,
-                extra={"org_id": self.org_id, "namespace": self.namespace},
-            )
-
         # Check cache first for the entire query set
         cache_key = self._generate_retrieval_cache_key(queries)
 
         # Try to get cached results
         cached_results = await self._get_cached_retrieval_results(cache_key)
         if cached_results:
-            logger.info(
-                "Vector cache HIT for %d queries",
-                len(queries),
-                extra={
-                    "org_id": self.org_id,
-                    "cached_documents": len(cached_results),
-                },
-            )
+            logger.info("Vector cache HIT for %d queries", len(queries))
             return cached_results
 
         # Cache miss - perform retrieval
         logger.info(
-            "Vector cache MISS - performing retrieval for %d queries",
-            len(queries),
-            extra={
-                "org_id": self.org_id,
-                "namespace": self.namespace,
-            },
+            "Vector cache MISS - performing retrieval for %d queries", len(queries)
         )
         all_docs = {}
 
         # Get retrieval strategy from context config
-        strategy = self._get_context_value("retrieval_strategy", "vector_search")
-        semantic_weight = self._get_context_value("semantic_weight", 0.8)
-        keyword_weight = self._get_context_value("keyword_weight", 0.2)
+        if self.context_config and hasattr(self.context_config, "retrieval_strategy"):
+            strategy = self.context_config.retrieval_strategy
+            semantic_weight = self.context_config.semantic_weight
+            keyword_weight = self.context_config.keyword_weight
+        elif self.context_config and isinstance(self.context_config, dict):
+            # Handle dict-based config
+            strategy = self.context_config.get("retrieval_strategy", "vector_search")
+            semantic_weight = self.context_config.get("semantic_weight", 0.8)
+            keyword_weight = self.context_config.get("keyword_weight", 0.2)
+        else:
+            # Handle None or invalid config - use defaults
+            strategy = "vector_search"
+            semantic_weight = 0.8
+            keyword_weight = 0.2
 
         logger.info(
             "Using retrieval strategy: %s (semantic: %s, keyword: %s)",
@@ -147,14 +83,6 @@ class DocumentRetrievalService:
         # OPTIMIZATION: Process all queries in parallel instead of sequentially
         async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
             """Retrieve documents for a single query with error handling"""
-            # CRITICAL: Early return if Pinecone is not available
-            if not self.pinecone_index:
-                logger.warning(
-                    "Skipping retrieval for query '%s' - Pinecone index not available",
-                    query[:50],
-                )
-                return []
-
             try:
                 # Strategy-based retrieval
                 if strategy == "semantic_only":
@@ -179,20 +107,15 @@ class DocumentRetrievalService:
                     query,
                     strategy,
                     e,
-                    exc_info=True,
                 )
                 # Fallback to basic semantic search
                 try:
                     return await self._semantic_retrieval(query)
                 except Exception as fallback_e:
-                    logger.error(
-                        "Fallback retrieval also failed for query '%s': %s",
-                        query[:50],
-                        fallback_e,
-                        exc_info=True,
-                    )
-                    # Return empty list instead of raising - allows chatbot to continue
-                    return []
+                    logger.error("Fallback retrieval also failed: %s", fallback_e)
+                    raise DocumentRetrievalError(
+                        f"Document retrieval failed: {e}"
+                    ) from e
 
         # Execute all query retrievals in parallel with timeout
         try:
@@ -215,33 +138,12 @@ class DocumentRetrievalService:
             raise DocumentRetrievalError(f"Document retrieval failed: {e}") from e
 
         # Merge results from all queries, keeping highest scores
-        query_errors = []
-        for idx, result in enumerate(query_results):
+        for result in query_results:
             if isinstance(result, Exception):
-                error_msg = f"Query {idx+1} retrieval error: {str(result)}"
-                logger.error(
-                    error_msg,
-                    extra={
-                        "org_id": self.org_id,
-                        "namespace": self.namespace,
-                        "query": queries[idx] if idx < len(queries) else "unknown",
-                        "error_type": type(result).__name__,
-                    },
-                    exc_info=True,
-                )
-                query_errors.append(error_msg)
+                logger.error("Query retrieval error: %s", result)
                 continue
 
             if not result:
-                logger.warning(
-                    "Query %d returned no documents",
-                    idx + 1,
-                    extra={
-                        "org_id": self.org_id,
-                        "namespace": self.namespace,
-                        "query": queries[idx] if idx < len(queries) else "unknown",
-                    },
-                )
                 continue
 
             for doc in result:
@@ -249,33 +151,8 @@ class DocumentRetrievalService:
                 if doc_id not in all_docs or doc["score"] > all_docs[doc_id]["score"]:
                     all_docs[doc_id] = doc
 
-        # Log if all queries failed
-        if not all_docs and query_results:
-            logger.error(
-                "🚨 CRITICAL: All queries returned no documents or errors",
-                extra={
-                    "org_id": self.org_id,
-                    "namespace": self.namespace,
-                    "query_count": len(queries),
-                    "errors": query_errors,
-                    "queries": queries,
-                },
-            )
-
         # Return top documents sorted by score
         sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
-
-        logger.info(
-            "Document retrieval completed",
-            extra={
-                "org_id": self.org_id,
-                "namespace": self.namespace,
-                "total_documents_found": len(sorted_docs),
-                "top_scores": [doc["score"] for doc in sorted_docs[:3]]
-                if sorted_docs
-                else [],
-            },
-        )
 
         # For contact queries, return MORE documents to ensure we get phone/email info
         # Check if any query contains contact keywords
@@ -318,7 +195,6 @@ class DocumentRetrievalService:
         cache_task = asyncio.create_task(
             self._cache_retrieval_results(cache_key, final_docs)
         )
-        self._track_background_task(cache_task)
 
         return final_docs
 
@@ -350,33 +226,9 @@ class DocumentRetrievalService:
                     include_metadata=True,
                 )
 
-                # CRITICAL: Log if no matches in result
-                matches = result.get("matches", [])
-                if not matches:
-                    logger.warning(
-                        "🚨 CRITICAL: OptimizedVectorSearch returned ZERO matches",
-                        extra={
-                            "org_id": self.org_id,
-                            "namespace": self.namespace,
-                            "query": query[:100],
-                            "top_k": self.retrieval_config["initial"],
-                            "result_keys": list(result.keys()),
-                        },
-                    )
-                else:
-                    logger.info(
-                        "OptimizedVectorSearch returned matches",
-                        extra={
-                            "org_id": self.org_id,
-                            "namespace": self.namespace,
-                            "matches_count": len(matches),
-                            "top_score": matches[0].get("score", 0) if matches else 0,
-                        },
-                    )
-
                 # Convert to expected format
                 docs = []
-                for match in matches:
+                for match in result.get("matches", []):
                     docs.append(
                         {
                             "id": match["id"],
@@ -418,49 +270,24 @@ class DocumentRetrievalService:
                 return await self._fallback_semantic_retrieval(query)
 
         except Exception as e:
-            logger.error(
-                "Optimized semantic retrieval failed for query '%s': %s",
-                query[:50],
-                e,
-                exc_info=True,
-            )
+            logger.error("Optimized semantic retrieval failed: %s", e)
             # Try fallback
             try:
                 return await self._fallback_semantic_retrieval(query)
             except Exception as fallback_e:
-                logger.error(
-                    "Fallback semantic retrieval also failed for query '%s': %s",
-                    query[:50],
-                    fallback_e,
-                    exc_info=True,
-                )
-                # Return empty list instead of raising - allows chatbot to continue
-                return []
+                logger.error("Fallback semantic retrieval also failed: %s", fallback_e)
+                raise DocumentRetrievalError(f"Semantic retrieval failed: {e}") from e
 
     async def _fallback_semantic_retrieval(self, query: str) -> List[Dict[str, Any]]:
         """Fallback semantic search without optimization"""
-        # CRITICAL: Early return if Pinecone is not available
-        if not self.pinecone_index:
-            logger.warning(
-                "Fallback retrieval skipped - Pinecone index not available for query '%s'",
-                query[:50],
-            )
-            return []
-
         try:
             embedding = await self._generate_embedding(query)
-
-            loop = asyncio.get_running_loop()
-
-            def _query_pinecone():
-                return self.pinecone_index.query(
-                    vector=embedding,
-                    top_k=self.retrieval_config["initial"],
-                    namespace=self.namespace,
-                    include_metadata=True,
-                )
-
-            results = await loop.run_in_executor(None, _query_pinecone)
+            results = self.pinecone_index.query(
+                vector=embedding,
+                top_k=self.retrieval_config["initial"],
+                namespace=self.namespace,
+                include_metadata=True,
+            )
 
             docs = []
             for match in results.matches:
@@ -492,9 +319,7 @@ class DocumentRetrievalService:
             semantic_docs = await self._semantic_retrieval(query)
 
             # Get keyword results
-            keyword_docs = await self._keyword_matching(
-                query, candidate_docs=semantic_docs
-            )
+            keyword_docs = await self._keyword_matching(query)
 
             # Combine and reweight scores
             combined_docs = {}
@@ -578,10 +403,8 @@ class DocumentRetrievalService:
             logger.error("Domain-specific retrieval failed: %s", e)
             return await self._semantic_retrieval(query)
 
-    async def _keyword_matching(
-        self, query: str, candidate_docs: Optional[List[Dict[str, Any]]] = None
-    ) -> List[Dict[str, Any]]:
-        """Keyword matching using extracted terms against candidate chunks."""
+    async def _keyword_matching(self, query: str) -> List[Dict[str, Any]]:
+        """Basic keyword matching using metadata filters"""
         try:
             # Extract keywords from query
             keywords = self._extract_keywords(query)
@@ -589,33 +412,11 @@ class DocumentRetrievalService:
             if not keywords:
                 return []
 
-            docs_to_check = candidate_docs
-            if docs_to_check is None:
-                docs_to_check = await self._semantic_retrieval(query)
+            # This is a simplified implementation
+            # In a real system, you'd use full-text search or metadata filtering
 
-            keyword_results: List[Dict[str, Any]] = []
-            for doc in docs_to_check:
-                chunk_text = doc.get("chunk", "").lower()
-                if not chunk_text:
-                    continue
-
-                matches = sum(
-                    1 for keyword in keywords if keyword.lower() in chunk_text
-                )
-                if matches == 0:
-                    continue
-
-                score = matches / len(keywords)
-                keyword_results.append(
-                    {
-                        **doc,
-                        "score": score,
-                        "keyword_matches": matches,
-                        "retrieval_method": "keyword_match",
-                    }
-                )
-
-            return sorted(keyword_results, key=lambda x: x["score"], reverse=True)
+            # For now, return empty list as we don't have keyword search implemented
+            return []
 
         except Exception as e:
             logger.error("Keyword matching failed: %s", e)
@@ -689,7 +490,12 @@ class DocumentRetrievalService:
         """Generate embedding with error handling"""
         try:
             # Get embedding model from config
-            model = self._get_context_value("embedding_model", "text-embedding-3-small")
+            if hasattr(self.context_config, "embedding_model"):
+                model = self.context_config.embedding_model
+            else:
+                model = self.context_config.get(
+                    "embedding_model", "text-embedding-3-small"
+                )
 
             response = self.openai_client.embeddings.create(model=model, input=text)
             return response.data[0].embedding
@@ -707,9 +513,23 @@ class DocumentRetrievalService:
         queries_str = json.dumps(sorted(queries), sort_keys=True)
 
         # Handle both dict and object with dict() method - exclude datetime fields
-        config_dict = self._context_config_as_dict()
-        json_safe_config = self._filter_json_safe(config_dict)
-        config_str = json.dumps(json_safe_config, sort_keys=True)
+        if hasattr(self.context_config, "dict"):
+            config_dict = self.context_config.dict()
+            # Remove datetime fields that can't be JSON serialized
+            json_safe_config = {
+                k: v
+                for k, v in config_dict.items()
+                if not str(type(v)).startswith("<class 'datetime")
+            }
+            config_str = json.dumps(json_safe_config, sort_keys=True)
+        else:
+            # For plain dict, filter out datetime objects
+            json_safe_config = {
+                k: v
+                for k, v in self.context_config.items()
+                if not str(type(v)).startswith("<class 'datetime")
+            }
+            config_str = json.dumps(json_safe_config, sort_keys=True)
         params_str = json.dumps(self.retrieval_config, sort_keys=True)
 
         composite = f"{self.org_id}:{queries_str}:{config_str}:{params_str}"
@@ -774,85 +594,3 @@ class DocumentRetrievalService:
         except Exception as e:
             logger.error("Failed to warm vector cache: %s", e)
             return {"error": str(e)}
-
-    def _get_context_value(self, key: str, default: Any) -> Any:
-        """Safely extract a value from the context configuration."""
-        cfg = self.context_config
-        if not cfg:
-            return default
-
-        if hasattr(cfg, "model_dump"):
-            data = cfg.model_dump()
-            return data.get(key, default)
-
-        if hasattr(cfg, "dict"):
-            try:
-                data = cfg.dict()
-            except TypeError:
-                data = dict(cfg)
-            return data.get(key, default)
-
-        if isinstance(cfg, dict):
-            return cfg.get(key, default)
-
-        return getattr(cfg, key, default)
-
-    def _context_config_as_dict(self) -> Dict[str, Any]:
-        """Return context configuration as a dictionary."""
-        cfg = self.context_config
-        if not cfg:
-            return {}
-
-        if hasattr(cfg, "model_dump"):
-            return cfg.model_dump()
-        if hasattr(cfg, "dict"):
-            return cfg.dict()
-        if isinstance(cfg, dict):
-            return cfg
-
-        return {}
-
-    def _filter_json_safe(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Drop values that can't be serialized to JSON. Handle nested structures recursively."""
-
-        def _filter_value(value: Any) -> Any:
-            """Recursively filter a value to ensure JSON serializability."""
-            if isinstance(value, dict):
-                return self._filter_json_safe(value)
-            elif isinstance(value, list):
-                filtered_list = []
-                for item in value:
-                    filtered_item = _filter_value(item)
-                    if filtered_item is not None:
-                        filtered_list.append(filtered_item)
-                return filtered_list
-            else:
-                # For primitive values, check if serializable
-                try:
-                    json.dumps(value)
-                    return value
-                except (TypeError, ValueError):
-                    return None
-
-        safe: Dict[str, Any] = {}
-        for key, value in data.items():
-            filtered_value = _filter_value(value)
-            if filtered_value is not None:
-                safe[key] = filtered_value
-        return safe
-
-    def _track_background_task(self, task: asyncio.Task):
-        """Track background tasks to surface exceptions."""
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-        task.add_done_callback(self._log_background_task_error)
-
-    @staticmethod
-    def _log_background_task_error(task: asyncio.Task):
-        """Log exceptions raised in detached tasks."""
-        try:
-            exception = task.exception()
-        except asyncio.CancelledError:
-            return
-        if exception:
-            logger.warning("Background task failed: %s", exception)

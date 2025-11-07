@@ -230,19 +230,16 @@ class VectorSearchCache:
     ) -> Optional[Tuple[List[Dict[str, Any]], float]]:
         """Find similar cached queries using embedding similarity"""
         try:
-            # Get recent cached embeddings for this org without blocking Redis
+            # Get recent cached embeddings for this org
             pattern = f"vector_embed:v2:{org_id}:*"
-            cached_keys = []
+            cached_keys = (
+                await cache_service.redis_client.keys(pattern)
+                if cache_service.enabled
+                else []
+            )
 
-            if cache_service.enabled and cache_service.redis_client:
-                async for key in cache_service.redis_client.scan_iter(
-                    match=pattern, count=20
-                ):
-                    cached_keys.append(key)
-                    if len(cached_keys) >= 50:
-                        break
-
-            if not cached_keys:
+            # Limit similarity search
+            if not cached_keys or len(cached_keys) > 50:
                 return None
 
             best_similarity = 0

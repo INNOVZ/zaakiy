@@ -7,7 +7,7 @@ from ..models import PublicChatRequest, PublicChatResponse
 from ..services.chat.chat_service import ChatService
 from ..services.chat.security_service import get_security_service
 from ..services.shared import cache_service
-from ..services.storage.supabase_client import get_supabase_client, run_supabase
+from ..services.storage.supabase_client import get_supabase_client
 from ..utils.logging_config import get_logger
 from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 
@@ -18,6 +18,9 @@ CHATBOT_CACHE_TTL = 300  # Cache chatbot config for 5 minutes
 
 # Get logger
 logger = get_logger(__name__)
+
+# Get centralized Supabase client
+supabase = get_supabase_client()
 
 router = APIRouter()
 
@@ -38,15 +41,12 @@ async def get_cached_chatbot_config(chatbot_id: str):
 
     # Cache miss - fetch from database
     logger.debug(f"Chatbot config cache MISS for {chatbot_id}")
-    response = await run_supabase(
-        lambda: (
-            get_supabase_client()
-            .table("chatbots")
-            .select("*")
-            .eq("id", chatbot_id)
-            .eq("chain_status", "active")
-            .execute()
-        )
+    response = (
+        supabase.table("chatbots")
+        .select("*")
+        .eq("id", chatbot_id)
+        .eq("chain_status", "active")
+        .execute()
     )
 
     if not response.data or len(response.data) == 0:
@@ -138,19 +138,14 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
             )
             raise HTTPException(status_code=400, detail=error_message)
 
-        # Sanitize the message (for security, but preserve query quality)
+        # Sanitize the message
         sanitized_message = security_service.sanitize_message(request.message)
 
-        # Log message transformation for debugging
-        message_changed = sanitized_message != request.message
         logger.info(
             "Message validated and sanitized",
             extra={
                 "original_length": len(request.message),
                 "sanitized_length": len(sanitized_message),
-                "message_changed": message_changed,
-                "original_preview": request.message[:100],
-                "sanitized_preview": sanitized_message[:100],
             },
         )
 
@@ -184,52 +179,21 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
 
         # ====== SECURITY LAYER 5: Generate response with sanitized message ======
         try:
-            # Use sanitized message for security, but log if it differs significantly
-            # The sanitization should only remove HTML/JS, not affect query meaning
             result = await chat_service.chat(
                 message=sanitized_message,  # Use sanitized message
                 session_id=session_id,
                 chatbot_id=request.chatbot_id,
             )
-            logger.info(
-                "Chat response generated successfully",
-                extra={
-                    "chatbot_id": request.chatbot_id,
-                    "has_response": bool(result.get("response")),
-                    "conversation_id": result.get("conversation_id"),
-                    "sources_count": len(result.get("sources", [])),
-                    "response_length": len(result.get("response", "")),
-                    "has_product_links": bool(result.get("product_links")),
-                },
-            )
+            logger.info("Chat response generated successfully")
         except Exception as chat_error:
             logger.error(
                 "Failed to generate chat response",
-                extra={
-                    "error": str(chat_error),
-                    "error_type": type(chat_error).__name__,
-                    "chatbot_id": request.chatbot_id,
-                    "session_id": session_id,
-                },
+                extra={"error": str(chat_error)},
                 exc_info=True,
             )
-            # Re-raise to be caught by outer exception handler
             raise
 
-        # ====== SECURITY LAYER 6: Validate and sanitize response before sending ======
-        if not result or "response" not in result:
-            logger.error(
-                "Chat service returned invalid result",
-                extra={
-                    "chatbot_id": request.chatbot_id,
-                    "result_keys": list(result.keys()) if result else None,
-                },
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Chat service returned an invalid response. Please try again.",
-            )
-
+        # ====== SECURITY LAYER 6: Sanitize response before sending ======
         sanitized_response = security_service.sanitize_response(result["response"])
 
         # Log successful interaction
@@ -264,35 +228,13 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "chatbot_id": request.chatbot_id,
-                "session_id": session_id,
-                "client_ip": client_ip,
             },
             exc_info=True,
         )
-
-        # Handle specific error types with appropriate status codes
-        from app.services.chat.conversation_manager import ConversationManagerError
-
-        if isinstance(e, ConversationManagerError):
-            logger.warning(
-                "Conversation management error in public chat",
-                extra={"error": str(e), "chatbot_id": request.chatbot_id},
-            )
-            raise HTTPException(
-                status_code=502,
-                detail="Failed to process conversation. Please try again.",
-            ) from e
-
-        # Return user-friendly error message
-        error_detail = "I apologize, but I encountered an issue processing your request. Please try again."
-        # In development, include more details
-        import os
-
-        if os.getenv("ENVIRONMENT") == "development":
-            error_detail = f"Chat service error: {type(e).__name__}"
-            if hasattr(e, "args") and e.args:
-                error_detail += f" - {str(e.args[0])[:200]}"
-
+        # Return more detailed error for debugging
+        error_detail = f"Chat service unavailable: {type(e).__name__}"
+        if hasattr(e, "args") and e.args:
+            error_detail += f" - {str(e.args[0])[:100]}"
         raise HTTPException(status_code=500, detail=error_detail) from e
 
 
@@ -300,16 +242,13 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
 async def get_public_chatbot_config(chatbot_id: str):
     """Get public chatbot configuration for embedding"""
     try:
-        # Use proper Supabase client (get fresh client per request for thread safety)
-        response = await run_supabase(
-            lambda: (
-                get_supabase_client()
-                .table("chatbots")
-                .select("*")
-                .eq("id", chatbot_id)
-                .eq("chain_status", "active")
-                .execute()
-            )
+        # Use proper Supabase client
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
         )
 
         if not response.data or len(response.data) == 0:
@@ -347,16 +286,13 @@ async def get_public_chatbot_config(chatbot_id: str):
 async def get_chatbot_widget_code(chatbot_id: str):
     """Get embeddable widget code for a chatbot - FIXED XSS vulnerability"""
     try:
-        # Get chatbot config (get fresh client per request for thread safety)
-        response = await run_supabase(
-            lambda: (
-                get_supabase_client()
-                .table("chatbots")
-                .select("*")
-                .eq("id", chatbot_id)
-                .eq("chain_status", "active")
-                .execute()
-            )
+        # Get chatbot config
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
         )
 
         if not response.data or len(response.data) == 0:
@@ -425,16 +361,13 @@ async def get_chatbot_widget_code(chatbot_id: str):
 async def get_chatbot_widget_js(chatbot_id: str):
     """Serve the JavaScript widget file - Enhanced security"""
     try:
-        # Get chatbot config for defaults (get fresh client per request for thread safety)
-        response = await run_supabase(
-            lambda: (
-                get_supabase_client()
-                .table("chatbots")
-                .select("*")
-                .eq("id", chatbot_id)
-                .eq("chain_status", "active")
-                .execute()
-            )
+        # Get chatbot config for defaults
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("chain_status", "active")
+            .execute()
         )
 
         if not response.data or len(response.data) == 0:
@@ -610,12 +543,6 @@ async def get_chatbot_widget_js(chatbot_id: str):
       input.value = '';
 
       // Send to API with proper error handling
-      console.log('[Zaakiy Widget] Sending request:', {
-        url: this.config.apiUrl + '/chat',
-        chatbot_id: this.config.chatbotId,
-        message_preview: message.substring(0, 50)
-      });
-
       fetch(this.config.apiUrl + '/chat', {
         method: 'POST',
         headers: {
@@ -634,35 +561,12 @@ async def get_chatbot_widget_js(chatbot_id: str):
         return response.json();
       })
       .then(data => {
-        console.log('[Zaakiy Widget] Received response:', {
-          has_response: !!data.response,
-          response_length: data.response ? data.response.length : 0,
-          response_preview: data.response ? data.response.substring(0, 100) : 'NO RESPONSE',
-          has_sources: !!(data.sources && data.sources.length > 0),
-          sources_count: data.sources ? data.sources.length : 0
-        });
-
-        // Check for vague responses
-        if (data.response) {
-          const vaguePhrases = ["I don't have", "I don't have those specific details", "check out our website"];
-          const isVague = vaguePhrases.some(phrase => data.response.toLowerCase().includes(phrase.toLowerCase()));
-          if (isVague) {
-            console.warn('[Zaakiy Widget] ⚠️ Vague response detected:', {
-              response_preview: data.response.substring(0, 150),
-              has_sources: !!(data.sources && data.sources.length > 0)
-            });
-          }
-        }
-
         if (data.response) {
           this.addMessage(data.response, 'bot');
-        } else {
-          console.error('[Zaakiy Widget] No response in data:', data);
-          this.addMessage('Sorry, I encountered an error. Please try again.', 'bot');
         }
       })
       .catch(error => {
-        console.error('[Zaakiy Widget] API Error:', error);
+        console.error('ZaaKy API Error:', error);
         this.addMessage('Sorry, I encountered an error. Please try again.', 'bot');
       });
     },

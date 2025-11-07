@@ -11,11 +11,6 @@ class URLIngestRequest(BaseModel):
     """Request model for ingesting a URL."""
 
     url: str
-    recursive: bool = False  # Whether to recursively scrape sub-links
-    max_pages: Optional[
-        int
-    ] = None  # Max number of pages to scrape (default: from config)
-    max_depth: Optional[int] = None  # Max crawl depth (default: from config)
 
     @field_validator("url")
     @classmethod
@@ -25,22 +20,6 @@ class URLIngestRequest(BaseModel):
             return validate_url(v, allow_localhost=False)
         except Exception as e:
             raise ValueError(str(e))
-
-    @field_validator("max_pages", mode="before")
-    @classmethod
-    def validate_max_pages(cls, v):
-        """Validate max_pages parameter"""
-        if v is not None and (v < 1 or v > 1000):
-            raise ValueError("max_pages must be between 1 and 1000")
-        return v
-
-    @field_validator("max_depth", mode="before")
-    @classmethod
-    def validate_max_depth(cls, v):
-        """Validate max_depth parameter"""
-        if v is not None and (v < 1 or v > 10):
-            raise ValueError("max_depth must be between 1 and 10")
-        return v
 
 
 class UpdateRequest(BaseModel):

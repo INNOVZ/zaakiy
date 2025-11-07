@@ -24,18 +24,16 @@ from ..services.auth import get_user_with_org, verify_jwt_token_from_header
 from ..services.chat.chat_service import ChatService
 from ..services.chat.prompt_sanitizer import get_prompt_sanitizer
 from ..services.shared import cache_service
-from ..services.storage.supabase_client import get_supabase_client, run_supabase
+from ..services.storage.supabase_client import get_supabase_client
 from ..utils.error_context import ErrorContextManager
 from ..utils.error_handlers import handle_errors
 from ..utils.error_monitoring import error_monitor
 from ..utils.exceptions import ValidationError
 from ..utils.logging_config import get_logger
-from ..utils.rate_limiter import get_rate_limit_config, get_rate_limiter, rate_limit
-from ..utils.session_manager import get_or_create_session_id
+from ..utils.rate_limiter import get_rate_limit_config, rate_limit
 
 # Constants
 CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
-CHATBOT_CACHE_TTL = 300  # Cache chatbot config for 5 minutes
 
 # Get logger
 logger = get_logger(__name__)
@@ -45,72 +43,31 @@ supabase = get_supabase_client()
 
 router = APIRouter()
 
-
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
 
 
-async def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
-    """
-    Get organization's active chatbot with enhanced fallback and caching.
-
-    Uses Redis cache to avoid database queries on every request, reducing
-    latency by 100-200ms per request.
-    """
-    # Generate cache key based on whether chatbot_id is provided
-    if chatbot_id:
-        cache_key = f"chatbot_config:{chatbot_id}"
-    else:
-        cache_key = f"chatbot_config:org:{org_id}:active"
-
-    # Try cache first (only if available)
-    if cache_service:
-        try:
-            cached_config = await cache_service.get(cache_key)
-            if cached_config:
-                logger.debug(
-                    "Chatbot config cache HIT",
-                    extra={
-                        "org_id": org_id,
-                        "chatbot_id": chatbot_id,
-                        "cache_key": cache_key,
-                    },
-                )
-                return cached_config
-        except Exception as e:
-            logger.warning(
-                "Cache retrieval failed, continuing with database query: %s", e
-            )
-
-    # Cache miss - fetch from database
-    logger.debug(
-        "Chatbot config cache MISS",
-        extra={"org_id": org_id, "chatbot_id": chatbot_id, "cache_key": cache_key},
-    )
-
+def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
+    """Get organization's active chatbot with enhanced fallback"""
     try:
         if chatbot_id:
-            response = await run_supabase(
-                lambda: (
-                    supabase.table("chatbots")
-                    .select("*")
-                    .eq("id", chatbot_id)
-                    .eq("org_id", org_id)
-                    .execute()
-                )
+            response = (
+                supabase.table("chatbots")
+                .select("*")
+                .eq("id", chatbot_id)
+                .eq("org_id", org_id)
+                .execute()
             )
         else:
-            response = await run_supabase(
-                lambda: (
-                    supabase.table("chatbots")
-                    .select("*")
-                    .eq("org_id", org_id)
-                    .eq("chain_status", "active")
-                    .order("created_at", desc=True)
-                    .limit(1)
-                    .execute()
-                )
+            response = (
+                supabase.table("chatbots")
+                .select("*")
+                .eq("org_id", org_id)
+                .eq("chain_status", "active")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
             )
 
         if response.data and len(response.data) > 0:
@@ -123,29 +80,13 @@ async def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
                     "chatbot_id": chatbot["id"],
                 },
             )
-
-            # Cache the result for future requests
-            if cache_service:
-                try:
-                    await cache_service.set(cache_key, chatbot, CHATBOT_CACHE_TTL)
-                    logger.debug(
-                        "Cached chatbot config",
-                        extra={
-                            "org_id": org_id,
-                            "chatbot_id": chatbot.get("id"),
-                            "cache_key": cache_key,
-                        },
-                    )
-                except Exception as cache_error:
-                    logger.warning("Failed to cache chatbot config: %s", cache_error)
-
             return chatbot
 
         # Enhanced default chatbot
         logger.info(
             "No chatbot found, using default configuration", extra={"org_id": org_id}
         )
-        default_chatbot = {
+        return {
             "id": f"default-{org_id}",
             "name": "INNOVZ Assistant",
             "avatar_url": None,
@@ -160,24 +101,13 @@ async def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
             "model_config": {"model": "gpt-4", "temperature": 0.7, "max_tokens": 1000},
         }
 
-        # Cache default chatbot too (shorter TTL since it's a fallback)
-        if cache_service:
-            try:
-                await cache_service.set(cache_key, default_chatbot, CHATBOT_CACHE_TTL)
-            except Exception as cache_error:
-                logger.warning(
-                    "Failed to cache default chatbot config: %s", cache_error
-                )
-
-        return default_chatbot
-
     except (ConnectionError, TimeoutError) as e:
         logger.error(
             "Database connection error while fetching chatbot",
             extra={"org_id": org_id, "error": str(e)},
             exc_info=True,
         )
-        fallback_chatbot = {
+        return {
             "id": f"fallback-{org_id}",
             "name": "INNOVZ Assistant",
             "color_hex": "#3B82F6",
@@ -187,7 +117,6 @@ async def get_org_chatbot(org_id: str, chatbot_id: Optional[str] = None):
             "greeting_message": "Hello! How can I help you today?",
             "fallback_message": "I'm experiencing some technical difficulties. Please try again.",
         }
-        return fallback_chatbot
 
 
 # ==========================================
@@ -301,9 +230,7 @@ FALLBACK: {sanitized_data['fallback_message']}
         }
 
         # Insert into Supabase
-        response = await run_supabase(
-            lambda: supabase.table("chatbots").insert(chatbot_data).execute()
-        )
+        response = supabase.table("chatbots").insert(chatbot_data).execute()
 
         if response.data:
             created_chatbot = response.data[0]
@@ -377,22 +304,16 @@ async def update_chatbot(
         update_data = _build_update_data_sanitized(request, sanitizer)
         _validate_update_data(update_data)
 
-        response = await _execute_chatbot_update(chatbot_id, org_id, update_data)
+        response = _execute_chatbot_update(chatbot_id, org_id, update_data)
 
         # Invalidate the chatbot config cache after successful update
         if cache_service and response.data:
             try:
-                # Invalidate both chatbot-specific and org-level cache keys
                 cache_key = f"chatbot_config:{chatbot_id}"
-                org_cache_key = f"chatbot_config:org:{org_id}:active"
                 await cache_service.delete(cache_key)
-                await cache_service.delete(org_cache_key)
                 logger.info(
                     "Chatbot cache invalidated after update",
-                    extra={
-                        "chatbot_id": chatbot_id,
-                        "cache_keys": [cache_key, org_cache_key],
-                    },
+                    extra={"chatbot_id": chatbot_id, "cache_key": cache_key},
                 )
             except Exception as cache_error:
                 logger.warning(
@@ -479,16 +400,14 @@ def _validate_update_data(update_data: dict) -> None:
         raise HTTPException(status_code=400, detail="No update data provided")
 
 
-async def _execute_chatbot_update(chatbot_id: str, org_id: str, update_data: dict):
+def _execute_chatbot_update(chatbot_id: str, org_id: str, update_data: dict):
     """Execute the database update operation"""
-    return await run_supabase(
-        lambda: (
-            supabase.table("chatbots")
-            .update(update_data)
-            .eq("id", chatbot_id)
-            .eq("org_id", org_id)
-            .execute()
-        )
+    return (
+        supabase.table("chatbots")
+        .update(update_data)
+        .eq("id", chatbot_id)
+        .eq("org_id", org_id)
+        .execute()
     )
 
 
@@ -512,31 +431,23 @@ async def delete_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_hea
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
-        response = await run_supabase(
-            lambda: (
-                supabase.table("chatbots")
-                .delete()
-                .eq("id", chatbot_id)
-                .eq("org_id", org_id)
-                .execute()
-            )
+        response = (
+            supabase.table("chatbots")
+            .delete()
+            .eq("id", chatbot_id)
+            .eq("org_id", org_id)
+            .execute()
         )
 
         if response.data:
             # Invalidate the chatbot config cache after deletion
             if cache_service:
                 try:
-                    # Invalidate both chatbot-specific and org-level cache keys
                     cache_key = f"chatbot_config:{chatbot_id}"
-                    org_cache_key = f"chatbot_config:org:{org_id}:active"
                     await cache_service.delete(cache_key)
-                    await cache_service.delete(org_cache_key)
                     logger.info(
                         "Chatbot cache invalidated after deletion",
-                        extra={
-                            "chatbot_id": chatbot_id,
-                            "cache_keys": [cache_key, org_cache_key],
-                        },
+                        extra={"chatbot_id": chatbot_id, "cache_key": cache_key},
                     )
                 except Exception as cache_error:
                     logger.warning(
@@ -611,12 +522,10 @@ async def list_chatbots(
             query = query.eq("chain_status", status)
 
         # Apply pagination and ordering
-        response = await run_supabase(
-            lambda: (
-                query.order("created_at", desc=True)
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
+        response = (
+            query.order("created_at", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
         )
 
         chatbots = response.data or []
@@ -675,14 +584,12 @@ async def get_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_header
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
-        response = await run_supabase(
-            lambda: (
-                supabase.table("chatbots")
-                .select("*")
-                .eq("id", chatbot_id)
-                .eq("org_id", org_id)
-                .execute()
-            )
+        response = (
+            supabase.table("chatbots")
+            .select("*")
+            .eq("id", chatbot_id)
+            .eq("org_id", org_id)
+            .execute()
         )
 
         if response.data and len(response.data) > 0:
@@ -717,14 +624,12 @@ async def clear_chatbot_cache(
         org_id = user_data["org_id"]
 
         # Verify the chatbot belongs to this organization
-        response = await run_supabase(
-            lambda: (
-                supabase.table("chatbots")
-                .select("id")
-                .eq("id", chatbot_id)
-                .eq("org_id", org_id)
-                .execute()
-            )
+        response = (
+            supabase.table("chatbots")
+            .select("id")
+            .eq("id", chatbot_id)
+            .eq("org_id", org_id)
+            .execute()
         )
 
         if not response.data:
@@ -733,18 +638,13 @@ async def clear_chatbot_cache(
         # Clear the cache
         if cache_service:
             try:
-                # Invalidate both chatbot-specific and org-level cache keys
                 cache_key = f"chatbot_config:{chatbot_id}"
-                org_cache_key = f"chatbot_config:org:{org_id}:active"
                 deleted = await cache_service.delete(cache_key)
-                await cache_service.delete(org_cache_key)
 
                 logger.info(
                     "Chatbot cache cleared manually",
                     extra={
                         "chatbot_id": chatbot_id,
-                        "org_id": org_id,
-                        "cache_keys": [cache_key, org_cache_key],
                         "cache_key": cache_key,
                         "deleted": deleted,
                     },
@@ -792,60 +692,38 @@ async def activate_chatbot(chatbot_id: str, user=Depends(verify_jwt_token_from_h
         org_id = user_data["org_id"]
 
         # Get all chatbots in org to invalidate their cache later
-        org_chatbots_response = await run_supabase(
-            lambda: (
-                supabase.table("chatbots").select("id").eq("org_id", org_id).execute()
-            )
+        org_chatbots_response = (
+            supabase.table("chatbots").select("id").eq("org_id", org_id).execute()
         )
         chatbot_ids_to_invalidate = [
             cb["id"] for cb in (org_chatbots_response.data or [])
         ]
 
         # Deactivate all other chatbots first (only one active at a time)
-        await run_supabase(
-            lambda: (
-                supabase.table("chatbots")
-                .update(
-                    {
-                        "chain_status": "inactive",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
-                .eq("org_id", org_id)
-                .execute()
-            )
-        )
+        supabase.table("chatbots").update(
+            {
+                "chain_status": "inactive",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("org_id", org_id).execute()
 
         # Activate the selected chatbot
-        response = await run_supabase(
-            lambda: (
-                supabase.table("chatbots")
-                .update(
-                    {
-                        "chain_status": "active",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
-                .eq("id", chatbot_id)
-                .eq("org_id", org_id)
-                .execute()
+        response = (
+            supabase.table("chatbots")
+            .update(
+                {
+                    "chain_status": "active",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
             )
+            .eq("id", chatbot_id)
+            .eq("org_id", org_id)
+            .execute()
         )
 
         if response.data:
             # Invalidate cache for all affected chatbots
             if cache_service:
-                org_cache_key = f"chatbot_config:org:{org_id}:active"
-                # Invalidate org-level cache
-                try:
-                    await cache_service.delete(org_cache_key)
-                except Exception as cache_error:
-                    logger.warning(
-                        "Failed to invalidate org-level chatbot cache",
-                        extra={"error": str(cache_error), "org_id": org_id},
-                    )
-
-                # Invalidate individual chatbot caches
                 for cb_id in chatbot_ids_to_invalidate:
                     try:
                         cache_key = f"chatbot_config:{cb_id}"
@@ -897,8 +775,6 @@ async def chat_conversation(
 ):
     """Main chat endpoint with enhanced context engineering"""
     start_time = datetime.now(timezone.utc)
-    # Initialize variables that may be referenced in error handling
-    org_id = None
 
     try:
         # Set request context for error tracking INSIDE try block
@@ -925,47 +801,20 @@ async def chat_conversation(
         )
 
         # Get chatbot config
-        chatbot_config = await get_org_chatbot(org_id, request.chatbot_id)
+        chatbot_config = get_org_chatbot(org_id, request.chatbot_id)
 
-        # Get or create consistent session ID (prevents rate limit bypass)
-        session_id = await get_or_create_session_id(
-            user_id=user["user_id"],
-            chatbot_id=request.chatbot_id or chatbot_config.get("id"),
-            org_id=org_id,
-            provided_conversation_id=request.conversation_id,
+        # Generate session ID if not provided
+        session_id = (
+            request.conversation_id
+            or f"session-{user['user_id']}-{int(datetime.now(timezone.utc).timestamp())}"
         )
 
-        # Additional org-level rate limiting (multi-tenant throttling)
-        # This prevents a single organization from overwhelming the system
-        org_rate_limiter = get_rate_limiter()
-        org_key = f"org:{org_id}"
-        # More generous limits for org-level (1000 requests per hour)
-        org_allowed, org_info = org_rate_limiter.is_allowed(
-            org_key, max_requests=1000, window_seconds=3600
-        )
-        if not org_allowed:
-            logger.warning(
-                "Organization rate limit exceeded",
-                extra={
-                    "org_id": org_id,
-                    "retry_after": org_info["retry_after"],
-                },
-            )
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "Organization rate limit exceeded. Please contact support if you need higher limits.",
-                    "retry_after": org_info["retry_after"],
-                },
-                headers={"Retry-After": str(org_info["retry_after"])},
-            )
-
-        # Create chat service instance (dependencies reuse shared clients internally)
+        # Initialize chat service with full context engineering and entity information
         chat_service = ChatService(
             org_id=org_id,
             chatbot_config=chatbot_config,
-            entity_id=org_id,
-            entity_type="organization",
+            entity_id=org_id,  # Use organization ID as entity ID
+            entity_type="organization",  # Users consume tokens from their organization's subscription
         )
 
         # Generate response
@@ -1026,11 +875,7 @@ async def chat_conversation(
 
         logger.error(
             "Chat conversation failed",
-            extra={
-                "error": str(e),
-                "processing_time_ms": error_time,
-                "org_id": org_id,  # May be None if error occurred before org_id was set
-            },
+            extra={"error": str(e), "processing_time_ms": error_time, "org_id": org_id},
             exc_info=True,
         )
         traceback.print_exc()
@@ -1084,12 +929,10 @@ async def list_conversations(
             query = query.eq("chatbot_id", chatbot_id)
 
         # Apply pagination and ordering
-        result = await run_supabase(
-            lambda: (
-                query.order("updated_at", desc=True)
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
+        result = (
+            query.order("updated_at", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
         )
 
         # Get total count
@@ -1141,22 +984,12 @@ async def add_feedback(
     request: FeedbackRequest, user=Depends(verify_jwt_token_from_header)
 ):
     """Add message feedback with analytics integration"""
-    org_id = None
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
-        chatbot_config = {
-            "name": "Assistant",
-            "org_id": org_id,
-            "id": f"feedback-{org_id}",
-        }
-        chat_service = ChatService(
-            org_id=org_id,
-            chatbot_config=chatbot_config,
-            entity_id=org_id,
-            entity_type="organization",
-        )
+        chatbot_config = {"name": "Assistant", "org_id": org_id}
+        chat_service = ChatService(org_id=org_id, chatbot_config=chatbot_config)
 
         success = await chat_service.add_feedback(
             message_id=request.message_id,
@@ -1178,11 +1011,7 @@ async def add_feedback(
     except Exception as e:
         logger.error(
             "Failed to add feedback",
-            extra={
-                "error": str(e),
-                "message_id": request.message_id,
-                "org_id": org_id,  # May be None if error occurred before org_id was set
-            },
+            extra={"error": str(e), "message_id": request.message_id},
             exc_info=True,
         )
         raise HTTPException(
@@ -1285,22 +1114,12 @@ async def update_context_config(
 @router.get("/performance-insights")
 async def get_performance_insights(user=Depends(verify_jwt_token_from_header)):
     """Get AI performance insights and recommendations"""
-    org_id = None
     try:
         user_data = await get_user_with_org(user["user_id"])
         org_id = user_data["org_id"]
 
-        chatbot_config = {
-            "name": "Assistant",
-            "org_id": org_id,
-            "id": f"analytics-{org_id}",
-        }
-        chat_service = ChatService(
-            org_id=org_id,
-            chatbot_config=chatbot_config,
-            entity_id=org_id,
-            entity_type="organization",
-        )
+        chatbot_config = {"name": "Assistant", "org_id": org_id}
+        chat_service = ChatService(org_id=org_id, chatbot_config=chatbot_config)
 
         insights = chat_service.get_performance_insights()
 

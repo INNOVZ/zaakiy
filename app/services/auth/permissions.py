@@ -345,7 +345,7 @@ async def update_user_role(user_id: str, new_role: UserRole) -> bool:
     except Exception as e:
         logger.error(
             "Error updating user role",
-            extra={"user_id": user_id, "role": new_role, "error": str(e)},
+            extra={"user_id": user_id, "role": role, "error": str(e)},
             exc_info=True,
         )
         return False
