@@ -266,14 +266,39 @@ class ChatService:
                 {"org_id": self.org_id, "query_count": len(enhanced_queries)},
             ):
                 try:
+                    logger.info(
+                        "Starting document retrieval",
+                        extra={
+                            "org_id": self.org_id,
+                            "namespace": self.namespace,
+                            "query_count": len(enhanced_queries),
+                            "queries_preview": [q[:50] for q in enhanced_queries[:3]],
+                            "has_pinecone_index": self.index is not None,
+                        },
+                    )
                     documents = await self.document_retrieval.retrieve_documents(
                         queries=enhanced_queries
                     )
+                    logger.info(
+                        "Document retrieval completed",
+                        extra={
+                            "org_id": self.org_id,
+                            "documents_retrieved": len(documents),
+                            "has_documents": len(documents) > 0,
+                        },
+                    )
                 except Exception as retrieval_error:
                     # If retrieval fails, continue with empty documents (fallback mode)
-                    logger.warning(
-                        "Document retrieval failed, continuing without context: %s",
-                        str(retrieval_error),
+                    logger.error(
+                        "Document retrieval failed, continuing without context",
+                        extra={
+                            "org_id": self.org_id,
+                            "namespace": self.namespace,
+                            "error": str(retrieval_error),
+                            "error_type": type(retrieval_error).__name__,
+                            "has_pinecone_index": self.index is not None,
+                        },
+                        exc_info=True,
                     )
                     documents = []
 

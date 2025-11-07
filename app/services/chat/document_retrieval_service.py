@@ -44,18 +44,41 @@ class DocumentRetrievalService:
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
+        logger.info(
+            "Document retrieval started",
+            extra={
+                "org_id": self.org_id,
+                "namespace": self.namespace,
+                "query_count": len(queries),
+                "has_pinecone_index": self.pinecone_index is not None,
+                "has_openai_client": self.openai_client is not None,
+            },
+        )
+
         # Check cache first for the entire query set
         cache_key = self._generate_retrieval_cache_key(queries)
 
         # Try to get cached results
         cached_results = await self._get_cached_retrieval_results(cache_key)
         if cached_results:
-            logger.info("Vector cache HIT for %d queries", len(queries))
+            logger.info(
+                "Vector cache HIT for %d queries",
+                len(queries),
+                extra={
+                    "org_id": self.org_id,
+                    "cached_documents": len(cached_results),
+                },
+            )
             return cached_results
 
         # Cache miss - perform retrieval
         logger.info(
-            "Vector cache MISS - performing retrieval for %d queries", len(queries)
+            "Vector cache MISS - performing retrieval for %d queries",
+            len(queries),
+            extra={
+                "org_id": self.org_id,
+                "namespace": self.namespace,
+            },
         )
         all_docs = {}
 
@@ -144,6 +167,18 @@ class DocumentRetrievalService:
 
         # Return top documents sorted by score
         sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
+
+        logger.info(
+            "Document retrieval completed",
+            extra={
+                "org_id": self.org_id,
+                "namespace": self.namespace,
+                "total_documents_found": len(sorted_docs),
+                "top_scores": [doc["score"] for doc in sorted_docs[:3]]
+                if sorted_docs
+                else [],
+            },
+        )
 
         # For contact queries, return MORE documents to ensure we get phone/email info
         # Check if any query contains contact keywords

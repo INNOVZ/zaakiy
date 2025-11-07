@@ -138,14 +138,19 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
             )
             raise HTTPException(status_code=400, detail=error_message)
 
-        # Sanitize the message
+        # Sanitize the message (for security, but preserve query quality)
         sanitized_message = security_service.sanitize_message(request.message)
 
+        # Log message transformation for debugging
+        message_changed = sanitized_message != request.message
         logger.info(
             "Message validated and sanitized",
             extra={
                 "original_length": len(request.message),
                 "sanitized_length": len(sanitized_message),
+                "message_changed": message_changed,
+                "original_preview": request.message[:100],
+                "sanitized_preview": sanitized_message[:100],
             },
         )
 
@@ -179,6 +184,8 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
 
         # ====== SECURITY LAYER 5: Generate response with sanitized message ======
         try:
+            # Use sanitized message for security, but log if it differs significantly
+            # The sanitization should only remove HTML/JS, not affect query meaning
             result = await chat_service.chat(
                 message=sanitized_message,  # Use sanitized message
                 session_id=session_id,
@@ -190,6 +197,9 @@ async def public_chat(request: PublicChatRequest, http_request: Request):
                     "chatbot_id": request.chatbot_id,
                     "has_response": bool(result.get("response")),
                     "conversation_id": result.get("conversation_id"),
+                    "sources_count": len(result.get("sources", [])),
+                    "response_length": len(result.get("response", "")),
+                    "has_product_links": bool(result.get("product_links")),
                 },
             )
         except Exception as chat_error:
