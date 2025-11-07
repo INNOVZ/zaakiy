@@ -173,7 +173,29 @@ class ResponseGenerationService:
 
             # DEBUG: Log context information
             context_text = context_data.get("context_text", "")
-            logger.info("📝 Context length: %d characters", len(context_text))
+            logger.info(
+                "📝 Context built",
+                extra={
+                    "org_id": self.org_id,
+                    "context_length": len(context_text),
+                    "documents_count": len(retrieved_documents),
+                    "has_context": len(context_text) > 0,
+                    "context_preview": context_text[:200] if context_text else "EMPTY",
+                },
+            )
+
+            # CRITICAL: Log if context is empty but documents were retrieved
+            if not context_text and retrieved_documents:
+                logger.error(
+                    "🚨 CRITICAL: Documents retrieved but context is EMPTY!",
+                    extra={
+                        "org_id": self.org_id,
+                        "documents_retrieved": len(retrieved_documents),
+                        "document_ids": [
+                            doc.get("id", "unknown") for doc in retrieved_documents[:5]
+                        ],
+                    },
+                )
 
             # Detect if this is a contact information query - if so, use ZERO temperature
             is_contact_query = self._is_contact_information_query(message)
@@ -263,6 +285,28 @@ class ResponseGenerationService:
                 source = doc.get("source", "")
                 score = doc.get("score", 0)
 
+                # Log document structure for debugging
+                if idx == 0:  # Log first document structure
+                    logger.info(
+                        "📄 Document structure check",
+                        extra={
+                            "org_id": self.org_id,
+                            "has_chunk": "chunk" in doc,
+                            "has_content": "content" in doc,
+                            "has_text": "text" in doc,
+                            "doc_keys": list(doc.keys()),
+                            "chunk_length": len(chunk_text) if chunk_text else 0,
+                        },
+                    )
+
+                # Try multiple possible field names for chunk content
+                if not chunk_text:
+                    chunk_text = (
+                        doc.get("content", "")
+                        or doc.get("text", "")
+                        or doc.get("metadata", {}).get("text", "")
+                    )
+
                 if chunk_text and len(chunk_text.strip()) > 10:
                     context_chunks.append(chunk_text)
                     if source and source not in sources:
@@ -276,6 +320,18 @@ class ResponseGenerationService:
                         score,
                         len(chunk_text),
                         chunk_text[:100],
+                    )
+                else:
+                    logger.warning(
+                        "⚠️ Skipping document %d - no valid chunk content",
+                        idx + 1,
+                        extra={
+                            "org_id": self.org_id,
+                            "score": score,
+                            "chunk_length": len(chunk_text) if chunk_text else 0,
+                            "has_chunk": "chunk" in doc,
+                            "has_content": "content" in doc,
+                        },
                     )
 
             # Combine context with length limit
@@ -346,12 +402,14 @@ CONTEXT INFORMATION:
 
 ⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
 
-1. ONLY use EXACT information from the CONTEXT INFORMATION above
-2. If product names, prices, or details are NOT explicitly in the context, say "I don't have those specific details"
-3. NEVER make up product names, prices, descriptions, or any facts
-4. NEVER use placeholders like "XXX", "[insert X]", "around X", or "approximately"
-5. If context has partial info (e.g., product names but no prices), share what you have and say what's missing
-6. When in doubt, be conservative - accuracy over completeness
+1. USE information from the CONTEXT INFORMATION above to provide helpful, accurate answers
+2. SYNTHESIZE and COMBINE information from multiple parts of the context to answer questions fully
+3. If the context contains relevant information (even if not exact), USE IT to provide a helpful answer
+4. NEVER make up product names, prices, descriptions, or any facts that aren't in the context
+5. NEVER use placeholders like "XXX", "[insert X]", "around X", or "approximately" for specific details
+6. If context has partial info (e.g., product names but no prices), share what you have and indicate what's missing
+7. Only say "I don't have that information" if the context is COMPLETELY unrelated to the question
+8. Be helpful and informative - use all available context to provide the best possible answer
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 - Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character from context
