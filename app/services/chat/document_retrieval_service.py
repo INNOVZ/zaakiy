@@ -44,6 +44,29 @@ class DocumentRetrievalService:
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
+        # CRITICAL: Early validation
+        if not self.pinecone_index:
+            logger.error(
+                "🚨 CRITICAL: Pinecone index is None - cannot retrieve documents",
+                extra={
+                    "org_id": self.org_id,
+                    "namespace": self.namespace,
+                    "query_count": len(queries),
+                },
+            )
+            return []
+
+        if not self.openai_client:
+            logger.error(
+                "🚨 CRITICAL: OpenAI client is None - cannot generate embeddings",
+                extra={
+                    "org_id": self.org_id,
+                    "namespace": self.namespace,
+                    "query_count": len(queries),
+                },
+            )
+            return []
+
         logger.info(
             "Document retrieval started",
             extra={
@@ -52,6 +75,7 @@ class DocumentRetrievalService:
                 "query_count": len(queries),
                 "has_pinecone_index": self.pinecone_index is not None,
                 "has_openai_client": self.openai_client is not None,
+                "queries": queries[:3],  # Log first 3 queries for debugging
             },
         )
 
@@ -152,18 +176,52 @@ class DocumentRetrievalService:
             raise DocumentRetrievalError(f"Document retrieval failed: {e}") from e
 
         # Merge results from all queries, keeping highest scores
-        for result in query_results:
+        query_errors = []
+        for idx, result in enumerate(query_results):
             if isinstance(result, Exception):
-                logger.error("Query retrieval error: %s", result)
+                error_msg = f"Query {idx+1} retrieval error: {str(result)}"
+                logger.error(
+                    error_msg,
+                    extra={
+                        "org_id": self.org_id,
+                        "namespace": self.namespace,
+                        "query": queries[idx] if idx < len(queries) else "unknown",
+                        "error_type": type(result).__name__,
+                    },
+                    exc_info=True,
+                )
+                query_errors.append(error_msg)
                 continue
 
             if not result:
+                logger.warning(
+                    "Query %d returned no documents",
+                    idx + 1,
+                    extra={
+                        "org_id": self.org_id,
+                        "namespace": self.namespace,
+                        "query": queries[idx] if idx < len(queries) else "unknown",
+                    },
+                )
                 continue
 
             for doc in result:
                 doc_id = doc["id"]
                 if doc_id not in all_docs or doc["score"] > all_docs[doc_id]["score"]:
                     all_docs[doc_id] = doc
+
+        # Log if all queries failed
+        if not all_docs and query_results:
+            logger.error(
+                "🚨 CRITICAL: All queries returned no documents or errors",
+                extra={
+                    "org_id": self.org_id,
+                    "namespace": self.namespace,
+                    "query_count": len(queries),
+                    "errors": query_errors,
+                    "queries": queries,
+                },
+            )
 
         # Return top documents sorted by score
         sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
@@ -253,9 +311,33 @@ class DocumentRetrievalService:
                     include_metadata=True,
                 )
 
+                # CRITICAL: Log if no matches in result
+                matches = result.get("matches", [])
+                if not matches:
+                    logger.warning(
+                        "🚨 CRITICAL: OptimizedVectorSearch returned ZERO matches",
+                        extra={
+                            "org_id": self.org_id,
+                            "namespace": self.namespace,
+                            "query": query[:100],
+                            "top_k": self.retrieval_config["initial"],
+                            "result_keys": list(result.keys()),
+                        },
+                    )
+                else:
+                    logger.info(
+                        "OptimizedVectorSearch returned matches",
+                        extra={
+                            "org_id": self.org_id,
+                            "namespace": self.namespace,
+                            "matches_count": len(matches),
+                            "top_score": matches[0].get("score", 0) if matches else 0,
+                        },
+                    )
+
                 # Convert to expected format
                 docs = []
-                for match in result.get("matches", []):
+                for match in matches:
                     docs.append(
                         {
                             "id": match["id"],
