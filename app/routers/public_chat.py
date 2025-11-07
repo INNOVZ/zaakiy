@@ -610,6 +610,12 @@ async def get_chatbot_widget_js(chatbot_id: str):
       input.value = '';
 
       // Send to API with proper error handling
+      console.log('[Zaakiy Widget] Sending request:', {
+        url: this.config.apiUrl + '/chat',
+        chatbot_id: this.config.chatbotId,
+        message_preview: message.substring(0, 50)
+      });
+
       fetch(this.config.apiUrl + '/chat', {
         method: 'POST',
         headers: {
@@ -628,12 +634,35 @@ async def get_chatbot_widget_js(chatbot_id: str):
         return response.json();
       })
       .then(data => {
+        console.log('[Zaakiy Widget] Received response:', {
+          has_response: !!data.response,
+          response_length: data.response ? data.response.length : 0,
+          response_preview: data.response ? data.response.substring(0, 100) : 'NO RESPONSE',
+          has_sources: !!(data.sources && data.sources.length > 0),
+          sources_count: data.sources ? data.sources.length : 0
+        });
+
+        // Check for vague responses
+        if (data.response) {
+          const vaguePhrases = ["I don't have", "I don't have those specific details", "check out our website"];
+          const isVague = vaguePhrases.some(phrase => data.response.toLowerCase().includes(phrase.toLowerCase()));
+          if (isVague) {
+            console.warn('[Zaakiy Widget] ⚠️ Vague response detected:', {
+              response_preview: data.response.substring(0, 150),
+              has_sources: !!(data.sources && data.sources.length > 0)
+            });
+          }
+        }
+
         if (data.response) {
           this.addMessage(data.response, 'bot');
+        } else {
+          console.error('[Zaakiy Widget] No response in data:', data);
+          this.addMessage('Sorry, I encountered an error. Please try again.', 'bot');
         }
       })
       .catch(error => {
-        console.error('ZaaKy API Error:', error);
+        console.error('[Zaakiy Widget] API Error:', error);
         this.addMessage('Sorry, I encountered an error. Please try again.', 'bot');
       });
     },
