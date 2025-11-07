@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from app.models.chatbot_config import ChatbotConfig
 from app.services.shared import cache_service
@@ -304,13 +304,38 @@ class ResponseGenerationService:
             raise ResponseGenerationError(f"Response generation failed: {e}") from e
 
     def _build_context(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Build context from retrieved documents"""
+        """Build context from retrieved documents and fallback org knowledge"""
         try:
+            # Track whether we had to rely on context config fallback
+            fallback_sections_used: List[str] = []
+
             if not documents:
+                (
+                    fallback_text,
+                    fallback_sections_used,
+                ) = self._build_context_from_config()
+                if fallback_text:
+                    return {
+                        "context_text": fallback_text,
+                        "sources": [
+                            f"context_config.{section}"
+                            for section in fallback_sections_used
+                        ],
+                        "context_quality": {
+                            "coverage_score": 0.3,
+                            "relevance_score": 0.5,
+                            "fallback_context_used": True,
+                            "fallback_sections": fallback_sections_used,
+                        },
+                    }
                 return {
                     "context_text": "",
                     "sources": [],
-                    "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
+                    "context_quality": {
+                        "coverage_score": 0.0,
+                        "relevance_score": 0.0,
+                        "fallback_context_used": False,
+                    },
                 }
 
             # Combine document chunks
@@ -375,6 +400,18 @@ class ResponseGenerationService:
             # Combine context with length limit
             context_text = self._combine_context_chunks(context_chunks)
 
+            # Append fallback org knowledge if available (helps when docs are sparse)
+            fallback_text, fallback_sections_used = self._build_context_from_config()
+            if fallback_text:
+                if context_text:
+                    context_text = f"{context_text}\n\n---\n\n{fallback_text}"
+                else:
+                    context_text = fallback_text
+                for section in fallback_sections_used:
+                    source_key = f"context_config.{section}"
+                    if source_key not in sources:
+                        sources.append(source_key)
+
             # Calculate quality metrics
             avg_score = total_score / len(documents) if documents else 0
             coverage_score = min(len(context_text) / self.max_context_length, 1.0)
@@ -386,6 +423,10 @@ class ResponseGenerationService:
                     "coverage_score": coverage_score,
                     "relevance_score": avg_score,
                     "document_count": len(documents),
+                    "fallback_context_used": bool(
+                        fallback_sections_used and not documents
+                    ),
+                    "fallback_sections": fallback_sections_used,
                 },
             }
 
@@ -394,8 +435,62 @@ class ResponseGenerationService:
             return {
                 "context_text": "",
                 "sources": [],
-                "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
+                "context_quality": {
+                    "coverage_score": 0.0,
+                    "relevance_score": 0.0,
+                    "fallback_context_used": False,
+                },
             }
+
+    def _build_context_from_config(self) -> Tuple[str, List[str]]:
+        """Construct fallback context text from stored context configuration."""
+        cfg_data = self._context_config_as_dict()
+        if not cfg_data:
+            return "", []
+
+        sections = []
+        sections_used = []
+        field_mappings = [
+            ("business_context", "BUSINESS OVERVIEW"),
+            ("domain_knowledge", "DOMAIN KNOWLEDGE"),
+            ("specialized_instructions", "SPECIAL GUIDANCE"),
+        ]
+
+        for field_name, heading in field_mappings:
+            value = cfg_data.get(field_name)
+            if isinstance(value, str):
+                value = value.strip()
+            if value:
+                sections.append(f"{heading}:\n{value}")
+                sections_used.append(field_name)
+
+        if not sections:
+            return "", []
+
+        return "\n\n".join(sections), sections_used
+
+    def _context_config_as_dict(self) -> Dict[str, Any]:
+        """Return context_config as plain dict regardless of underlying type."""
+        config = getattr(self, "context_config", None)
+        if not config:
+            return {}
+
+        if isinstance(config, dict):
+            return config
+
+        if hasattr(config, "model_dump"):
+            try:
+                return config.model_dump()
+            except Exception:
+                pass
+
+        if hasattr(config, "__dict__"):
+            try:
+                return dict(config.__dict__)
+            except Exception:
+                return {}
+
+        return {}
 
     def _combine_context_chunks(self, chunks: List[str]) -> str:
         """Combine context chunks with length limits"""

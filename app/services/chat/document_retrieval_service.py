@@ -147,6 +147,14 @@ class DocumentRetrievalService:
         # OPTIMIZATION: Process all queries in parallel instead of sequentially
         async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
             """Retrieve documents for a single query with error handling"""
+            # CRITICAL: Early return if Pinecone is not available
+            if not self.pinecone_index:
+                logger.warning(
+                    "Skipping retrieval for query '%s' - Pinecone index not available",
+                    query[:50],
+                )
+                return []
+
             try:
                 # Strategy-based retrieval
                 if strategy == "semantic_only":
@@ -171,15 +179,20 @@ class DocumentRetrievalService:
                     query,
                     strategy,
                     e,
+                    exc_info=True,
                 )
                 # Fallback to basic semantic search
                 try:
                     return await self._semantic_retrieval(query)
                 except Exception as fallback_e:
-                    logger.error("Fallback retrieval also failed: %s", fallback_e)
-                    raise DocumentRetrievalError(
-                        f"Document retrieval failed: {e}"
-                    ) from e
+                    logger.error(
+                        "Fallback retrieval also failed for query '%s': %s",
+                        query[:50],
+                        fallback_e,
+                        exc_info=True,
+                    )
+                    # Return empty list instead of raising - allows chatbot to continue
+                    return []
 
         # Execute all query retrievals in parallel with timeout
         try:
@@ -405,20 +418,37 @@ class DocumentRetrievalService:
                 return await self._fallback_semantic_retrieval(query)
 
         except Exception as e:
-            logger.error("Optimized semantic retrieval failed: %s", e)
+            logger.error(
+                "Optimized semantic retrieval failed for query '%s': %s",
+                query[:50],
+                e,
+                exc_info=True,
+            )
             # Try fallback
             try:
                 return await self._fallback_semantic_retrieval(query)
             except Exception as fallback_e:
-                logger.error("Fallback semantic retrieval also failed: %s", fallback_e)
-                raise DocumentRetrievalError(f"Semantic retrieval failed: {e}") from e
+                logger.error(
+                    "Fallback semantic retrieval also failed for query '%s': %s",
+                    query[:50],
+                    fallback_e,
+                    exc_info=True,
+                )
+                # Return empty list instead of raising - allows chatbot to continue
+                return []
 
     async def _fallback_semantic_retrieval(self, query: str) -> List[Dict[str, Any]]:
         """Fallback semantic search without optimization"""
+        # CRITICAL: Early return if Pinecone is not available
+        if not self.pinecone_index:
+            logger.warning(
+                "Fallback retrieval skipped - Pinecone index not available for query '%s'",
+                query[:50],
+            )
+            return []
+
         try:
             embedding = await self._generate_embedding(query)
-            if not self.pinecone_index:
-                raise DocumentRetrievalError("Pinecone index not configured")
 
             loop = asyncio.get_running_loop()
 

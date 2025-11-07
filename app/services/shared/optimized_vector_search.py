@@ -27,7 +27,23 @@ class OptimizedVectorSearch:
         self.openai_client = openai_client
         self.org_id = org_id
         self.embedding_model = embedding_model
-        self.pinecone_index = get_pinecone_index()
+
+        # CRITICAL: Handle Pinecone initialization failures gracefully
+        try:
+            self.pinecone_index = get_pinecone_index()
+            if self.pinecone_index is None:
+                logger.error(
+                    "🚨 CRITICAL: get_pinecone_index() returned None for org %s",
+                    org_id,
+                )
+        except Exception as e:
+            logger.error(
+                "🚨 CRITICAL: Failed to initialize Pinecone index in OptimizedVectorSearch: %s",
+                e,
+                exc_info=True,
+            )
+            self.pinecone_index = None
+
         self.embedding_cache = {}  # Local embedding cache
 
     async def search_with_caching(
@@ -123,7 +139,16 @@ class OptimizedVectorSearch:
                     "🚨 CRITICAL: Pinecone index not available in OptimizedVectorSearch",
                     extra={"namespace": namespace, "query_preview": query[:50]},
                 )
-                raise Exception("Pinecone index not available")
+                # Return empty results instead of raising - allows graceful degradation
+                performance_metrics["total_time_ms"] = (
+                    datetime.now(timezone.utc) - search_start
+                ).total_seconds() * 1000
+                return {
+                    "matches": [],
+                    "performance": performance_metrics,
+                    "total_results": 0,
+                    "namespace": namespace,
+                }
 
             # Execute vector search with detailed logging
             logger.debug(
