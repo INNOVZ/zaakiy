@@ -596,7 +596,7 @@ CONTEXT INFORMATION:
 ⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
 
 1. ONLY use EXACT information from the CONTEXT INFORMATION above
-2. If product names, prices, or details are NOT explicitly in the context, say "I don't have those specific details"
+2. If product names, prices, or details are NOT explicitly in the context, provide a helpful response explaining what you can help with
 3. NEVER make up product names, prices, descriptions, or any facts
 4. NEVER use placeholders like "XXX", "[insert X]", "around X", or "approximately"
 5. If context has partial info (e.g., product names but no prices), share what you have and say what's missing
@@ -701,10 +701,74 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 """
             return base_prompt + "\n\n" + context_section
         else:
-            return (
-                base_prompt
-                + "\n\nNo specific context information is available for this query."
+            # NO CONTEXT AVAILABLE - Provide helpful fallback instructions
+            no_context_section = """
+NO KNOWLEDGE BASE CONTEXT AVAILABLE
+
+Since there is no specific information in the knowledge base, you should:
+
+1. **For Product Questions**: Explain that you're {chatbot_name}, an AI assistant, and while you don't have specific product details in your knowledge base yet, you can help in other ways:
+   - Offer to connect them with someone who can provide product information
+   - Ask what specific information they're looking for
+   - Suggest they visit the website or contact support
+
+2. **For Pricing Questions**: Explain that pricing information isn't available in your current knowledge base, but:
+   - Offer to connect them with the sales team
+   - Suggest they request a quote or consultation
+   - Provide general guidance on what factors might affect pricing (if applicable)
+
+3. **For Plan/Service Questions**: Explain available options in general terms if you know them, or:
+   - Offer to connect them with someone who can explain plans
+   - Ask what specific features or services they're interested in
+   - Suggest scheduling a demo or consultation
+
+4. **General Approach**:
+   - Be honest that you don't have specific details in your knowledge base
+   - Be helpful and offer alternatives (contact sales, schedule demo, visit website)
+   - Maintain a friendly, professional tone
+   - Use emojis appropriately to keep the conversation engaging
+   - NEVER make up specific product names, prices, or features
+   - ALWAYS offer to help connect them with the right person/resource
+
+EXAMPLE RESPONSES:
+
+❌ BAD (Vague):
+"I don't have those specific details. For pricing information, you can check out the Essential, Pro, and Enterprise plans available for Zaakiy AI."
+
+✅ GOOD (Helpful):
+"I'd love to help you with information about our products! 🎯
+
+While I don't have specific product details in my knowledge base right now, I can help you in a few ways:
+
+1. **Connect you with our team** - They can provide detailed product information and pricing
+2. **Schedule a demo** - See our products in action
+3. **Answer general questions** - About what we do and how we can help
+
+What specific information are you looking for? I'll make sure you get the right details! 😊"
+
+✅ GOOD (For Pricing):
+"Great question about pricing! 💰
+
+While I don't have specific pricing details in my current knowledge base, here's how I can help:
+
+• **Get a Custom Quote** - Our pricing varies based on your needs
+• **Schedule a Consultation** - Discuss your requirements and get accurate pricing
+• **Compare Plans** - I can connect you with someone who can explain our different options
+
+Would you like me to help you get in touch with our sales team for detailed pricing information?"
+
+CRITICAL RULES:
+- Be conversational and helpful, not robotic
+- Offer concrete next steps (contact sales, schedule demo, etc.)
+- Use emojis to make responses engaging
+- Keep responses under 150 words
+- Maintain {tone} tone
+- Refer to yourself as {chatbot_name}
+""".format(
+                chatbot_name=self.chatbot_config.name, tone=self.chatbot_config.tone
             )
+
+            return base_prompt + "\n\n" + no_context_section
 
     def _build_conversation_messages(
         self, system_prompt: str, history: List[Dict[str, Any]], current_message: str
@@ -1186,6 +1250,17 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
             )
             return enhanced[:5]  # Limit to 5 total queries
 
+        # SPECIAL CASE: Always enhance product/pricing queries regardless of settings
+        product_variants = self._get_product_query_variants(query)
+        if product_variants:
+            enhanced.extend(product_variants)
+            logger.info(
+                "🛍️ Product/pricing query detected! Generated %d query variants: %s",
+                len(enhanced),
+                enhanced,
+            )
+            return enhanced[:5]  # Limit to 5 total queries
+
         # EMERGENCY MODE: Always skip query enhancement for speed
         # Saves 500-1000ms per request!
         logger.info("⚡ EMERGENCY MODE: Skipping query enhancement for speed")
@@ -1281,6 +1356,95 @@ Alternative queries (one per line, no numbering):"""
         ]
 
         return any(keyword in query_lower for keyword in contact_keywords)
+
+    def _get_product_query_variants(self, query: str) -> List[str]:
+        """Generate query variants for product/pricing queries"""
+        query_lower = query.lower()
+
+        # Keywords that indicate a product/pricing query
+        product_keywords = {
+            "product": [
+                "product",
+                "products",
+                "item",
+                "items",
+                "offering",
+                "offerings",
+                "sell",
+                "selling",
+                "available",
+            ],
+            "pricing": [
+                "price",
+                "pricing",
+                "cost",
+                "costs",
+                "how much",
+                "pricing plan",
+                "subscription",
+                "fee",
+                "fees",
+            ],
+            "plans": [
+                "plan",
+                "plans",
+                "package",
+                "packages",
+                "tier",
+                "tiers",
+                "subscription",
+                "subscriptions",
+            ],
+            "features": [
+                "feature",
+                "features",
+                "what do you have",
+                "what you have",
+                "what's included",
+                "what is included",
+            ],
+        }
+
+        variants = []
+
+        # Check if query contains product-related keywords
+        for category, keywords in product_keywords.items():
+            if any(keyword in query_lower for keyword in keywords):
+                # Add specific variants based on the category
+                if category == "product":
+                    variants.extend(
+                        [
+                            "products services offerings catalog",
+                            "what products available",
+                            "product catalog list",
+                        ]
+                    )
+                elif category == "pricing":
+                    variants.extend(
+                        [
+                            "pricing cost price plans",
+                            "how much does it cost pricing",
+                            "price list pricing information",
+                        ]
+                    )
+                elif category == "plans":
+                    variants.extend(
+                        [
+                            "subscription plans packages tiers",
+                            "pricing plans available options",
+                            "plan features comparison",
+                        ]
+                    )
+                elif category == "features":
+                    variants.extend(
+                        [
+                            "features capabilities offerings",
+                            "what's included in product",
+                        ]
+                    )
+                break  # Only use first matching category
+
+        return variants[:3]  # Limit to 3 variants
 
     def _get_contact_query_variants(self, query: str) -> List[str]:
         """Generate query variants for contact-related queries"""
