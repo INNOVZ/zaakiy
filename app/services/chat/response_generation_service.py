@@ -252,7 +252,10 @@ class ResponseGenerationService:
 
             # Process and format the response
             formatted_response = self._format_response(
-                openai_response["content"], retrieved_documents, context_data
+                openai_response["content"],
+                retrieved_documents,
+                context_data,
+                is_contact_query,
             )
 
             # Add token usage information to the response
@@ -480,9 +483,12 @@ CONTEXT INFORMATION:
 6. When in doubt, be conservative - accuracy over completeness
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
+- ONLY provide contact information (phone, email, address) when the user EXPLICITLY asks for it
+- If user asks about products, prices, or other topics, DO NOT include contact information unless asked
 - Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character from context
 - Demo/booking links MUST be used EXACTLY as provided in context - DO NOT use different links
-- If contact info is NOT in context, say "I don't have contact information available"
+- If contact info is NOT in context AND user asks for it, say "I don't have contact information available"
+- If user does NOT ask for contact info, DO NOT mention it at all
 
 DEMO/BOOKING LINKS - CRITICAL:
 - If context has demo/booking links, ALWAYS use those exact links
@@ -498,15 +504,8 @@ EXAMPLES OF CORRECT BEHAVIOR:
 📞 **Phone**: [+91 75 94 94 94 06](tel:+917594949406)
 📧 **Email**: [support@company.com](mailto:support@company.com)"
 
-✅ DEMO LINK - Context has: "Demo/Booking Links: https://innovz.surveysparrow.com/s/Zaakiy-onboarding/tt-NwNkd"
-   Response: "To book a demo, please **[click here](https://innovz.surveysparrow.com/s/Zaakiy-onboarding/tt-NwNkd)** or visit the link above."
-
 ❌ WRONG - Context has phone/email
    Response: "Phone: +91 75 94 94 94 06 Email: support@company.com" (Missing emojis and markdown!)
-
-❌ WRONG - Context has specific demo link but you provide a different link
-   Context: "Demo/Booking Links: https://innovz.surveysparrow.com/s/Zaakiy-onboarding/tt-NwNkd"
-   Response: "Book a demo here: https://example.com/demo" (WRONG - use the exact link from context!)
 
 ✅ PRODUCT INFO - Context has: "Solar Panel 500W costs ₹50,000"
    Response: "**[Solar Panel 500W](product-url)** - *High efficiency panel* - **Price**: ₹50,000"
@@ -519,7 +518,7 @@ GENERAL INSTRUCTIONS:
 - Be conversational and helpful - synthesize information to answer questions fully
 - Always use appropriate emojis while chatting with the user
 - Give responses in the same language as the user's question
-- For product questions: describe what's available based on context
+- For product questions: describe what's available based on context, include prices and links if available
 - For general questions: provide relevant information from the context
 - Only say "I don't have that information" if the context is COMPLETELY unrelated to the question
 - Cite exact facts, numbers, prices, and contact details from context without modification
@@ -527,6 +526,9 @@ GENERAL INSTRUCTIONS:
 - Maintain {self.chatbot_config.tone} tone
 - Refer to yourself as {self.chatbot_config.name}
 - If you have partial information, share it and indicate what additional details you might not have
+- CRITICAL: Only provide contact information (phone, email, address) when the user explicitly asks for it
+- When listing products, focus on product names, descriptions, prices, and product links - NOT contact info
+- If prices are missing from context, just list the product without a price - DO NOT insert placeholders
 
 FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
@@ -546,9 +548,15 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
    ❌ WRONG: Missing emojis, no markdown, or plain text
 
 2. **PRODUCT INFORMATION - EXACT FORMAT:**
-   **[Product Name](URL)** - *Description* - **Price**: ₹Amount
+   **[Product Name](URL)** - *Description* - **Price**: Amount (if available in context)
 
-   Example: **[Solar Panel 500W](https://example.com/solar)** - *High efficiency monocrystalline panel* - **Price**: ₹25,000
+   - If price is in context, include it: **Price**: Dhs. 70.00
+   - If price is NOT in context, list product without price: **[Product Name](URL)** - *Description*
+   - NEVER insert placeholder text like "[Contact number not available]" for missing prices
+   - NEVER use contact info placeholders for product prices
+
+   Example with price: **[Solar Panel 500W](https://example.com/solar)** - *High efficiency monocrystalline panel* - **Price**: ₹25,000
+   Example without price: **[Solar Panel 500W](https://example.com/solar)** - *High efficiency monocrystalline panel*
 
 3. **TEXT FORMATTING:**
    - Use **bold** for: labels (Phone, Email, Location), product names, prices, key terms
@@ -732,12 +740,14 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
         response_text: str,
         retrieved_documents: List[Dict[str, Any]],
         context_data: Dict[str, Any],
+        is_contact_query: bool = False,
     ) -> Dict[str, Any]:
         """Format the final response with metadata and validate for hallucinations"""
 
-        # Validate contact information to prevent hallucinations
+        # Only validate contact information if user actually asked for it
+        # This prevents false positives when LLM mentions numbers that aren't contact info
         validated_response = self._validate_contact_info(
-            response_text, context_data.get("context_text", "")
+            response_text, context_data.get("context_text", ""), is_contact_query
         )
 
         # Ensure demo links from context are included if missing
@@ -859,15 +869,60 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
         return response
 
-    def _validate_contact_info(self, response: str, context: str) -> str:
-        """Validate that factual information in response exists in context - prevents hallucinations"""
+    def _validate_contact_info(
+        self, response: str, context: str, is_contact_query: bool = False
+    ) -> str:
+        """Validate that factual information in response exists in context - prevents hallucinations
+
+        Only validates contact info when user actually asked for it to avoid false positives.
+        """
+
+        # Only validate contact information if this is actually a contact query
+        # This prevents false positives where prices or other numbers are mistaken for phone numbers
+        if not is_contact_query:
+            # Still check for obvious hallucinations in contact context (phone, email, contact keywords)
+            contact_keywords = ["phone", "contact", "call", "email", "reach", "number"]
+            has_contact_keywords = any(
+                keyword in response.lower() for keyword in contact_keywords
+            )
+
+            if not has_contact_keywords:
+                # No contact keywords, skip validation entirely
+                logger.debug(
+                    "Skipping contact validation - not a contact query and no contact keywords"
+                )
+                return response
 
         # 1. VALIDATE PHONE NUMBERS
-        phone_pattern = (
-            r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
-        )
+        # Improved pattern: more specific to avoid matching prices
+        # Phone numbers typically have country codes, area codes, or specific formatting
+        phone_pattern = r"(?:(?:\+|00)[1-9]\d{0,3}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
         response_phones = re.findall(phone_pattern, response)
         context_phones = re.findall(phone_pattern, context)
+
+        # Filter out false positives: prices, years, IDs that match phone pattern
+        def is_likely_phone(text: str) -> bool:
+            """Check if a matched pattern is likely a phone number vs price/ID"""
+            # Remove common phone formatting
+            cleaned = re.sub(r"[^\d+]", "", text)
+
+            # Too short or too long to be a phone
+            if len(cleaned) < 8 or len(cleaned) > 15:
+                return False
+
+            # If it's next to price indicators (₹, $, Dhs, etc.), it's probably a price
+            if re.search(r"[₹$€£Dhs]|price|cost", text, re.IGNORECASE):
+                return False
+
+            # If it's clearly in a price context (Dhs. 70.00), skip it
+            if re.search(r"dhs\.?\s*\d+|price.*\d+|\d+.*price", text, re.IGNORECASE):
+                return False
+
+            return True
+
+        # Filter to only likely phone numbers
+        response_phones = [p for p in response_phones if is_likely_phone(p)]
+        context_phones = [p for p in context_phones if is_likely_phone(p)]
 
         # Normalize phone numbers for comparison (remove spaces, dashes, etc.)
         def normalize_phone(phone):
@@ -887,16 +942,26 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
                     context_phones,
                 )
 
-                # Replace hallucinated number with actual or remove it
-                if context_phones:
-                    response = response.replace(response_phone, context_phones[0])
-                    logger.info("✅ Auto-corrected phone to: %s", context_phones[0])
+                # Only replace if this is a contact query - otherwise, just log it
+                if is_contact_query:
+                    # Replace hallucinated number with actual or remove it
+                    if context_phones:
+                        response = response.replace(response_phone, context_phones[0])
+                        logger.info("✅ Auto-corrected phone to: %s", context_phones[0])
+                    else:
+                        # Only insert placeholder if user asked for contact info
+                        response = re.sub(
+                            re.escape(response_phone),
+                            "[Contact number not available]",
+                            response,
+                        )
                 else:
-                    response = re.sub(
-                        re.escape(response_phone),
-                        "[Contact number not available]",
-                        response,
+                    # Not a contact query - just remove the hallucinated phone to avoid confusion
+                    logger.debug(
+                        "Removing hallucinated phone from non-contact response: %s",
+                        response_phone,
                     )
+                    response = response.replace(response_phone, "").strip()
 
         # 2. VALIDATE EMAILS
         email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"

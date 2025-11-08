@@ -175,6 +175,27 @@ class DocumentRetrievalService:
             ]
         )
 
+        # Check if this is a product query to retrieve more product-related documents
+        is_product_query = any(
+            keyword in query.lower()
+            for query in queries
+            for keyword in [
+                "product",
+                "price",
+                "cost",
+                "buy",
+                "purchase",
+                "perfume",
+                "item",
+                "catalog",
+                "shop",
+                "store",
+                "available",
+                "offer",
+                "list",
+            ]
+        )
+
         if is_contact_query:
             # Return up to 15 documents for contact queries (increased from 10)
             # This ensures we capture all contact information
@@ -240,6 +261,15 @@ class DocumentRetrievalService:
             final_docs = contact_scored_docs[:final_count]
             logger.info(
                 "🔍 Contact query detected - returning %d documents (boosted by contact info)",
+                final_count,
+            )
+        elif is_product_query:
+            # Return up to 12 documents for product queries to get comprehensive product info
+            # This ensures we capture product names, descriptions, prices, and links
+            final_count = min(12, len(sorted_docs))
+            final_docs = sorted_docs[:final_count]
+            logger.info(
+                "🛍️ Product query detected - returning %d documents for comprehensive product info",
                 final_count,
             )
         else:
