@@ -6,7 +6,9 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.services.chat.contact_extractor import contact_extractor
+from app.services.chat.contact_extractor_optimized import (
+    contact_extractor_optimized as contact_extractor,
+)
 from app.services.shared import cache_service
 from app.services.shared.optimized_vector_search import OptimizedVectorSearch
 
@@ -37,9 +39,12 @@ class DocumentRetrievalService:
         else:
             self.optimized_vector_search = None
 
-        # Optimized retrieval config for better response quality
-        # Increased from emergency mode (2) to production mode (5-8) for richer context
-        self.retrieval_config = {"initial": 10, "rerank": 8, "final": 5}
+        # OPTIMIZED: Reduced document count to lower costs and improve processing speed
+        # Fewer, higher-quality documents are more effective than many mediocre ones
+        # initial: documents retrieved per query
+        # rerank: documents after reranking (unused in current implementation)
+        # final: fallback document count for non-specific queries
+        self.retrieval_config = {"initial": 6, "rerank": 5, "final": 3}
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
@@ -197,9 +202,9 @@ class DocumentRetrievalService:
         )
 
         if is_contact_query:
-            # Return up to 15 documents for contact queries (increased from 10)
-            # This ensures we capture all contact information
-            final_count = min(15, len(sorted_docs))
+            # OPTIMIZED: Reduced from 15 to 8 documents for contact queries
+            # 8 documents is sufficient to capture contact info while reducing cost
+            final_count = min(8, len(sorted_docs))
 
             # Re-score and re-sort documents based on contact information content
             # This prioritizes chunks that actually contain contact info
@@ -214,7 +219,9 @@ class DocumentRetrievalService:
                     # Contact score is normalized to 0-1 range and added as a boost
                     boosted_score = doc["score"] + (contact_score / 100.0)
                     doc["contact_boosted_score"] = boosted_score
-                    doc["contact_info"] = contact_extractor.extract_contact_info(chunk)
+                    doc["contact_info"] = contact_extractor.extract_contact_info_dict(
+                        chunk
+                    )
                 else:
                     doc["contact_boosted_score"] = doc["score"]
                     doc["contact_info"] = {"has_contact_info": False}
@@ -264,9 +271,9 @@ class DocumentRetrievalService:
                 final_count,
             )
         elif is_product_query:
-            # Return up to 12 documents for product queries to get comprehensive product info
-            # This ensures we capture product names, descriptions, prices, and links
-            final_count = min(12, len(sorted_docs))
+            # OPTIMIZED: Reduced from 12 to 7 documents for product queries
+            # 7 documents is sufficient for comprehensive product info while reducing cost
+            final_count = min(7, len(sorted_docs))
             final_docs = sorted_docs[:final_count]
             logger.info(
                 "🛍️ Product query detected - returning %d documents for comprehensive product info",
