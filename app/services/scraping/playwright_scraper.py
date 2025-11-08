@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import Browser, Page, async_playwright
 
 from ...utils.logging_config import get_logger
+from .content_extractors import ContactExtractor
 
 logger = get_logger(__name__)
 
@@ -175,70 +176,9 @@ class PlaywrightWebScraper:
         Extract contact information (phone, email, address) from BeautifulSoup object.
 
         This extracts from the entire page including header/footer before they're removed.
+        Uses the shared ContactExtractor utility to avoid code duplication.
         """
-        contact_parts = []
-
-        # Find all text in the page (including header, footer, etc.)
-        all_text = soup.get_text()
-
-        # Extract phone numbers using various international formats
-        phone_patterns = [
-            r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}",  # International
-            r"\+\d{1,3}\s?\d{1,14}",  # Simple international format
-            r"\(\d{3}\)\s?\d{3}[-.\s]?\d{4}",  # US format with parentheses
-            r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}",  # US format
-            r"\d{4}[-.\s]?\d{6,7}",  # Some Asian formats
-        ]
-
-        phone_numbers = set()
-        for pattern in phone_patterns:
-            matches = re.findall(pattern, all_text)
-            for match in matches:
-                # Clean up the match and validate it looks like a real phone number
-                cleaned_match = match.strip()
-                # Filter out numbers that are likely dates or other non-phone numbers
-                if len(re.sub(r"\D", "", cleaned_match)) >= 10:  # At least 10 digits
-                    phone_numbers.add(cleaned_match)
-
-        if phone_numbers:
-            contact_parts.append(
-                "📞 Contact Numbers: " + ", ".join(sorted(phone_numbers))
-            )
-
-        # Extract email addresses
-        email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-        emails = set(re.findall(email_pattern, all_text))
-
-        if emails:
-            contact_parts.append("📧 Email Addresses: " + ", ".join(sorted(emails)))
-
-        # Look for common contact-related elements
-        contact_keywords = ["contact", "phone", "email", "address", "call", "reach"]
-
-        # Search for elements with contact-related classes or IDs
-        for keyword in contact_keywords:
-            elements = soup.find_all(
-                ["div", "span", "p", "a"], class_=re.compile(keyword, re.IGNORECASE)
-            )
-            elements += soup.find_all(
-                ["div", "span", "p", "a"], id=re.compile(keyword, re.IGNORECASE)
-            )
-
-            for elem in elements[:3]:  # Limit to avoid too much noise
-                elem_text = elem.get_text(strip=True)
-                if elem_text and len(elem_text) < 200:  # Not too long
-                    # Check if it contains useful contact info we haven't already captured
-                    if any(phone in elem_text for phone in phone_numbers) or any(
-                        email in elem_text for email in emails
-                    ):
-                        continue  # Already captured
-
-                    # Check if it looks like contact information
-                    if re.search(r"\d{3,}", elem_text) or "@" in elem_text:
-                        if elem_text not in str(contact_parts):  # Avoid duplicates
-                            contact_parts.append(elem_text)
-
-        return "\n".join(contact_parts) if contact_parts else ""
+        return ContactExtractor.extract_from_soup(soup, include_emoji=True)
 
 
 async def scrape_url_with_playwright(url: str) -> str:

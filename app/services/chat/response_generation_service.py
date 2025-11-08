@@ -357,6 +357,18 @@ class ResponseGenerationService:
             # Prioritize contact chunks - add them first
             prioritized_chunks = contact_chunks + context_chunks
 
+            # OPTIMIZATION: Compress long chunks to reduce token usage
+            # Truncate chunks longer than 800 chars to fit within context limits
+            compressed_chunks = []
+            for chunk in prioritized_chunks:
+                if len(chunk) > 800:  # Compress long chunks
+                    # Extract first 400 and last 400 chars (key info usually at ends)
+                    compressed = chunk[:400] + "... [compressed] ..." + chunk[-400:]
+                    compressed_chunks.append(compressed)
+                else:
+                    compressed_chunks.append(chunk)
+            prioritized_chunks = compressed_chunks
+
             # Combine context with length limit
             context_text = self._combine_context_chunks(prioritized_chunks)
 
@@ -733,7 +745,7 @@ Since there is no specific information in the knowledge base, you should:
 EXAMPLE RESPONSES:
 
 ❌ BAD (Vague):
-"I don't have those specific details. For pricing information, you can check out the Essential, Pro, and Enterprise plans available for Zaakiy AI."
+"I don't have those specific details."
 
 ✅ GOOD (Helpful):
 "I'd love to help you with information about our products! 🎯
@@ -1060,23 +1072,37 @@ CRITICAL RULES:
         """Validate that factual information in response exists in context - prevents hallucinations
 
         Only validates contact info when user actually asked for it to avoid false positives.
+        This prevents expensive regex operations on every response.
         """
 
-        # Only validate contact information if this is actually a contact query
+        # OPTIMIZATION: Only validate contact information if this is actually a contact query
         # This prevents false positives where prices or other numbers are mistaken for phone numbers
+        # and avoids expensive regex operations on every non-contact response
         if not is_contact_query:
-            # Still check for obvious hallucinations in contact context (phone, email, contact keywords)
+            # For non-contact queries, do a quick check: if response mentions contact keywords,
+            # we might want to do light validation. Otherwise, skip entirely.
             contact_keywords = ["phone", "contact", "call", "email", "reach", "number"]
             has_contact_keywords = any(
                 keyword in response.lower() for keyword in contact_keywords
             )
 
             if not has_contact_keywords:
-                # No contact keywords, skip validation entirely
+                # No contact keywords at all, skip validation entirely to save performance
                 logger.debug(
                     "Skipping contact validation - not a contact query and no contact keywords"
                 )
-        return response
+                return response
+
+            # If response has contact keywords but it's not a contact query, the LLM might
+            # have mentioned contact info incidentally. We'll do a minimal check but won't
+            # run expensive validation. Just return as-is to avoid false positives.
+            logger.debug(
+                "Skipping expensive contact validation - not a contact query (keywords found but query wasn't about contact)"
+            )
+            return response
+
+        # PERFORMANCE: Only reach here if is_contact_query is True
+        # This means we only run expensive regex operations for actual contact queries
 
         # 1. VALIDATE PHONE NUMBERS
         # Improved pattern: more specific to avoid matching prices

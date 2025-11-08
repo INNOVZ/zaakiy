@@ -15,6 +15,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from ...utils.logging_config import get_logger
+from .content_extractors import ContactExtractor
 
 logger = get_logger(__name__)
 
@@ -614,47 +615,12 @@ class EnhancedEcommerceProductScraper:
             raise last_error or Exception("Failed to load page")
 
     def _extract_contact_information(self, soup: BeautifulSoup) -> str:
-        """Extract contact information from page"""
-        contact_parts = []
-        all_text = soup.get_text()
+        """
+        Extract contact information from page.
 
-        # Extract phone numbers
-        phone_patterns = [
-            r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}",
-        ]
-
-        phone_numbers = set()
-        for pattern in phone_patterns:
-            matches = re.findall(pattern, all_text)
-            for match in matches:
-                cleaned = match.strip()
-                digit_count = len(re.sub(r"\D", "", cleaned))
-                if 10 <= digit_count <= 15:
-                    digits_only = re.sub(r"\D", "", cleaned)
-                    # Filter out dates and repeated digits
-                    if len(set(digits_only)) > 1 and not re.search(
-                        r"19\d{2}|20\d{2}", digits_only
-                    ):
-                        phone_numbers.add(cleaned)
-
-        if phone_numbers:
-            contact_parts.append(
-                "📞 " + ", ".join(sorted(list(phone_numbers)[:3]))
-            )  # Limit to 3
-
-        # Extract emails
-        email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-        emails = set(re.findall(email_pattern, all_text))
-
-        # Filter noise emails
-        emails = {e for e in emails if not re.search(r"example|test|noreply", e, re.I)}
-
-        if emails:
-            contact_parts.append(
-                "📧 " + ", ".join(sorted(list(emails)[:3]))
-            )  # Limit to 3
-
-        return " | ".join(contact_parts) if contact_parts else ""
+        Uses the shared ContactExtractor utility to avoid code duplication.
+        """
+        return ContactExtractor.extract_from_soup(soup, include_emoji=True)
 
 
 # Convenience function

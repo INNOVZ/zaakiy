@@ -3,6 +3,7 @@ URL sanitization utilities for secure logging
 Prevents exposure of sensitive information in logs
 """
 
+import re
 from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -224,3 +225,62 @@ def create_safe_error_message(url: str, error_type: str) -> str:
     return URLSanitizer.create_safe_log_message(
         "Error processing", url, f"error: {error_type}"
     )
+
+
+def is_ecommerce_url(url: str) -> bool:
+    """
+    Detect if URL is likely an e-commerce product or collection page.
+
+    This function centralizes e-commerce URL detection logic used across
+    multiple scrapers to ensure consistency.
+
+    Args:
+        url: URL to check
+
+    Returns:
+        True if URL appears to be e-commerce related
+    """
+    if not url:
+        return False
+
+    url_lower = url.lower()
+
+    # Common e-commerce URL patterns
+    ecommerce_patterns = [
+        r"/product[s]?/",
+        r"/item[s]?/",
+        r"/collection[s]?/",
+        r"/catalog/",
+        r"/shop/",
+        r"/store/",
+        r"/buy/",
+        r"/cart/",
+        r"/p/",
+    ]
+
+    # Common e-commerce domains/platforms
+    ecommerce_domains = [
+        "shopify",
+        "woocommerce",
+        "bigcommerce",
+        "magento",
+        "squarespace",
+        "wix",
+        "ecwid",
+        "volusion",
+        "opencart",
+        "cakenbake.ae",  # Specific e-commerce sites
+        "ambassadorscentworks.com",
+    ]
+
+    # Check URL patterns
+    for pattern in ecommerce_patterns:
+        if re.search(pattern, url_lower):
+            return True
+
+    # Check domains
+    for domain in ecommerce_domains:
+        if domain in url_lower:
+            return True
+
+    return False

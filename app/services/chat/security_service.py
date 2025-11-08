@@ -1,6 +1,18 @@
 """
 Production-Grade Security Service for Chat
 Implements comprehensive security measures for public chat endpoints
+
+WHEN TO USE THIS MODULE:
+- Validating and sanitizing user messages in public chat endpoints
+- Sanitizing AI responses before sending to clients
+- Rate limiting and spam detection
+- Session security management
+
+WHEN NOT TO USE:
+- For chatbot configuration → Use PromptSanitizer instead
+- For internal text processing → Use ChatUtilities.sanitize_text() instead
+
+See SANITIZATION_GUIDE.md for detailed usage guidelines.
 """
 import hashlib
 import re

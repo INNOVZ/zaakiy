@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any, Dict, List
 
+from .shared.keyword_extractor import get_keyword_extractor
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,70 +19,18 @@ class ChatUtilities:
     """Utility methods for chat operations"""
 
     def __init__(self):
-        # Common stop words for keyword extraction
-        self.stop_words = {
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "but",
-            "in",
-            "on",
-            "at",
-            "to",
-            "for",
-            "of",
-            "with",
-            "by",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "have",
-            "has",
-            "had",
-            "do",
-            "does",
-            "did",
-            "will",
-            "would",
-            "could",
-            "should",
-            "may",
-            "might",
-            "can",
-            "must",
-            "shall",
-        }
+        # Use shared keyword extractor to avoid duplication
+        self.keyword_extractor = get_keyword_extractor()
 
     def extract_keywords(self, query: str) -> List[str]:
         """Extract meaningful keywords from query"""
-        if not query:
-            return []
-
-        # Extract words (alphanumeric only)
-        words = re.findall(r"\b\w+\b", query.lower())
-
-        # Filter out stop words and short words
-        keywords = [
-            word for word in words if len(word) > 2 and word not in self.stop_words
-        ]
-
-        return keywords
+        # Delegate to shared keyword extractor
+        return self.keyword_extractor.extract_keywords(query, min_length=3)
 
     def calculate_keyword_score(self, text: str, keywords: List[str]) -> float:
         """Calculate keyword relevance score"""
-        if not keywords or not text:
-            return 0.0
-
-        text_lower = text.lower()
-        matches = sum(1 for keyword in keywords if keyword.lower() in text_lower)
-
-        # Normalize by keyword count
-        return min(matches / len(keywords), 1.0)
+        # Delegate to shared keyword extractor
+        return self.keyword_extractor.calculate_keyword_score(text, keywords)
 
     def calculate_domain_relevance(
         self, text: str, domain_context: str, domain_knowledge: str
@@ -89,21 +39,23 @@ class ChatUtilities:
         if not text or not domain_context:
             return 0.0
 
-        # Combine domain context and knowledge
+        # Combine domain context and knowledge using shared keyword extractor
         domain_terms = []
         if domain_context:
-            domain_terms.extend(self.extract_keywords(domain_context))
+            domain_terms.extend(self.keyword_extractor.extract_keywords(domain_context))
         if domain_knowledge:
-            domain_terms.extend(self.extract_keywords(domain_knowledge))
+            domain_terms.extend(
+                self.keyword_extractor.extract_keywords(domain_knowledge)
+            )
 
         if not domain_terms:
             return 0.0
 
-        text_lower = text.lower()
-        matches = sum(1 for term in domain_terms if term.lower() in text_lower)
+        # Use shared keyword extractor's scoring method
+        score = self.keyword_extractor.calculate_keyword_score(text, domain_terms)
 
         # Return boost factor (0.0 to 0.5)
-        return min(matches / len(domain_terms), 0.5)
+        return min(score, 0.5)
 
     def extract_product_links_from_documents(
         self, documents: List[Dict[str, Any]]
@@ -223,7 +175,21 @@ class ChatUtilities:
         return validation_result
 
     def sanitize_text(self, text: str) -> str:
-        """Sanitize text content for safe processing"""
+        """
+        Sanitize text content for safe internal processing.
+
+        NOTE: This is for basic text cleanup only, NOT for security validation.
+        For user input validation, use ChatSecurityService.validate_message().
+        For chatbot configuration, use PromptSanitizer.
+
+        See SANITIZATION_GUIDE.md for when to use which sanitizer.
+
+        Args:
+            text: Text to sanitize
+
+        Returns:
+            Sanitized text with control characters removed and whitespace normalized
+        """
         if not text:
             return ""
 

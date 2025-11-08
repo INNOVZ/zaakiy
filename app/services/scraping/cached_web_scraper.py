@@ -15,6 +15,7 @@ from .scraping_cache_service import scraping_cache_service
 from .url_utils import (
     create_safe_fetch_message,
     create_safe_success_message,
+    is_ecommerce_url,
     log_domain_safely,
 )
 from .web_scraper import SecureWebScraper
@@ -74,20 +75,7 @@ class CachedWebScraper(SecureWebScraper):
 
             # Try cache first (unless bypassed OR URL caching disabled)
             # Check if this is an e-commerce URL - don't cache those by default
-            is_ecommerce = (
-                any(
-                    pattern in url.lower()
-                    for pattern in [
-                        "shopify",
-                        "/products/",
-                        "/collections/",
-                        "/shop/",
-                        "ambassadorscentworks.com",
-                    ]
-                )
-                if url
-                else False
-            )
+            is_ecommerce = is_ecommerce_url(url) if url else False
 
             cache_enabled = (
                 self.caching_enabled and not bypass_cache and not is_ecommerce

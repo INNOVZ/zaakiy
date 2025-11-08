@@ -89,7 +89,7 @@ class CachedDocumentProcessor:
         )
 
         extraction_start = time.time()
-        text = extract_function(url)  # Call the original function
+        text = await extract_function(url)  # Call the original async function
         extraction_time_ms = (time.time() - extraction_start) * 1000
 
         # Cache the result
@@ -199,7 +199,7 @@ class CachedDocumentProcessor:
         )
 
         extraction_start = time.time()
-        text = extract_function(url)  # Call the original function
+        text = await extract_function(url)  # Call the original async function
         extraction_time_ms = (time.time() - extraction_start) * 1000
 
         # Cache the result
@@ -264,16 +264,24 @@ def with_caching(content_type: str):
             bypass_cache = kwargs.pop("bypass_cache", False)
 
             if content_type == "pdf":
+                # Create async lambda that properly awaits the function
+                async def extract_func(u: str):
+                    return await func(u, **kwargs)
+
                 return await CachedDocumentProcessor.extract_pdf_with_cache(
-                    lambda u: func(u, **kwargs), url, org_id, bypass_cache
+                    extract_func, url, org_id, bypass_cache
                 )
             elif content_type == "json":
+                # Create async lambda that properly awaits the function
+                async def extract_func(u: str):
+                    return await func(u, **kwargs)
+
                 return await CachedDocumentProcessor.extract_json_with_cache(
-                    lambda u: func(u, **kwargs), url, org_id, bypass_cache
+                    extract_func, url, org_id, bypass_cache
                 )
             else:
                 # No caching for unknown types
-                return func(url, **kwargs)
+                return await func(url, **kwargs)
 
         return wrapper
 

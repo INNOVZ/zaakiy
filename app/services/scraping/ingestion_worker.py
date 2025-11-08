@@ -16,9 +16,11 @@ from PyPDF2 import PdfReader
 from ...utils.env_loader import is_test_environment
 from ..storage.pinecone_client import get_pinecone_index
 from ..storage.supabase_client import get_supabase_client
+from .text_cleaner import TextCleaner
 from .url_utils import (
     create_safe_fetch_message,
     create_safe_success_message,
+    is_ecommerce_url,
     log_domain_safely,
 )
 
@@ -157,32 +159,33 @@ def _should_use_authenticated_request(url: str) -> bool:
     return ".supabase." in domain
 
 
-def extract_text_from_pdf_url(url: str) -> str:
+async def extract_text_from_pdf_url(url: str) -> str:
     """
-    Extract text from PDF with authenticated access and proper memory management
+    Extract text from PDF with authenticated access and proper memory management.
+
+    This function is async and uses asyncio.to_thread() for blocking I/O operations
+    to prevent blocking the event loop during PDF processing (2-10 seconds).
 
     This function uses streaming and explicit cleanup to prevent memory leaks
     when processing large PDF files.
     """
-    response = None
-    pdf_buffer = None
-    pdf_reader = None
-    text_chunks = []
 
-    try:
+    def _download_pdf() -> tuple:
+        """Synchronous PDF download function to run in thread"""
         # Convert Supabase path to authenticated URL if needed
         needs_auth = _should_use_authenticated_request(url)
+        download_url = url
 
-        if not url.startswith("http"):
-            url = get_supabase_storage_url(url)
+        if not download_url.startswith("http"):
+            download_url = get_supabase_storage_url(download_url)
 
-        logger.info(create_safe_fetch_message(url))
+        logger.info(create_safe_fetch_message(download_url))
 
         # Use authenticated request for private buckets with streaming
         headers = get_authenticated_headers() if needs_auth else {}
 
         # Stream the response to avoid loading entire file into memory at once
-        response = requests.get(url, headers=headers, timeout=30, stream=True)
+        response = requests.get(download_url, headers=headers, timeout=30, stream=True)
         response.raise_for_status()
 
         # Check content length before downloading
@@ -240,85 +243,145 @@ def extract_text_from_pdf_url(url: str) -> str:
             )
             raise ValueError("File is not a valid PDF")
 
-        # Process PDF with explicit memory management
-        pdf_reader = PdfReader(pdf_buffer)
-        total_pages = len(pdf_reader.pages)
-        logger.info("PDF loaded successfully", extra={"total_pages": total_pages})
+        return pdf_buffer, response
 
-        # Limit number of pages to prevent memory exhaustion
-        max_pages = 1000
-        if total_pages > max_pages:
-            logger.warning(
-                "PDF has too many pages, limiting extraction",
-                extra={"total_pages": total_pages, "max_pages": max_pages},
-            )
-            total_pages = max_pages
+    def _process_pdf(pdf_buffer: io.BytesIO) -> str:
+        """Synchronous PDF processing function to run in thread"""
+        pdf_reader = None
+        text_chunks = []
 
-        # Use a list to collect text chunks, then join once (more memory efficient)
-        pages_with_text = 0
+        try:
+            # Process PDF with explicit memory management
+            pdf_reader = PdfReader(pdf_buffer)
+            total_pages = len(pdf_reader.pages)
+            logger.info("PDF loaded successfully", extra={"total_pages": total_pages})
 
-        for i in range(total_pages):
-            try:
-                page = pdf_reader.pages[i]
-                page_text = page.extract_text()
-
-                if page_text and page_text.strip():
-                    text_chunks.append(page_text)
-                    pages_with_text += 1
-
-                    # Log progress for large PDFs
-                    if total_pages > 50 and (i + 1) % 10 == 0:
-                        logger.info(
-                            "PDF extraction progress",
-                            extra={"processed": i + 1, "total": total_pages},
-                        )
-                    elif total_pages <= 50:
-                        logger.debug(
-                            "Extracted text from PDF page",
-                            extra={"page": i + 1, "chars": len(page_text)},
-                        )
-                else:
-                    logger.debug("No text found on PDF page", extra={"page": i + 1})
-
-                # Clear page reference to help garbage collection
-                del page
-                del page_text
-
-            except Exception as page_error:
+            # Limit number of pages to prevent memory exhaustion
+            max_pages = 1000
+            if total_pages > max_pages:
                 logger.warning(
-                    "Error extracting text from PDF page",
-                    extra={"page": i + 1, "error": str(page_error)},
+                    "PDF has too many pages, limiting extraction",
+                    extra={"total_pages": total_pages, "max_pages": max_pages},
                 )
-                continue
+                total_pages = max_pages
 
-        # Join all text chunks
-        text = "\n".join(text_chunks)
+            # Use a list to collect text chunks, then join once (more memory efficient)
+            pages_with_text = 0
 
-        logger.info(
-            "PDF text extraction complete",
-            extra={
-                "total_chars": len(text),
-                "pages_with_text": pages_with_text,
-                "total_pages": total_pages,
-            },
-        )
+            for i in range(total_pages):
+                try:
+                    page = pdf_reader.pages[i]
+                    page_text = page.extract_text()
 
-        cleaned_text = text.strip()
+                    if page_text and page_text.strip():
+                        text_chunks.append(page_text)
+                        pages_with_text += 1
 
-        if len(cleaned_text) < 10:
-            message = (
-                "PDF contains insufficient text content. Only "
-                f"{len(cleaned_text)} characters extracted from {pages_with_text} pages out of "
-                f"{total_pages} total pages. This might be a scanned/image-based PDF."
+                        # Log progress for large PDFs
+                        if total_pages > 50 and (i + 1) % 10 == 0:
+                            logger.info(
+                                "PDF extraction progress",
+                                extra={"processed": i + 1, "total": total_pages},
+                            )
+                        elif total_pages <= 50:
+                            logger.debug(
+                                "Extracted text from PDF page",
+                                extra={"page": i + 1, "chars": len(page_text)},
+                            )
+                    else:
+                        logger.debug("No text found on PDF page", extra={"page": i + 1})
+
+                    # Clear page reference to help garbage collection
+                    del page
+                    del page_text
+
+                except Exception as page_error:
+                    logger.warning(
+                        "Error extracting text from PDF page",
+                        extra={"page": i + 1, "error": str(page_error)},
+                    )
+                    continue
+
+            # Join all text chunks
+            text = "\n".join(text_chunks)
+
+            logger.info(
+                "PDF text extraction complete",
+                extra={
+                    "total_chars": len(text),
+                    "pages_with_text": pages_with_text,
+                    "total_pages": total_pages,
+                },
             )
 
-            if is_test_environment():
-                logger.warning("%s -- continuing for tests", message)
-                return cleaned_text
+            cleaned_text = text.strip()
 
-            raise ValueError(message)
+            if len(cleaned_text) < 10:
+                message = (
+                    "PDF contains insufficient text content. Only "
+                    f"{len(cleaned_text)} characters extracted from {pages_with_text} pages out of "
+                    f"{total_pages} total pages. This might be a scanned/image-based PDF."
+                )
 
-        return cleaned_text
+                if is_test_environment():
+                    logger.warning("%s -- continuing for tests", message)
+                    return cleaned_text
+
+                raise ValueError(message)
+
+            return cleaned_text
+
+        finally:
+            # Comprehensive cleanup to prevent memory leaks
+            # Clear text chunks list
+            if text_chunks:
+                text_chunks.clear()
+                del text_chunks
+
+            # Clear PDF reader reference
+            if pdf_reader is not None:
+                try:
+                    # Clear pages cache if it exists (suppress pylint false positive)
+                    if hasattr(pdf_reader, "pages") and hasattr(
+                        pdf_reader.pages, "clear"
+                    ):
+                        pdf_reader.pages.clear()  # pylint: disable=no-member
+                    del pdf_reader
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Error clearing PDF reader", extra={"error": str(cleanup_error)}
+                    )
+
+    # Run blocking I/O operations in thread pool to avoid blocking event loop
+    try:
+        # Download PDF in thread (blocking HTTP + file I/O)
+        pdf_buffer, response = await asyncio.to_thread(_download_pdf)
+
+        try:
+            # Process PDF in thread (blocking CPU operations)
+            result = await asyncio.to_thread(_process_pdf, pdf_buffer)
+            return result
+        finally:
+            # Cleanup PDF buffer
+            if pdf_buffer is not None:
+                try:
+                    pdf_buffer.close()
+                    logger.debug("PDF buffer closed and cleared")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Error closing PDF buffer", extra={"error": str(cleanup_error)}
+                    )
+
+            # Close HTTP response
+            if response is not None:
+                try:
+                    response.close()
+                    logger.debug("HTTP response closed and cleared")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Error closing HTTP response",
+                        extra={"error": str(cleanup_error)},
+                    )
 
     except requests.RequestException as e:
         logger.error(
@@ -344,189 +407,153 @@ def extract_text_from_pdf_url(url: str) -> str:
             exc_info=True,
         )
         raise ValueError(f"PDF processing failed: {str(e)}") from e
-    finally:
-        # Comprehensive cleanup to prevent memory leaks
-        # Clear text chunks list
-        if text_chunks:
-            text_chunks.clear()
-            del text_chunks
-
-        # Clear PDF reader reference
-        if pdf_reader is not None:
-            try:
-                # Clear pages cache if it exists (suppress pylint false positive)
-                if hasattr(pdf_reader, "pages") and hasattr(pdf_reader.pages, "clear"):
-                    pdf_reader.pages.clear()  # pylint: disable=no-member
-                del pdf_reader
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error clearing PDF reader", extra={"error": str(cleanup_error)}
-                )
-
-        # Close PDF buffer
-        if pdf_buffer is not None:
-            try:
-                pdf_buffer.close()
-                del pdf_buffer
-                logger.debug("PDF buffer closed and cleared")
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error closing PDF buffer", extra={"error": str(cleanup_error)}
-                )
-
-        # Close HTTP response
-        if response is not None:
-            try:
-                response.close()
-                del response
-                logger.debug("HTTP response closed and cleared")
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error closing HTTP response", extra={"error": str(cleanup_error)}
-                )
 
 
-def extract_text_from_json_url(url: str) -> str:
+async def extract_text_from_json_url(url: str) -> str:
     """
-    Extract text from JSON with authenticated access and proper memory management
+    Extract text from JSON with authenticated access and proper memory management.
+
+    This function is async and uses asyncio.to_thread() for blocking I/O operations
+    to prevent blocking the event loop during JSON processing.
 
     This function uses streaming and explicit cleanup to prevent memory leaks
     when processing large JSON files.
     """
-    response = None
 
-    try:
-        # Convert Supabase path to authenticated URL if needed
-        needs_auth = _should_use_authenticated_request(url)
+    def _download_and_process_json() -> str:
+        """Synchronous JSON download and processing function to run in thread"""
+        response = None
 
-        if not url.startswith("http"):
-            url = get_supabase_storage_url(url)
+        try:
+            # Convert Supabase path to authenticated URL if needed
+            needs_auth = _should_use_authenticated_request(url)
+            download_url = url
 
-        logger.info(create_safe_fetch_message(url))
+            if not download_url.startswith("http"):
+                download_url = get_supabase_storage_url(download_url)
 
-        # Use authenticated request for private buckets with streaming
-        headers = get_authenticated_headers() if needs_auth else {}
+            logger.info(create_safe_fetch_message(download_url))
 
-        response = requests.get(url, headers=headers, timeout=30, stream=True)
-        response.raise_for_status()
+            # Use authenticated request for private buckets with streaming
+            headers = get_authenticated_headers() if needs_auth else {}
 
-        # Check content length before downloading
-        content_length = response.headers.get("content-length")
-        if content_length:
-            size_mb = int(content_length) / (1024 * 1024)
-            logger.info("JSON file size", extra={"size_mb": size_mb})
-
-            # Limit JSON file size to prevent memory issues
-            if size_mb > 50:
-                raise ValueError(
-                    f"JSON file too large ({size_mb:.2f} MB). Maximum size is 50 MB."
-                )
-
-        # Read content in chunks
-        content_chunks = []
-        total_bytes = 0
-        chunk_size = 8192  # 8KB chunks
-
-        for chunk in response.iter_content(chunk_size=chunk_size, decode_unicode=True):
-            if chunk:
-                content_chunks.append(chunk)
-                total_bytes += len(chunk.encode("utf-8"))
-
-        # Join chunks
-        content = "".join(content_chunks)
-
-        logger.info(
-            "Successfully fetched JSON",
-            extra={"bytes": total_bytes, "size_mb": total_bytes / (1024 * 1024)},
-        )
-
-        # Parse JSON
-        data = json.loads(content)
-
-        # Clear content from memory
-        del content
-        del content_chunks
-
-        # Extract text from various possible JSON structures
-        if isinstance(data, dict):
-            if "content" in data:
-                result = str(data["content"])
-            elif "text" in data:
-                result = str(data["text"])
-            elif "body" in data:
-                result = str(data["body"])
-            else:
-                # Convert entire dict to text
-                result = orjson.dumps(data, option=orjson.OPT_INDENT_2).decode("utf-8")
-        elif isinstance(data, list):
-            # Join list items (limit to prevent memory issues)
-            if len(data) > 10000:
-                logger.warning(
-                    "Large JSON array, limiting items",
-                    extra={"total_items": len(data), "limit": 10000},
-                )
-                data = data[:10000]
-            result = "\n".join(str(item) for item in data)
-        else:
-            result = str(data)
-
-        # Clear data from memory
-        del data
-
-        return result
-
-    except requests.RequestException as e:
-        logger.error(
-            "HTTP error while extracting text from JSON",
-            extra={"domain": log_domain_safely(url), "error": str(e)},
-            exc_info=True,
-        )
-        if hasattr(e, "response") and e.response is not None:
-            logger.error(
-                "JSON download response details",
-                extra={
-                    "status_code": e.response.status_code,
-                    "content_preview": e.response.text[:200],
-                },
+            response = requests.get(
+                download_url, headers=headers, timeout=30, stream=True
             )
-        raise ValueError(f"Failed to download JSON: {str(e)}") from e
-    except json.JSONDecodeError as e:
-        logger.error(
-            "JSON decode error",
-            extra={"domain": log_domain_safely(url), "error": str(e)},
-            exc_info=True,
-        )
-        raise ValueError(f"Invalid JSON format: {str(e)}") from e
-    except Exception as e:
-        logger.error(
-            "JSON processing error",
-            extra={"error": str(e), "error_type": type(e).__name__},
-            exc_info=True,
-        )
-        raise ValueError(f"JSON processing failed: {str(e)}") from e
-    finally:
-        # Explicit cleanup to prevent memory leaks
-        if response is not None:
-            try:
-                response.close()
-                logger.debug("HTTP response closed")
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error closing HTTP response", extra={"error": str(cleanup_error)}
+            response.raise_for_status()
+
+            # Check content length before downloading
+            content_length = response.headers.get("content-length")
+            if content_length:
+                size_mb = int(content_length) / (1024 * 1024)
+                logger.info("JSON file size", extra={"size_mb": size_mb})
+
+                # Limit JSON file size to prevent memory issues
+                if size_mb > 50:
+                    raise ValueError(
+                        f"JSON file too large ({size_mb:.2f} MB). Maximum size is 50 MB."
+                    )
+
+            # Read content in chunks
+            content_chunks = []
+            total_bytes = 0
+            chunk_size = 8192  # 8KB chunks
+
+            for chunk in response.iter_content(
+                chunk_size=chunk_size, decode_unicode=True
+            ):
+                if chunk:
+                    content_chunks.append(chunk)
+                    total_bytes += len(chunk.encode("utf-8"))
+
+            # Join chunks
+            content = "".join(content_chunks)
+
+            logger.info(
+                "Successfully fetched JSON",
+                extra={"bytes": total_bytes, "size_mb": total_bytes / (1024 * 1024)},
+            )
+
+            # Parse JSON
+            data = json.loads(content)
+
+            # Clear content from memory
+            del content
+            del content_chunks
+
+            # Extract text from various possible JSON structures
+            if isinstance(data, dict):
+                if "content" in data:
+                    result = str(data["content"])
+                elif "text" in data:
+                    result = str(data["text"])
+                elif "body" in data:
+                    result = str(data["body"])
+                else:
+                    # Convert entire dict to text
+                    result = orjson.dumps(data, option=orjson.OPT_INDENT_2).decode(
+                        "utf-8"
+                    )
+            elif isinstance(data, list):
+                # Join list items (limit to prevent memory issues)
+                if len(data) > 10000:
+                    logger.warning(
+                        "Large JSON array, limiting items",
+                        extra={"total_items": len(data), "limit": 10000},
+                    )
+                    data = data[:10000]
+                result = "\n".join(str(item) for item in data)
+            else:
+                result = str(data)
+
+            # Clear data from memory
+            del data
+
+            return result
+
+        except requests.RequestException as e:
+            logger.error(
+                "HTTP error while extracting text from JSON",
+                extra={"domain": log_domain_safely(url), "error": str(e)},
+                exc_info=True,
+            )
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(
+                    "JSON download response details",
+                    extra={
+                        "status_code": e.response.status_code,
+                        "content_preview": e.response.text[:200],
+                    },
                 )
+            raise ValueError(f"Failed to download JSON: {str(e)}") from e
+        except json.JSONDecodeError as e:
+            logger.error(
+                "JSON decode error",
+                extra={"domain": log_domain_safely(url), "error": str(e)},
+                exc_info=True,
+            )
+            raise ValueError(f"Invalid JSON format: {str(e)}") from e
+        except Exception as e:
+            logger.error(
+                "JSON processing error",
+                extra={"error": str(e), "error_type": type(e).__name__},
+                exc_info=True,
+            )
+            raise ValueError(f"JSON processing failed: {str(e)}") from e
+        finally:
+            # Explicit cleanup to prevent memory leaks
+            if response is not None:
+                try:
+                    response.close()
+                    logger.debug("HTTP response closed")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Error closing HTTP response",
+                        extra={"error": str(cleanup_error)},
+                    )
 
-
-def clean_text(text: str) -> str:
-    """Clean and normalize text for processing"""
-    if not text:
-        return ""
-
-    # Remove extra whitespace and normalize line breaks
-    lines = (line.strip() for line in text.splitlines())
-    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    cleaned = " ".join(chunk for chunk in chunks if chunk)
-
-    return cleaned
+    # Run blocking I/O operations in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(_download_and_process_json)
 
 
 def split_into_chunks(text: str) -> list:
@@ -534,8 +561,8 @@ def split_into_chunks(text: str) -> list:
     if not text.strip():
         return []
 
-    # Clean the text first
-    cleaned_text = clean_text(text)
+    # Clean the text first using shared TextCleaner utility
+    cleaned_text = TextCleaner.clean_text(text, remove_noise=False)
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800, chunk_overlap=200, separators=["\n\n", "\n", " ", ""]
@@ -548,49 +575,10 @@ def filter_noise_chunks(chunks: list) -> list:
     """Filter out chunks that are clearly UI noise (login/cart/country lists, etc.).
 
     The goal is to avoid embedding/upserting low-signal text that hurts search quality.
+
+    This function now uses the shared TextCleaner utility for consistency.
     """
-    if not chunks:
-        return []
-
-    # Regexes target common e‑commerce UI artifacts seen in noisy chunks
-    noise_patterns = [
-        r"\b(Sign In|Sign Up|Log in|Create Account|Forgot your password)\b",
-        r"\b(Add to (cart|bag|wishlist)|Quick (view|buy)|View Cart|Checkout)\b",
-        r"\b(Sort by|Filter by|Showing \d+-\d+ of \d+)\b",
-        r"\b(Your cart is empty|Shopping cart Loading)\b",
-        r"\b(Subscribe|Newsletter|Email signup)\b",
-        r"\b(Choose Region|Select Country|Province|Zip/Postal Code)\b",
-        r"\b(Visa|Mastercard|PayPal|American Express|Discover)\b",
-    ]
-
-    import re
-
-    compiled = [re.compile(pat, re.IGNORECASE) for pat in noise_patterns]
-
-    def is_noise(text: str) -> bool:
-        if len(text.strip()) < 60:  # extremely short chunk is rarely useful here
-            return True
-        # If a chunk contains a very long list of countries (comma/space heavy), drop it
-        comma_count = text.count(",")
-        if comma_count >= 20:
-            return True
-        for c in compiled:
-            if c.search(text):
-                return True
-        return False
-
-    filtered = [c for c in chunks if not is_noise(c)]
-
-    # Deduplicate identical chunks to reduce redundant vectors
-    seen = set()
-    unique_filtered = []
-    for c in filtered:
-        key = c.strip()
-        if key not in seen:
-            seen.add(key)
-            unique_filtered.append(c)
-
-    return unique_filtered
+    return TextCleaner.filter_noise_chunks(chunks, min_length=60)
 
 
 def get_embeddings_for_chunks(chunks: list) -> list:
@@ -727,57 +715,7 @@ def upload_to_pinecone(
         raise
 
 
-def is_ecommerce_url(url: str) -> bool:
-    """
-    Detect if URL is likely an e-commerce product or collection page.
-
-    Args:
-        url: URL to check
-
-    Returns:
-        True if URL appears to be e-commerce related
-    """
-    # Common e-commerce URL patterns
-    ecommerce_patterns = [
-        r"/product[s]?/",
-        r"/item[s]?/",
-        r"/collection[s]?/",
-        r"/catalog/",
-        r"/shop/",
-        r"/store/",
-        r"/buy/",
-        r"/cart/",
-        r"/p/",
-    ]
-
-    # Common e-commerce domains
-    ecommerce_domains = [
-        "shopify",
-        "woocommerce",
-        "bigcommerce",
-        "magento",
-        "squarespace",
-        "wix",
-        "ecwid",
-        "volusion",
-        "opencart",
-        "cakenbake.ae",  # Specific e-commerce sites
-        "ambassadorscentworks.com",
-    ]
-
-    url_lower = url.lower()
-
-    # Check URL patterns
-    for pattern in ecommerce_patterns:
-        if re.search(pattern, url_lower):
-            return True
-
-    # Check domains
-    for domain in ecommerce_domains:
-        if domain in url_lower:
-            return True
-
-    return False
+# is_ecommerce_url is now imported from url_utils to avoid duplication
 
 
 async def smart_scrape_url(url: str) -> str:
@@ -961,7 +899,7 @@ async def process_pending_uploads():
 
                 # Extract text based on document type
                 if doc_type == "pdf":
-                    text = extract_text_from_pdf_url(source)
+                    text = await extract_text_from_pdf_url(source)
                 elif doc_type == "url":
                     # Check if source is JSON (recursive scraping config) or plain URL
                     try:
@@ -991,7 +929,7 @@ async def process_pending_uploads():
                         # Not JSON, treat as regular URL
                         text = await smart_scrape_url(source)
                 elif doc_type == "json":
-                    text = extract_text_from_json_url(source)
+                    text = await extract_text_from_json_url(source)
                 else:
                     raise ValueError(f"Unsupported document type: {doc_type}")
 

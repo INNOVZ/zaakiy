@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.services.chat.contact_extractor import contact_extractor
+from app.services.chat.shared.keyword_extractor import get_keyword_extractor
 from app.services.shared import cache_service
 from app.services.shared.optimized_vector_search import OptimizedVectorSearch
 
@@ -37,9 +38,16 @@ class DocumentRetrievalService:
         else:
             self.optimized_vector_search = None
 
+        # Use shared keyword extractor to avoid duplication
+        self.keyword_extractor = get_keyword_extractor()
+
         # Optimized retrieval config for better response quality
-        # Increased from emergency mode (2) to production mode (5-8) for richer context
+        # Adaptive k-values: contact=6, product=6, default=5
         self.retrieval_config = {"initial": 10, "rerank": 8, "final": 5}
+
+        # Optimization flags
+        self.enable_reranking = True
+        self.enable_metadata_filtering = True
 
     async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
@@ -81,13 +89,21 @@ class DocumentRetrievalService:
             keyword_weight,
         )
 
+        # Build metadata filters once for all queries (if enabled)
+        combined_query = " ".join(queries)
+        metadata_filters = (
+            self._build_metadata_filters(combined_query)
+            if self.enable_metadata_filtering
+            else {}
+        )
+
         # OPTIMIZATION: Process all queries in parallel instead of sequentially
         async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
             """Retrieve documents for a single query with error handling"""
             try:
-                # Strategy-based retrieval
+                # Strategy-based retrieval with metadata filters
                 if strategy == "semantic_only":
-                    return await self._semantic_retrieval(query)
+                    return await self._semantic_retrieval(query, metadata_filters)
                 elif strategy == "hybrid":
                     return await self._hybrid_retrieval(
                         query, semantic_weight, keyword_weight
@@ -100,7 +116,7 @@ class DocumentRetrievalService:
                     return await self._domain_specific_retrieval(query)
                 else:
                     # Fallback to semantic only
-                    return await self._semantic_retrieval(query)
+                    return await self._semantic_retrieval(query, metadata_filters)
 
             except Exception as e:
                 logger.warning(
@@ -155,8 +171,7 @@ class DocumentRetrievalService:
         # Return top documents sorted by score
         sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
 
-        # For contact queries, return MORE documents to ensure we get phone/email info
-        # Check if any query contains contact keywords
+        # Determine query type for adaptive optimization
         is_contact_query = any(
             keyword in query.lower()
             for query in queries
@@ -175,7 +190,6 @@ class DocumentRetrievalService:
             ]
         )
 
-        # Check if this is a product query to retrieve more product-related documents
         is_product_query = any(
             keyword in query.lower()
             for query in queries
@@ -196,15 +210,28 @@ class DocumentRetrievalService:
             ]
         )
 
+        # Calculate optimal k-value based on query type
+        optimal_k = self._calculate_optimal_k(
+            combined_query,
+            is_contact_query=is_contact_query,
+            is_product_query=is_product_query,
+            available_docs=len(sorted_docs),
+        )
+
         if is_contact_query:
-            # Return up to 15 documents for contact queries (increased from 10)
-            # This ensures we capture all contact information
-            final_count = min(15, len(sorted_docs))
+            # Use adaptive k-value (typically 6 for contact queries)
+            final_count = min(optimal_k, len(sorted_docs))
+
+            # OPTIMIZATION: Only re-score top candidates (not all documents)
+            # Process top 10 candidates to find best 6 - reduces contact extraction overhead
+            # We don't need to process all documents since we only return 6
+            candidates_to_score = min(10, len(sorted_docs))
+            candidates = sorted_docs[:candidates_to_score]
 
             # Re-score and re-sort documents based on contact information content
             # This prioritizes chunks that actually contain contact info
             contact_scored_docs = []
-            for doc in sorted_docs:
+            for doc in candidates:
                 chunk = doc.get("chunk", "")
                 contact_score = contact_extractor.score_chunk_for_contact_query(chunk)
 
@@ -259,22 +286,49 @@ class DocumentRetrievalService:
                     logger.debug("Doc %d chunk preview: %s", i + 1, chunk_preview)
 
             final_docs = contact_scored_docs[:final_count]
+
+            # Re-rank documents for better quality (if enabled)
+            if self.enable_reranking and len(final_docs) > 3:
+                final_docs = self._rerank_documents(
+                    combined_query, final_docs, top_k=final_count
+                )
+                logger.debug(f"Re-ranked {len(final_docs)} contact documents")
+
             logger.info(
-                "🔍 Contact query detected - returning %d documents (boosted by contact info)",
+                "🔍 Contact query detected - returning %d documents (k=%d, boosted by contact info)",
                 final_count,
+                optimal_k,
             )
         elif is_product_query:
-            # Return up to 12 documents for product queries to get comprehensive product info
-            # This ensures we capture product names, descriptions, prices, and links
-            final_count = min(12, len(sorted_docs))
+            # Use adaptive k-value (typically 6 for product queries)
+            final_count = min(optimal_k, len(sorted_docs))
             final_docs = sorted_docs[:final_count]
+
+            # Re-rank documents for better quality (if enabled)
+            if self.enable_reranking and len(final_docs) > 3:
+                final_docs = self._rerank_documents(
+                    combined_query, final_docs, top_k=final_count
+                )
+                logger.debug(f"Re-ranked {len(final_docs)} product documents")
+
             logger.info(
-                "🛍️ Product query detected - returning %d documents for comprehensive product info",
+                "🛍️ Product query detected - returning %d documents (k=%d, optimized)",
                 final_count,
+                optimal_k,
             )
         else:
-            final_count = self.retrieval_config["final"]
+            # Use adaptive k-value for general queries
+            final_count = min(optimal_k, len(sorted_docs))
             final_docs = sorted_docs[:final_count]
+
+            # Re-rank for complex queries (if enabled)
+            if self.enable_reranking and len(final_docs) > 4:
+                final_docs = self._rerank_documents(
+                    combined_query, final_docs, top_k=final_count
+                )
+                logger.debug(f"Re-ranked {len(final_docs)} general documents")
+
+            logger.debug(f"Returning {final_count} documents (k={optimal_k})")
 
         # DEBUG: Log what we're returning
         logger.info(
@@ -291,12 +345,16 @@ class DocumentRetrievalService:
 
         return final_docs
 
-    async def _semantic_retrieval(self, query: str) -> List[Dict[str, Any]]:
-        """Optimized semantic similarity search with intelligent caching"""
+    async def _semantic_retrieval(
+        self, query: str, metadata_filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Optimized semantic similarity search with intelligent caching and metadata filtering"""
         try:
             if self.optimized_vector_search:
-                # Use optimized vector search with caching
-                search_params = {"filter": {}}  # Add any metadata filters here
+                # Use optimized vector search with caching and metadata filters
+                search_params = (
+                    {"filter": metadata_filters} if metadata_filters else {"filter": {}}
+                )
 
                 context_config = {
                     "retrieval_strategy": getattr(
@@ -545,63 +603,11 @@ class DocumentRetrievalService:
     def _extract_keywords(self, query: str) -> List[str]:
         """Extract keywords from query"""
         try:
-            # Simple keyword extraction (could be enhanced with NLP)
-            import re
-
-            # Remove common stop words
-            stop_words = {
-                "the",
-                "a",
-                "an",
-                "and",
-                "or",
-                "but",
-                "in",
-                "on",
-                "at",
-                "to",
-                "for",
-                "of",
-                "with",
-                "by",
-                "how",
-                "what",
-                "where",
-                "when",
-                "why",
-                "is",
-                "are",
-                "was",
-                "were",
-                "be",
-                "been",
-                "being",
-                "have",
-                "has",
-                "had",
-                "do",
-                "does",
-                "did",
-                "will",
-                "would",
-                "could",
-                "should",
-                "may",
-                "might",
-                "can",
-                "cannot",
-            }
-
-            # Extract words (alphanumeric only)
-            words = re.findall(r"\b[a-zA-Z0-9]+\b", query.lower())
-
-            # Filter out stop words and short words
-            keywords = [
-                word for word in words if word not in stop_words and len(word) > 2
-            ]
-
-            return keywords[:10]  # Limit to top 10 keywords
-
+            # Use shared keyword extractor to avoid duplication
+            # Limit to top 10 keywords for retrieval
+            return self.keyword_extractor.extract_keywords(
+                query, min_length=3, max_keywords=10
+            )
         except Exception as e:
             logger.error("Keyword extraction failed: %s", e)
             return []
@@ -714,3 +720,126 @@ class DocumentRetrievalService:
         except Exception as e:
             logger.error("Failed to warm vector cache: %s", e)
             return {"error": str(e)}
+
+    def _calculate_optimal_k(
+        self,
+        query: str,
+        is_contact_query: bool = False,
+        is_product_query: bool = False,
+        available_docs: int = 0,
+    ) -> int:
+        """
+        Calculate optimal k value based on query characteristics.
+
+        Adaptive k-value selection:
+        - Contact queries: 6 (contact info usually in top docs)
+        - Product queries: 6 (products usually in top docs)
+        - Complex queries: 8 (might need more context)
+        - Simple queries: 4 (fewer docs needed)
+        """
+        # Base k values
+        if is_contact_query:
+            k = 6
+        elif is_product_query:
+            k = 6
+        else:
+            # Determine query complexity
+            query_length = len(query.split())
+            is_complex = query_length > 10 or any(
+                word in query.lower()
+                for word in [
+                    "compare",
+                    "difference",
+                    "explain",
+                    "how",
+                    "why",
+                    "what are",
+                ]
+            )
+            k = 8 if is_complex else 4
+
+        # Adjust based on available documents
+        if available_docs > 0:
+            k = min(k, available_docs)
+
+        # Ensure minimum k
+        k = max(k, 3)
+
+        logger.debug(
+            f"Calculated optimal k={k} for query (contact={is_contact_query}, product={is_product_query})"
+        )
+        return k
+
+    def _build_metadata_filters(self, query: str) -> Dict[str, Any]:
+        """
+        Build metadata filters based on query type and content.
+
+        This narrows down the search space by filtering documents
+        based on metadata (e.g., has_products, document type).
+        """
+        filters: Dict[str, Any] = {}
+
+        # Product query filters
+        if any(
+            keyword in query.lower()
+            for keyword in ["product", "buy", "purchase", "price", "catalog"]
+        ):
+            # Filter for documents that have products
+            filters["has_products"] = {"$eq": True}
+
+        # Contact query filters - don't filter to ensure we get results
+        # Document type filters could be added here
+        # filters["type"] = {"$in": ["page", "article"]}
+
+        return filters
+
+    def _rerank_documents(
+        self, query: str, documents: List[Dict[str, Any]], top_k: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Re-rank documents using keyword matching and relevance scoring.
+        Improves retrieval quality by scoring documents more accurately.
+        """
+        if not documents or len(documents) <= top_k:
+            return documents
+
+        try:
+            query_keywords = set(self.keyword_extractor.extract_keywords(query.lower()))
+
+            if not query_keywords:
+                return documents[:top_k]
+
+            # Score each document
+            scored_docs = []
+            for doc in documents:
+                chunk = doc.get("chunk", "").lower()
+                original_score = doc.get("score", 0.0)
+
+                # Count keyword matches
+                chunk_keywords = set(self.keyword_extractor.extract_keywords(chunk))
+                keyword_matches = len(query_keywords & chunk_keywords)
+                keyword_score = (
+                    keyword_matches / len(query_keywords) if query_keywords else 0
+                )
+
+                # Combine original similarity score with keyword score
+                # Weight: 70% original similarity, 30% keyword matching
+                rerank_score = (original_score * 0.7) + (keyword_score * 0.3)
+
+                scored_docs.append(
+                    {
+                        **doc,
+                        "rerank_score": rerank_score,
+                        "original_score": original_score,
+                        "keyword_score": keyword_score,
+                    }
+                )
+
+            # Sort by rerank score
+            scored_docs.sort(key=lambda x: x["rerank_score"], reverse=True)
+
+            return scored_docs[:top_k]
+
+        except Exception as e:
+            logger.warning(f"Re-ranking failed, returning original order: {e}")
+            return documents[:top_k]

@@ -17,11 +17,11 @@ except ImportError:
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 from ...utils.logging_config import PerformanceLogger, get_logger
-from .url_utils import create_safe_fetch_message, log_domain_safely
+from .url_utils import create_safe_fetch_message
 from .web_scraper import ScrapingConfig, SecureWebScraper
 
 logger = get_logger(__name__)

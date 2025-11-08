@@ -1,0 +1,51 @@
+"""
+Shared constants for chat services
+Single source of truth for common constants
+"""
+
+# Common stop words for keyword extraction
+# This is the authoritative list - all services should use this
+STOP_WORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "should",
+    "could",
+    "may",
+    "might",
+    "can",
+    "must",
+    "shall",
+    "how",
+    "what",
+    "where",
+    "when",
+    "why",
+    "cannot",
+}

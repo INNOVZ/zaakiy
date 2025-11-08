@@ -1,6 +1,18 @@
 """
 Prompt Injection Protection
 Sanitizes user-controlled data before including in system prompts
+
+WHEN TO USE THIS MODULE:
+- Sanitizing chatbot configuration fields (name, tone, behavior, description, greeting, fallback)
+- When user input will be included in AI system prompts
+- Before storing chatbot configuration in database
+
+WHEN NOT TO USE:
+- For user chat messages → Use ChatSecurityService instead
+- For general text processing → Use ChatUtilities.sanitize_text() instead
+- For AI responses → Use ChatSecurityService.sanitize_response() instead
+
+See SANITIZATION_GUIDE.md for detailed usage guidelines.
 """
 import logging
 import re
