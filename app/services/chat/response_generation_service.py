@@ -6,11 +6,13 @@ import asyncio
 import hashlib
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 from app.models.chatbot_config import ChatbotConfig
 from app.services.shared import cache_service
 
+from .chat_utilities import ChatUtilities
 from .contact_extractor import contact_extractor
 from .context_leakage_detector import get_context_leakage_detector
 from .prompt_sanitizer import PromptInjectionDetector
@@ -57,6 +59,7 @@ class ResponseGenerationService:
         # SECURITY: Initialize security detectors
         self.injection_detector = PromptInjectionDetector()
         self.leakage_detector = get_context_leakage_detector()
+        self.chat_utilities = ChatUtilities()
 
     async def generate_enhanced_response(
         self,
@@ -298,6 +301,7 @@ class ResponseGenerationService:
             # Combine document chunks with contact info prioritization
             context_chunks = []
             contact_chunks = []  # Chunks with contact info (prioritized)
+            product_chunks = []  # Chunks with product info (prioritized)
             sources = []
             total_score = 0
 
@@ -305,6 +309,7 @@ class ResponseGenerationService:
                 chunk_text = doc.get("chunk", "")
                 source = doc.get("source", "")
                 score = doc.get("score", 0)
+                metadata = doc.get("metadata", {})
 
                 if chunk_text and len(chunk_text.strip()) > 10:
                     # Extract contact info from this chunk
@@ -333,6 +338,14 @@ class ResponseGenerationService:
                             len(contact_info.get("emails", [])),
                             len(contact_info.get("demo_links", [])),
                         )
+                    elif metadata.get("has_products", False):
+                        product_chunks.append(chunk_text)
+                        logger.debug(
+                            "🛍️ Product chunk %d (score: %.3f): source=%s",
+                            idx + 1,
+                            score,
+                            source,
+                        )
                     else:
                         context_chunks.append(chunk_text)
 
@@ -342,19 +355,31 @@ class ResponseGenerationService:
 
                     # DEBUG: Log each chunk being added
                     logger.debug(
-                        "📄 Chunk %d (score: %.3f, length: %d, has_contact: %s): %s...",
+                        "📄 Chunk %d (score: %.3f, length: %d, has_contact: %s, has_products: %s): %s...",
                         idx + 1,
                         score,
                         len(chunk_text),
                         contact_info.get("has_contact_info", False),
+                        metadata.get("has_products", False),
                         chunk_text[:100],
                     )
 
-            # Prioritize contact chunks - add them first
-            prioritized_chunks = contact_chunks + context_chunks
+            # Prioritize contact and product chunks - add them first
+            prioritized_chunks = contact_chunks + product_chunks + context_chunks
 
             # Combine context with length limit
             context_text = self._combine_context_chunks(prioritized_chunks)
+
+            # Extract product information and build structured section
+            raw_product_links = (
+                self.chat_utilities.extract_product_links_from_documents(documents)
+            )
+            product_section_text, structured_products = self._build_product_section(
+                raw_product_links
+            )
+
+            if product_section_text:
+                context_text = product_section_text + "\n\n" + context_text
 
             # Create structured contact info section if we have contact info
             contact_info_text = ""
@@ -413,12 +438,14 @@ class ResponseGenerationService:
                     "demo_links": list(all_demo_links),
                     "all_links": list(all_links),
                 },
+                "product_links": structured_products,
                 "demo_links": list(all_demo_links),  # For backward compatibility
                 "context_quality": {
                     "coverage_score": coverage_score,
                     "relevance_score": avg_score,
                     "document_count": len(documents),
                     "contact_chunks_count": len(contact_chunks),
+                    "product_chunks_count": len(product_chunks),
                 },
             }
 
@@ -428,6 +455,7 @@ class ResponseGenerationService:
                 "context_text": "",
                 "sources": [],
                 "contact_info": {},
+                "product_links": [],
                 "demo_links": [],
                 "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
             }
@@ -457,6 +485,127 @@ class ResponseGenerationService:
             current_length += chunk_length
 
         return combined
+
+    def _build_product_section(
+        self, product_links: List[Dict[str, Any]]
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """Build a structured product section from extracted product links"""
+        if not product_links:
+            return "", []
+
+        section_lines = ["PRODUCT CATALOG:"]
+        structured_products: List[Dict[str, Any]] = []
+        seen_urls = set()
+
+        for idx, product in enumerate(product_links, start=1):
+            url = product.get("url")
+            if not url or url in seen_urls:
+                continue
+
+            seen_urls.add(url)
+
+            name = product.get("name") or self._infer_product_name_from_url(url)
+            chunk_preview = product.get("chunk_preview", "")
+
+            description, price = self._extract_product_details(chunk_preview, name)
+
+            line = f"{idx}. **[{name}]({url})**"
+            if description:
+                line += f" - *{description}*"
+            if price:
+                line += f" - **Price**: {price}"
+
+            section_lines.append(line)
+
+            structured_products.append(
+                {
+                    "name": name,
+                    "url": url,
+                    "description": description,
+                    "price": price,
+                    "source": product.get("source", ""),
+                }
+            )
+
+        if len(section_lines) == 1:
+            return "", []
+
+        return "\n".join(section_lines), structured_products
+
+    def _extract_product_details(self, text: str, product_name: str) -> Tuple[str, str]:
+        """Extract product description and price from a text snippet"""
+        if not text:
+            return "", ""
+
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        candidate_lines = []
+
+        if product_name:
+            name_lower = product_name.lower()
+            candidate_lines = [line for line in lines if name_lower in line.lower()]
+
+        if not candidate_lines:
+            candidate_lines = lines[:2]
+
+        description = ""
+        price = ""
+
+        for line in candidate_lines:
+            line_clean = re.sub(r"^\d+\.\s*", "", line).strip()
+
+            price_match = re.search(
+                r"(?:price|cost)\s*[:\-]?\s*([A-Za-z]{0,4}\.?\s*[A-Za-z]*\s*[\d,]+(?:\.\d{1,2})?)",
+                line_clean,
+                re.IGNORECASE,
+            )
+            if price_match and not price:
+                price = price_match.group(1).strip()
+
+            parts = re.split(r"\s[-–—]\s", line_clean)
+            if len(parts) > 1:
+                potential_desc = parts[1]
+                # Remove trailing price information
+                potential_desc = re.sub(
+                    r"(?:price|cost).*", "", potential_desc, flags=re.IGNORECASE
+                )
+                potential_desc = potential_desc.strip(" :-")
+                if potential_desc and not description:
+                    description = potential_desc
+
+            if description and price:
+                break
+
+        return description, price
+
+    def _infer_product_name_from_url(self, url: str) -> str:
+        """Infer a human-readable product name from a URL"""
+        if not url:
+            return "Product"
+
+        try:
+            parsed = urlparse(url)
+            path_parts = [part for part in parsed.path.split("/") if part]
+
+            for part in reversed(path_parts):
+                if part.lower() in {
+                    "product",
+                    "products",
+                    "item",
+                    "items",
+                    "shop",
+                    "p",
+                }:
+                    continue
+
+                name = part.replace("-", " ").replace("_", " ")
+                name = re.sub(r"[^a-zA-Z0-9\s]", "", name)
+                name = re.sub(r"\s+", " ", name).strip()
+                if len(name) > 3:
+                    return name.title()
+        except Exception:
+            pass
+
+        return "Product"
 
     def _create_system_prompt(self, context_data: Dict[str, Any]) -> str:
         """Create system prompt with context"""
@@ -785,6 +934,34 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
                     # Append at the end if no good insertion point
                     validated_response += f"\n\n{demo_link_text}"
 
+        # Ensure product links are surfaced when available
+        product_entries = context_data.get("product_links", [])
+        if product_entries:
+            missing_entries = [
+                entry
+                for entry in product_entries
+                if entry.get("url") and entry["url"] not in validated_response
+            ]
+
+            if missing_entries:
+                validated_response += "\n\nPRODUCT LINKS:\n"
+                for entry in missing_entries:
+                    name = entry.get("name") or "Product"
+                    url = entry.get("url")
+                    if not url:
+                        continue
+
+                    description = (entry.get("description") or "").strip()
+                    price = (entry.get("price") or "").strip()
+
+                    line = f"- **[{name}]({url})**"
+                    if description:
+                        line += f" - *{description}*"
+                    if price:
+                        line += f" - **Price**: {price}"
+
+                    validated_response += "\n" + line
+
         # SECURITY: Sanitize response for context leakage
         # Check if response contains too much raw context
         sanitized_response = self.leakage_detector.sanitize_response_for_leakage(
@@ -891,7 +1068,7 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
                 logger.debug(
                     "Skipping contact validation - not a contact query and no contact keywords"
                 )
-                return response
+        return response
 
         # 1. VALIDATE PHONE NUMBERS
         # Improved pattern: more specific to avoid matching prices
@@ -944,7 +1121,6 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
                 # Only replace if this is a contact query - otherwise, just log it
                 if is_contact_query:
-                    # Replace hallucinated number with actual or remove it
                     if context_phones:
                         response = response.replace(response_phone, context_phones[0])
                         logger.info("✅ Auto-corrected phone to: %s", context_phones[0])
