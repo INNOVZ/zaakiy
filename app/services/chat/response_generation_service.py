@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 from app.models.chatbot_config import ChatbotConfig
 from app.services.shared import cache_service
 
+from .contact_extractor import contact_extractor
 from .context_leakage_detector import get_context_leakage_detector
 from .prompt_sanitizer import PromptInjectionDetector
 
@@ -178,84 +179,63 @@ class ResponseGenerationService:
             # Detect if this is a contact information query - if so, use ZERO temperature
             is_contact_query = self._is_contact_information_query(message)
 
-            # DEBUG: Check if phone numbers are in context
-            phone_pattern = r"\+?\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
-            phones_in_context = re.findall(phone_pattern, context_text)
+            # DEBUG: Check contact information in context
+            contact_info = context_data.get("contact_info", {})
+            phones_in_context = contact_info.get("phones", [])
+            emails_in_context = contact_info.get("emails", [])
+            demo_links_in_context = contact_info.get("demo_links", [])
 
-            # Filter out vague/placeholder phone numbers
-            valid_phones_in_context = [
-                phone
-                for phone in phones_in_context
-                if self._is_valid_phone_number(phone)
-            ]
-
-            if valid_phones_in_context:
+            if phones_in_context:
                 logger.info(
-                    "📞 Found %d valid phone numbers in context: %s",
-                    len(valid_phones_in_context),
-                    valid_phones_in_context,
+                    "📞 Found %d phone numbers in context: %s",
+                    len(phones_in_context),
+                    phones_in_context[:3],  # Log first 3
                 )
-                # Log any vague numbers that were filtered out
-                vague_phones = [
-                    p for p in phones_in_context if p not in valid_phones_in_context
-                ]
-                if vague_phones:
-                    logger.warning(
-                        "⚠️ Filtered out %d vague/placeholder phone numbers: %s",
-                        len(vague_phones),
-                        vague_phones,
-                    )
-            elif is_contact_query:
-                # Contact query but no valid phone in context - this is the problem!
-                logger.error(
-                    "🚨 PROBLEM: Contact query detected but NO VALID phone numbers in retrieved context!"
+            if emails_in_context:
+                logger.info(
+                    "📧 Found %d email addresses in context: %s",
+                    len(emails_in_context),
+                    emails_in_context[:3],  # Log first 3
                 )
-                if phones_in_context:
+            if demo_links_in_context:
+                logger.info(
+                    "🔗 Found %d demo/booking links in context: %s",
+                    len(demo_links_in_context),
+                    demo_links_in_context,
+                )
+
+            if is_contact_query:
+                # Check if we have any contact info
+                has_contact = bool(
+                    phones_in_context
+                    or emails_in_context
+                    or contact_info.get("addresses")
+                )
+
+                if not has_contact:
+                    # Contact query but no contact info - this is the problem!
                     logger.error(
-                        "Found %d phone numbers but all were vague/placeholder: %s",
-                        len(phones_in_context),
-                        phones_in_context,
+                        "🚨 PROBLEM: Contact query detected but NO contact information in retrieved context!"
                     )
-                logger.error(
-                    "Retrieved documents: %d, Context length: %d chars",
-                    len(retrieved_documents),
-                    len(context_text),
-                )
-                logger.error("First 500 chars of context: %s", context_text[:500])
-
-                # DEBUG: Log each retrieved document
-                for idx, doc in enumerate(retrieved_documents):
-                    chunk = doc.get("chunk", "")[:200]
-                    score = doc.get("score", 0)
-                    logger.error("Doc %d (score %.3f): %s...", idx + 1, score, chunk)
-
-            # DEBUG: Check if URLs are in context (for booking/demo links)
-            urls_in_context = self._extract_urls_from_context(context_text)
-            if urls_in_context:
-                logger.info(
-                    "🔗 Found %d URLs in context: %s",
-                    len(urls_in_context),
-                    urls_in_context[:3],  # Log first 3
-                )
-                # Check for demo/booking URLs
-                demo_urls = [
-                    url
-                    for url in urls_in_context
-                    if any(
-                        keyword in url.lower()
-                        for keyword in [
-                            "demo",
-                            "book",
-                            "schedule",
-                            "appointment",
-                            "booking",
-                            "calendly",
-                            "cal.com",
-                        ]
+                    logger.error(
+                        "Retrieved documents: %d, Context length: %d chars",
+                        len(retrieved_documents),
+                        len(context_text),
                     )
-                ]
-                if demo_urls:
-                    logger.info("📅 Found demo/booking URLs: %s", demo_urls[:2])
+                    logger.error("First 500 chars of context: %s", context_text[:500])
+
+                    # DEBUG: Log each retrieved document with contact extraction
+                    for idx, doc in enumerate(retrieved_documents):
+                        chunk = doc.get("chunk", "")[:200]
+                        score = doc.get("score", 0)
+                        doc_contact_info = contact_extractor.extract_contact_info(chunk)
+                        logger.error(
+                            "Doc %d (score %.3f, has_contact: %s): %s...",
+                            idx + 1,
+                            score,
+                            doc_contact_info.get("has_contact_info", False),
+                            chunk,
+                        )
 
             # Create system prompt with context
             system_prompt = self._create_system_prompt(context_data)
@@ -294,17 +274,27 @@ class ResponseGenerationService:
             raise ResponseGenerationError(f"Response generation failed: {e}") from e
 
     def _build_context(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Build context from retrieved documents"""
+        """Build context from retrieved documents with contact info prioritization"""
         try:
             if not documents:
                 return {
                     "context_text": "",
                     "sources": [],
+                    "contact_info": {},
+                    "demo_links": [],
                     "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
                 }
 
-            # Combine document chunks
+            # Extract contact information from all documents
+            all_phones = set()
+            all_emails = set()
+            all_addresses = []
+            all_demo_links = set()
+            all_links = set()
+
+            # Combine document chunks with contact info prioritization
             context_chunks = []
+            contact_chunks = []  # Chunks with contact info (prioritized)
             sources = []
             total_score = 0
 
@@ -314,22 +304,97 @@ class ResponseGenerationService:
                 score = doc.get("score", 0)
 
                 if chunk_text and len(chunk_text.strip()) > 10:
-                    context_chunks.append(chunk_text)
+                    # Extract contact info from this chunk
+                    contact_info = contact_extractor.extract_contact_info(chunk_text)
+
+                    # Collect contact information
+                    if contact_info.get("phones"):
+                        all_phones.update(contact_info["phones"])
+                    if contact_info.get("emails"):
+                        all_emails.update(contact_info["emails"])
+                    if contact_info.get("addresses"):
+                        all_addresses.extend(contact_info["addresses"])
+                    if contact_info.get("demo_links"):
+                        all_demo_links.update(contact_info["demo_links"])
+                    if contact_info.get("links"):
+                        all_links.update(contact_info["links"])
+
+                    # Prioritize chunks with contact info
+                    if contact_info.get("has_contact_info"):
+                        contact_chunks.append(chunk_text)
+                        logger.debug(
+                            "📞 Contact chunk %d (score: %.3f): phones=%d, emails=%d, demo_links=%d",
+                            idx + 1,
+                            score,
+                            len(contact_info.get("phones", [])),
+                            len(contact_info.get("emails", [])),
+                            len(contact_info.get("demo_links", [])),
+                        )
+                    else:
+                        context_chunks.append(chunk_text)
+
                     if source and source not in sources:
                         sources.append(source)
                     total_score += score
 
                     # DEBUG: Log each chunk being added
                     logger.debug(
-                        "📄 Chunk %d (score: %.3f, length: %d): %s...",
+                        "📄 Chunk %d (score: %.3f, length: %d, has_contact: %s): %s...",
                         idx + 1,
                         score,
                         len(chunk_text),
+                        contact_info.get("has_contact_info", False),
                         chunk_text[:100],
                     )
 
+            # Prioritize contact chunks - add them first
+            prioritized_chunks = contact_chunks + context_chunks
+
             # Combine context with length limit
-            context_text = self._combine_context_chunks(context_chunks)
+            context_text = self._combine_context_chunks(prioritized_chunks)
+
+            # Create structured contact info section if we have contact info
+            contact_info_text = ""
+            if all_phones or all_emails or all_addresses or all_demo_links:
+                contact_info_parts = []
+
+                if all_phones:
+                    contact_info_parts.append(
+                        f"Phone Numbers: {', '.join(sorted(all_phones))}"
+                    )
+
+                if all_emails:
+                    contact_info_parts.append(
+                        f"Email Addresses: {', '.join(sorted(all_emails))}"
+                    )
+
+                if all_addresses:
+                    # Take first 3 addresses (most relevant)
+                    contact_info_parts.append(
+                        f"Addresses: {' | '.join(all_addresses[:3])}"
+                    )
+
+                if all_demo_links:
+                    contact_info_parts.append(
+                        f"Demo/Booking Links: {', '.join(sorted(all_demo_links))}"
+                    )
+
+                if contact_info_parts:
+                    contact_info_text = "\n\nCONTACT INFORMATION:\n" + "\n".join(
+                        contact_info_parts
+                    )
+                    # Prepend contact info to context to ensure it's always included
+                    context_text = contact_info_text + "\n\n" + context_text
+
+            # Log extracted contact info
+            if all_phones or all_emails or all_demo_links:
+                logger.info(
+                    "✅ Extracted contact info: phones=%d, emails=%d, demo_links=%d, addresses=%d",
+                    len(all_phones),
+                    len(all_emails),
+                    len(all_demo_links),
+                    len(all_addresses),
+                )
 
             # Calculate quality metrics
             avg_score = total_score / len(documents) if documents else 0
@@ -338,10 +403,19 @@ class ResponseGenerationService:
             return {
                 "context_text": context_text,
                 "sources": sources,
+                "contact_info": {
+                    "phones": list(all_phones),
+                    "emails": list(all_emails),
+                    "addresses": all_addresses[:5],  # Limit to 5
+                    "demo_links": list(all_demo_links),
+                    "all_links": list(all_links),
+                },
+                "demo_links": list(all_demo_links),  # For backward compatibility
                 "context_quality": {
                     "coverage_score": coverage_score,
                     "relevance_score": avg_score,
                     "document_count": len(documents),
+                    "contact_chunks_count": len(contact_chunks),
                 },
             }
 
@@ -350,6 +424,8 @@ class ResponseGenerationService:
             return {
                 "context_text": "",
                 "sources": [],
+                "contact_info": {},
+                "demo_links": [],
                 "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
             }
 
@@ -405,10 +481,14 @@ CONTEXT INFORMATION:
 
 CONTACT INFORMATION - ZERO TOLERANCE FOR ERRORS:
 - Phone numbers, emails, addresses MUST be copied EXACTLY character-by-character from context
+- Demo/booking links MUST be used EXACTLY as provided in context - DO NOT use different links
 - If contact info is NOT in context, say "I don't have contact information available"
-- NEVER generate fake, placeholder, or vague phone numbers like "10000", "12345", "00000", etc.
-- NEVER make up phone numbers - only use numbers that are EXPLICITLY in the context
-- If you cannot find a real phone number in the context, simply say "I don't have a phone number available" - DO NOT invent one
+
+DEMO/BOOKING LINKS - CRITICAL:
+- If context has demo/booking links, ALWAYS use those exact links
+- DO NOT provide generic links or different booking links
+- Use the EXACT URL from the "Demo/Booking Links" section in context
+- Format demo links as: **[Book a Demo](exact-url-from-context)**
 
 EXAMPLES OF CORRECT BEHAVIOR:
 
@@ -418,8 +498,15 @@ EXAMPLES OF CORRECT BEHAVIOR:
 📞 **Phone**: [+91 75 94 94 94 06](tel:+917594949406)
 📧 **Email**: [support@company.com](mailto:support@company.com)"
 
+✅ DEMO LINK - Context has: "Demo/Booking Links: https://innovz.surveysparrow.com/s/Zaakiy-onboarding/tt-NwNkd"
+   Response: "To book a demo, please **[click here](https://innovz.surveysparrow.com/s/Zaakiy-onboarding/tt-NwNkd)** or visit the link above."
+
 ❌ WRONG - Context has phone/email
    Response: "Phone: +91 75 94 94 94 06 Email: support@company.com" (Missing emojis and markdown!)
+
+❌ WRONG - Context has specific demo link but you provide a different link
+   Context: "Demo/Booking Links: https://innovz.surveysparrow.com/s/Zaakiy-onboarding/tt-NwNkd"
+   Response: "Book a demo here: https://example.com/demo" (WRONG - use the exact link from context!)
 
 ✅ PRODUCT INFO - Context has: "Solar Panel 500W costs ₹50,000"
    Response: "**[Solar Panel 500W](product-url)** - *High efficiency panel* - **Price**: ₹50,000"
@@ -477,19 +564,8 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
    - ✅ ALWAYS use emojis with contact info: 📞 for phone, 📧 for email, 📍 for location
    - ✅ Use other relevant emojis sparingly to enhance readability
 
-6. **URLS AND LINKS - CRITICAL:**
-   - ✅ ALWAYS format URLs as markdown links: [link text](URL)
-   - ✅ If context has a URL, you MUST include it when mentioning related actions
-   - ✅ When saying "book a demo", "schedule a demo", or "book demo", you MUST include the actual URL from context as: [book a demo](actual-url-from-context)
-   - ✅ When saying "our website", "visit our website", or "website", you MUST include the actual URL from context as: [our website](actual-url-from-context)
-   - ✅ NEVER say "book a demo" or "visit our website" without including the actual clickable URL from context
-   - ✅ Extract URLs from context and use them - they are provided for you to use
-   - ✅ Example: "You can [book a demo](https://example.com/book-demo) or visit [our website](https://example.com)"
-   - ✅ If context mentions a booking/demo URL, use it: "To book a demo, please [click here](booking-url-from-context)"
-
-7. **FORBIDDEN:**
-   - ❌ NO raw URLs without markdown formatting (always use [text](URL))
-   - ❌ NO mentioning "book a demo" or "our website" without providing the actual clickable link
+6. **FORBIDDEN:**
+   - ❌ NO raw URLs (always use markdown links)
    - ❌ NO running contact details together on one line
    - ❌ NO plain text contact info without formatting
 
@@ -664,6 +740,41 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
             response_text, context_data.get("context_text", "")
         )
 
+        # Ensure demo links from context are included if missing
+        demo_links = context_data.get("demo_links", [])
+        contact_info = context_data.get("contact_info", {})
+        if contact_info:
+            demo_links = contact_info.get("demo_links", demo_links)
+
+        # If response mentions demo/booking but doesn't have the link from context, add it
+        if demo_links and any(
+            keyword in validated_response.lower()
+            for keyword in ["demo", "book", "booking", "schedule"]
+        ):
+            # Check if any demo link from context is in the response
+            has_demo_link = any(link in validated_response for link in demo_links)
+            if not has_demo_link:
+                # Add the demo link if it's missing
+                logger.info("Adding demo link to response: %s", demo_links[0])
+                # Find a good place to insert the link (after demo/booking mention)
+                demo_link_text = f"**[Book a Demo]({demo_links[0]})**"
+                # Try to insert after "demo" or "book" mention
+                import re
+
+                demo_pattern = r"(demo|book|booking|schedule)[^\n]*"
+                match = re.search(demo_pattern, validated_response, re.IGNORECASE)
+                if match:
+                    # Insert link after the match
+                    pos = match.end()
+                    validated_response = (
+                        validated_response[:pos]
+                        + f" - {demo_link_text}"
+                        + validated_response[pos:]
+                    )
+                else:
+                    # Append at the end if no good insertion point
+                    validated_response += f"\n\n{demo_link_text}"
+
         # SECURITY: Sanitize response for context leakage
         # Check if response contains too much raw context
         sanitized_response = self.leakage_detector.sanitize_response_for_leakage(
@@ -675,18 +786,12 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
         # Post-process to ensure proper markdown formatting
         formatted_response = self._ensure_markdown_formatting(sanitized_response)
 
-        # Link common phrases like "book a demo", "our website" to URLs from context
-        formatted_response = self._link_common_phrases_to_urls(
-            formatted_response, context_data.get("context_text", "")
-        )
-
-        # Format any raw URLs as markdown links
-        formatted_response = self._format_urls_as_links(formatted_response)
-
         return {
             "response": formatted_response,
             "sources": context_data.get("sources", []),
             "context_used": context_data.get("context_text", ""),
+            "contact_info": contact_info,  # Include extracted contact info
+            "demo_links": demo_links,  # Include demo links
             "context_quality": context_data.get("context_quality", {}),
             "document_count": len(retrieved_documents),
             "retrieval_method": "enhanced_rag",
@@ -709,21 +814,11 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
         def format_phone(match):
             number = match.group(1).strip()
-            # Validate phone number before formatting (reject vague/placeholder numbers)
-            if not self._is_valid_phone_number(number):
-                logger.warning(
-                    "🚨 Skipping formatting of vague phone number: '%s'", number
-                )
-                # Return empty string to remove the phone line
-                return ""
             # Clean number for tel: link (remove spaces and dashes)
             clean_number = re.sub(r"[\s\-\(\)]", "", number)
             return f"\n📞 **Phone**: [{number}](tel:{clean_number})"
 
         response = re.sub(phone_pattern, format_phone, response)
-
-        # Clean up any empty lines left after removing vague phone numbers
-        response = re.sub(r"\n{3,}", "\n\n", response)
 
         # Fix email formatting
         # Pattern: Find "Email: email@example.com" or "📧 Email: email@example.com" and convert to markdown
@@ -764,245 +859,6 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
 
         return response
 
-    def _extract_urls_from_context(self, context: str) -> List[str]:
-        """Extract all URLs from context"""
-        # URL pattern: http://, https://, www., and domain patterns
-        url_patterns = [
-            r'https?://[^\s\)<"\'\,]+',  # http:// or https:// URLs
-            r'www\.[^\s\)<"\'\,]+',  # www. URLs
-            r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?:/[^\s\)<"\'\,]*)?',  # Domain patterns
-        ]
-
-        all_urls = []
-        for pattern in url_patterns:
-            urls = re.findall(pattern, context, re.IGNORECASE)
-            all_urls.extend(urls)
-
-        # Filter and clean URLs
-        valid_urls = []
-        seen_urls = set()
-
-        for url in all_urls:
-            url = url.strip().rstrip(".,;:!?)\"'<>")
-
-            # Skip if too short or doesn't look like a URL
-            if len(url) < 4 or not ("." in url or url.startswith("http")):
-                continue
-
-            # Add https:// if missing for www. URLs or domain-only URLs
-            if url.startswith("www."):
-                full_url = "https://" + url
-            elif not url.startswith(("http://", "https://")):
-                # Check if it's a domain (has TLD)
-                if re.match(
-                    r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}",
-                    url,
-                ):
-                    full_url = "https://" + url
-                else:
-                    continue
-            else:
-                full_url = url
-
-            # Normalize URL (remove trailing slashes for comparison)
-            normalized = full_url.rstrip("/")
-            if normalized not in seen_urls:
-                seen_urls.add(normalized)
-                valid_urls.append(full_url)
-
-        return valid_urls
-
-    def _format_urls_as_links(self, response: str) -> str:
-        """Convert raw URLs to markdown links"""
-        # First, extract URLs that are already in markdown link format to avoid double-linking
-        existing_links = re.findall(r"\[([^\]]+)\]\(([^\)]+)\)", response)
-        existing_urls = {url for _, url in existing_links}
-
-        # Pattern to find raw URLs (http://, https://, www.)
-        url_pattern = r"(?<!\]\()(https?://[^\s\)]+|www\.[^\s\)]+)"
-
-        def format_url(match):
-            url = match.group(1).strip().rstrip(".,;:!?)")
-            # Skip if already in a markdown link
-            if url in existing_urls:
-                return match.group(0)
-            # Add https:// if missing for www. URLs
-            if url.startswith("www."):
-                full_url = "https://" + url
-            else:
-                full_url = url
-            # Create markdown link - use domain name as link text
-            if "//" in full_url:
-                domain = full_url.split("//")[1].split("/")[0]
-                link_text = domain.replace("www.", "")
-            else:
-                link_text = full_url
-            return f"[{link_text}]({full_url})"
-
-        # Convert raw URLs to markdown links
-        response = re.sub(url_pattern, format_url, response)
-
-        return response
-
-    def _link_common_phrases_to_urls(self, response: str, context: str) -> str:
-        """Link common phrases like 'book a demo', 'our website' to URLs from context"""
-        # Extract URLs from context
-        context_urls = self._extract_urls_from_context(context)
-
-        if not context_urls:
-            logger.debug("No URLs found in context for linking")
-            return response
-
-        logger.info(
-            "🔗 Found %d URLs in context for linking: %s",
-            len(context_urls),
-            context_urls[:3],
-        )
-
-        # Find demo/booking URLs (prioritize URLs with demo/booking keywords)
-        demo_urls = [
-            url
-            for url in context_urls
-            if any(
-                keyword in url.lower()
-                for keyword in [
-                    "demo",
-                    "book",
-                    "schedule",
-                    "appointment",
-                    "booking",
-                    "calendly",
-                    "cal.com",
-                    "meet",
-                    "zoom",
-                ]
-            )
-        ]
-        # Website URLs are those without demo/booking keywords
-        website_urls = [
-            url
-            for url in context_urls
-            if not any(
-                keyword in url.lower()
-                for keyword in [
-                    "demo",
-                    "book",
-                    "schedule",
-                    "appointment",
-                    "booking",
-                    "calendly",
-                    "cal.com",
-                    "meet",
-                    "zoom",
-                ]
-            )
-        ]
-
-        # Prioritize demo URLs - if we have demo URLs, use them for booking
-        demo_url = demo_urls[0] if demo_urls else None
-        website_url = (
-            website_urls[0] if website_urls else (demo_urls[0] if demo_urls else None)
-        )
-
-        # Check if phrases are already linked (avoid double-linking)
-        def is_already_linked(text: str, phrase: str) -> bool:
-            # Check if phrase is already inside a markdown link
-            pattern = r"\[([^\]]*" + re.escape(phrase) + r"[^\]]*)\]\([^\)]+\)"
-            return bool(re.search(pattern, text, re.IGNORECASE))
-
-        # Link "book a demo", "schedule a demo", etc. to demo URLs
-        if demo_url:
-            demo_phrases = [
-                (r"\b(book\s+a\s+demo)\b", "book a demo"),
-                (r"\b(schedule\s+a\s+demo)\b", "schedule a demo"),
-                (r"\b(book\s+demo)\b", "book a demo"),
-                (r"\b(schedule\s+demo)\b", "schedule a demo"),
-                (r"\b(book\s+your\s+demo)\b", "book your demo"),
-                (r"\b(schedule\s+your\s+demo)\b", "schedule your demo"),
-            ]
-
-            for pattern, link_text in demo_phrases:
-                if not is_already_linked(response, link_text):
-                    response = re.sub(
-                        pattern,
-                        f"[{link_text}]({demo_url})",
-                        response,
-                        flags=re.IGNORECASE,
-                    )
-                    logger.debug("✅ Linked '%s' to %s", link_text, demo_url)
-
-        # Link "our website" and related phrases to website URL (or demo URL if no website URL)
-        target_url = website_url if website_url else demo_url
-
-        if target_url:
-            # Patterns to link "our website" and variations
-            # Order matters: longer phrases first to avoid partial matches
-            website_phrases = [
-                (r"\bvisit\s+our\s+website\b", "visit our website"),
-                (r"\bgo\s+to\s+our\s+website\b", "go to our website"),
-                (r"\bcheck\s+our\s+website\b", "check our website"),
-                (r"\bour\s+website\b", "our website"),
-                (r"\bthe\s+website\b", "the website"),
-                (r"\bwebsite\b", "website"),
-            ]
-
-            for pattern, link_text in website_phrases:
-                # Check if this phrase is already in a markdown link
-                if not is_already_linked(
-                    response, link_text.split()[-1]
-                ):  # Check last word
-                    # Use word boundaries and negative lookahead to avoid double-linking
-                    response = re.sub(
-                        pattern + r"(?![^\[]*\]\([^\)]+\))",  # Not already in a link
-                        f"[{link_text}]({target_url})",
-                        response,
-                        flags=re.IGNORECASE,
-                    )
-                    logger.debug("✅ Linked '%s' to %s", link_text, target_url)
-
-        return response
-
-    def _is_valid_phone_number(self, phone: str) -> bool:
-        """Check if phone number is valid and not a placeholder/vague number"""
-        # Remove all non-digit characters except +
-        normalized = re.sub(r"[^\d+]", "", phone)
-
-        # Reject if too short (less than 7 digits) or too long (more than 15 digits)
-        digits_only = re.sub(r"[^\d]", "", normalized)
-        if len(digits_only) < 7 or len(digits_only) > 15:
-            return False
-
-        # Reject common placeholder/vague numbers
-        vague_patterns = [
-            r"^10000$",  # 10000
-            r"^12345",  # 12345, 123456, etc.
-            r"^00000",  # 00000, 000000, etc.
-            r"^11111",  # 11111, 111111, etc.
-            r"^99999",  # 99999, 999999, etc.
-            r"^000[0-9]{2,}$",  # Numbers starting with multiple zeros
-            r"^([0-9])\1{4,}$",  # Repeated digits (11111, 22222, etc.)
-        ]
-
-        for pattern in vague_patterns:
-            if re.match(pattern, digits_only):
-                logger.warning(
-                    "🚨 REJECTED VAGUE PHONE NUMBER: '%s' matches placeholder pattern: %s",
-                    phone,
-                    pattern,
-                )
-                return False
-
-        # Reject numbers that are all the same digit (except if it's a real number)
-        # But allow numbers like +971-50-123-4567 (UAE format)
-        if len(set(digits_only)) <= 2 and len(digits_only) < 10:
-            logger.warning(
-                "🚨 REJECTED VAGUE PHONE NUMBER: '%s' appears to be placeholder (too few unique digits)",
-                phone,
-            )
-            return False
-
-        return True
-
     def _validate_contact_info(self, response: str, context: str) -> str:
         """Validate that factual information in response exists in context - prevents hallucinations"""
 
@@ -1013,44 +869,14 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
         response_phones = re.findall(phone_pattern, response)
         context_phones = re.findall(phone_pattern, context)
 
-        # Filter out vague/placeholder phone numbers from context
-        valid_context_phones = [
-            phone for phone in context_phones if self._is_valid_phone_number(phone)
-        ]
-
         # Normalize phone numbers for comparison (remove spaces, dashes, etc.)
         def normalize_phone(phone):
             return re.sub(r"[^\d+]", "", phone)
 
-        normalized_context_phones = set(
-            normalize_phone(p) for p in valid_context_phones
-        )
+        normalized_context_phones = set(normalize_phone(p) for p in context_phones)
 
         # Check each phone number in response
         for response_phone in response_phones:
-            # First check if it's a valid phone number (not vague/placeholder)
-            if not self._is_valid_phone_number(response_phone):
-                logger.warning(
-                    "🚨 REJECTED VAGUE PHONE NUMBER IN RESPONSE: '%s' - removing from response",
-                    response_phone,
-                )
-                # Remove the vague phone number from response
-                response = re.sub(
-                    r"📞\s*\*\*Phone\*\*:\s*\[?"
-                    + re.escape(response_phone)
-                    + r"\]?\(?tel:[^)]*\)?",
-                    "",
-                    response,
-                )
-                # Also handle plain text format
-                response = re.sub(
-                    r"Phone:\s*" + re.escape(response_phone),
-                    "Phone: [Contact number not available]",
-                    response,
-                    flags=re.IGNORECASE,
-                )
-                continue
-
             normalized_response_phone = normalize_phone(response_phone)
 
             # If phone number in response is not in context, it's hallucinated
@@ -1058,41 +884,19 @@ FORMATTING REQUIREMENTS (CRITICAL - MUST FOLLOW EXACTLY):
                 logger.warning(
                     "🚨 HALLUCINATION DETECTED: Phone number '%s' not in context. Context has: %s",
                     response_phone,
-                    valid_context_phones,
+                    context_phones,
                 )
 
                 # Replace hallucinated number with actual or remove it
-                if valid_context_phones:
-                    # Use the first valid phone number from context
-                    replacement_phone = valid_context_phones[0]
-                    response = response.replace(response_phone, replacement_phone)
-                    logger.info("✅ Auto-corrected phone to: %s", replacement_phone)
+                if context_phones:
+                    response = response.replace(response_phone, context_phones[0])
+                    logger.info("✅ Auto-corrected phone to: %s", context_phones[0])
                 else:
-                    # No valid phone numbers in context - remove the hallucinated one
-                    logger.warning(
-                        "🚨 NO VALID PHONE NUMBERS IN CONTEXT - removing hallucinated number '%s'",
-                        response_phone,
-                    )
-                    # Remove the entire phone line from response if no valid phone exists
-                    # Match: 📞 **Phone**: [number](tel:number) or Phone: number
                     response = re.sub(
-                        r"📞\s*\*\*Phone\*\*:\s*\[?"
-                        + re.escape(response_phone)
-                        + r"\]?\(?tel:[^)]*\)?\s*\n?",
-                        "",
+                        re.escape(response_phone),
+                        "[Contact number not available]",
                         response,
                     )
-                    # Also handle plain text format and remove the line
-                    response = re.sub(
-                        r"(?:📞\s*)?(?:Phone|phone|PHONE):\s*"
-                        + re.escape(response_phone)
-                        + r"\s*\n?",
-                        "",
-                        response,
-                        flags=re.IGNORECASE,
-                    )
-                    # Clean up any empty lines left behind
-                    response = re.sub(r"\n{3,}", "\n\n", response)
 
         # 2. VALIDATE EMAILS
         email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"

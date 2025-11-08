@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
+from app.services.chat.contact_extractor import contact_extractor
 from app.services.shared import cache_service
 from app.services.shared.optimized_vector_search import OptimizedVectorSearch
 
@@ -167,21 +168,83 @@ class DocumentRetrievalService:
                 "call",
                 "reach",
                 "address",
+                "demo",
+                "booking",
+                "book",
+                "schedule",
             ]
         )
 
         if is_contact_query:
-            # Return up to 10 documents for contact queries (instead of 3)
-            final_count = min(10, len(sorted_docs))
+            # Return up to 15 documents for contact queries (increased from 10)
+            # This ensures we capture all contact information
+            final_count = min(15, len(sorted_docs))
+
+            # Re-score and re-sort documents based on contact information content
+            # This prioritizes chunks that actually contain contact info
+            contact_scored_docs = []
+            for doc in sorted_docs:
+                chunk = doc.get("chunk", "")
+                contact_score = contact_extractor.score_chunk_for_contact_query(chunk)
+
+                # Boost score if chunk contains contact info
+                if contact_score > 0:
+                    # Combine original similarity score with contact score
+                    # Contact score is normalized to 0-1 range and added as a boost
+                    boosted_score = doc["score"] + (contact_score / 100.0)
+                    doc["contact_boosted_score"] = boosted_score
+                    doc["contact_info"] = contact_extractor.extract_contact_info(chunk)
+                else:
+                    doc["contact_boosted_score"] = doc["score"]
+                    doc["contact_info"] = {"has_contact_info": False}
+
+                contact_scored_docs.append(doc)
+
+            # Re-sort by contact-boosted score
+            contact_scored_docs.sort(
+                key=lambda x: x["contact_boosted_score"], reverse=True
+            )
+
+            # Log contact information found
+            contact_found = sum(
+                1
+                for doc in contact_scored_docs
+                if doc["contact_info"].get("has_contact_info")
+            )
+            if contact_found > 0:
+                logger.info(
+                    "🔍 Contact query - found contact info in %d/%d documents",
+                    contact_found,
+                    len(contact_scored_docs[:final_count]),
+                )
+                # Log what contact info was found
+                for doc in contact_scored_docs[:5]:  # Log top 5
+                    info = doc["contact_info"]
+                    if info.get("has_contact_info"):
+                        logger.info(
+                            "📞 Contact info in doc %s: phones=%d, emails=%d, demo_links=%d",
+                            doc["id"][:20],
+                            len(info.get("phones", [])),
+                            len(info.get("emails", [])),
+                            len(info.get("demo_links", [])),
+                        )
+            else:
+                logger.warning(
+                    "⚠️ Contact query detected but NO contact info found in any retrieved documents!"
+                )
+                # Log chunk previews for debugging
+                for i, doc in enumerate(contact_scored_docs[:5]):
+                    chunk_preview = doc.get("chunk", "")[:200]
+                    logger.debug("Doc %d chunk preview: %s", i + 1, chunk_preview)
+
+            final_docs = contact_scored_docs[:final_count]
             logger.info(
-                "🔍 Contact query detected - returning %d documents (instead of %d)",
+                "🔍 Contact query detected - returning %d documents (boosted by contact info)",
                 final_count,
-                self.retrieval_config["final"],
             )
         else:
             final_count = self.retrieval_config["final"]
-
-        final_docs = sorted_docs[:final_count]
+            final_docs = sorted_docs[:final_count]
 
         # DEBUG: Log what we're returning
         logger.info(
@@ -229,15 +292,34 @@ class DocumentRetrievalService:
                 # Convert to expected format
                 docs = []
                 for match in result.get("matches", []):
+                    # Extract chunk with better handling
+                    metadata = match.get("metadata", {})
+                    chunk = metadata.get("chunk", match.get("text", ""))
+
+                    # If chunk is empty or very short, try other metadata fields
+                    if not chunk or len(chunk.strip()) < 10:
+                        # Try text field
+                        chunk = metadata.get("text", "")
+                        # Try content field
+                        if not chunk:
+                            chunk = metadata.get("content", "")
+
+                    # Log chunk extraction for debugging
+                    if not chunk or len(chunk.strip()) < 10:
+                        logger.warning(
+                            "⚠️ Retrieved document %s has empty or very short chunk (%d chars)",
+                            match["id"],
+                            len(chunk) if chunk else 0,
+                        )
+                        logger.debug("Metadata keys: %s", list(metadata.keys())[:10])
+
                     docs.append(
                         {
                             "id": match["id"],
                             "score": match["score"],
-                            "chunk": match.get("metadata", {}).get(
-                                "chunk", match.get("text", "")
-                            ),
-                            "source": match.get("metadata", {}).get("source", ""),
-                            "metadata": match.get("metadata", {}),
+                            "chunk": chunk,
+                            "source": metadata.get("source", ""),
+                            "metadata": metadata,
                             "query_variant": query,
                             "retrieval_method": "semantic_optimized",
                             "cache_hit": result.get("performance", {}).get(
@@ -291,13 +373,21 @@ class DocumentRetrievalService:
 
             docs = []
             for match in results.matches:
+                # Extract chunk with better handling
+                metadata = match.metadata or {}
+                chunk = metadata.get("chunk", "")
+
+                # If chunk is empty, try other fields
+                if not chunk or len(chunk.strip()) < 10:
+                    chunk = metadata.get("text", "") or metadata.get("content", "")
+
                 docs.append(
                     {
                         "id": match.id,
                         "score": match.score,
-                        "chunk": match.metadata.get("chunk", ""),
-                        "source": match.metadata.get("source", ""),
-                        "metadata": match.metadata,
+                        "chunk": chunk,
+                        "source": metadata.get("source", ""),
+                        "metadata": metadata,
                         "query_variant": query,
                         "retrieval_method": "semantic_fallback",
                     }
