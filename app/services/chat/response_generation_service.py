@@ -26,6 +26,8 @@ class ResponseGenerationError(Exception):
 class ResponseGenerationService:
     """Handles AI response generation with context engineering"""
 
+    CACHE_TTL_SECONDS = 3600
+
     def __init__(
         self,
         org_id: str,
@@ -164,33 +166,6 @@ class ResponseGenerationService:
                 logger.info(
                     "💨 CACHE HIT: Instant response for query: '%s'", message[:50]
                 )
-                # CRITICAL: Apply post-processing to cached responses to remove forbidden phrases
-                # This ensures cached responses also get the fix if they contain robotic phrases
-                cached_response_text = cache_hit_response.get("response", "")
-                context_data_for_cache = {
-                    "demo_links": cache_hit_response.get("demo_links", []),
-                    "contact_info": cache_hit_response.get("contact_info", {}),
-                }
-
-                # Apply forbidden phrase removal to cached response
-                cleaned_response = self._remove_forbidden_phrases(
-                    cached_response_text, context_data_for_cache, message
-                )
-
-                # ALWAYS update cached response with cleaned version (even if unchanged, for consistency)
-                # Only log if response was changed (forbidden phrase was found)
-                if cleaned_response != cached_response_text:
-                    logger.error(
-                        f"🚨 CRITICAL: Cached response contained forbidden phrase! "
-                        f"Original: {cached_response_text[:200]}... "
-                        f"Cleaned: {cleaned_response[:200]}..."
-                    )
-                else:
-                    logger.debug("✅ Cached response passed forbidden phrase check")
-
-                # Always use cleaned response (even if unchanged)
-                cache_hit_response["response"] = cleaned_response
-
                 return cache_hit_response
 
             # DEBUG: Log retrieved documents
@@ -1261,6 +1236,25 @@ REMEMBER:
             },
         }
 
+    @staticmethod
+    def _normalize_forbidden_phrase_text(text: str) -> str:
+        """Normalize curly quotes/apostrophes so detection logic sees smart punctuation."""
+        if not text:
+            return ""
+
+        normalized = text
+        replacements = {
+            "’": "'",
+            "‘": "'",
+            "“": '"',
+            "”": '"',
+        }
+
+        for original, replacement in replacements.items():
+            normalized = normalized.replace(original, replacement)
+
+        return normalized
+
     def _remove_forbidden_phrases(
         self, response: str, context_data: Dict[str, Any], user_message: str
     ) -> str:
@@ -1286,6 +1280,7 @@ REMEMBER:
             return response or ""
 
         response_lower = response.lower()
+        normalized_response = self._normalize_forbidden_phrase_text(response_lower)
 
         # MULTI-LAYER DETECTION: Use both regex patterns AND simple string checks
         # This ensures we catch ALL variations, even if regex fails
@@ -1301,22 +1296,29 @@ REMEMBER:
             "i'm not able to provide that information",
             "don't have information about",
             "don't have that information",
+            "i do not have information about",
+            "i do not have that information",
+            "i cannot help with that",
+            "i am not able to provide that information",
         ]
 
         # Regex patterns for more complex matching
         forbidden_patterns = [
-            r"i\s+don'?t\s+have\s+that\s+information\s+available",
-            r"i\s+don'?t\s+have\s+information\s+about",
-            r"i\s+don'?t\s+have\s+.*information\s+about",  # Matches "I don't have information about X"
-            r"i\s+don'?t\s+have\s+that\s+information",
-            r"i\s+don'?t\s+have\s+.*information.*available",
-            r"i\s+don'?t\s+know",
+            r"i\s+don['’]?t\s+have\s+that\s+information\s+available",
+            r"i\s+don['’]?t\s+have\s+information\s+about",
+            r"i\s+don['’]?t\s+have\s+.*information\s+about",  # Matches "I don't have information about X"
+            r"i\s+don['’]?t\s+have\s+that\s+information",
+            r"i\s+don['’]?t\s+have\s+.*information.*available",
+            r"i\s+don['’]?t\s+know",
             r"that\s+information\s+is\s+not\s+available",
-            r"i\s+can'?t\s+help\s+with\s+that",
-            r"i'?m\s+not\s+able\s+to\s+provide\s+that\s+information",
-            r"don'?t\s+have\s+.*information",
-            r"don'?t\s+have\s+information\s+about",
-            r"don'?t\s+have\s+.*information\s+about",
+            r"i\s+can['’]?t\s+help\s+with\s+that",
+            r"i['’]?m\s+not\s+able\s+to\s+provide\s+that\s+information",
+            r"don['’]?t\s+have\s+.*information",
+            r"don['’]?t\s+have\s+information\s+about",
+            r"don['’]?t\s+have\s+.*information\s+about",
+            r"i\s+do\s+not\s+have\s+.*information",
+            r"i\s+am\s+not\s+able\s+to\s+provide\s+that\s+information",
+            r"i\s+cannot\s+help\s+with\s+that",
         ]
 
         # Check if any forbidden phrase is present - LOG EVERYTHING FOR DEBUGGING
@@ -1331,7 +1333,7 @@ REMEMBER:
 
         # FIRST: Check simple string matches (most reliable)
         for forbidden_str in forbidden_strings:
-            if forbidden_str in response_lower:
+            if forbidden_str in normalized_response:
                 has_forbidden_phrase = True
                 matched_pattern = forbidden_str
                 detection_method = "string_match"
@@ -1345,7 +1347,7 @@ REMEMBER:
         # SECOND: Check regex patterns if string match didn't find anything
         if not has_forbidden_phrase:
             for pattern in forbidden_patterns:
-                match_result = re.search(pattern, response_lower)
+                match_result = re.search(pattern, normalized_response)
                 if match_result:
                     has_forbidden_phrase = True
                     matched_pattern = pattern
@@ -1448,11 +1450,16 @@ REMEMBER:
         # FINAL VERIFICATION: Check one more time before returning
         # This is a paranoid check to ensure we never return a forbidden phrase
         response_lower_final = response.lower()
+        normalized_response_final = self._normalize_forbidden_phrase_text(
+            response_lower_final
+        )
         for forbidden_str in [
             "i don't have information about",
             "i don't have that information available",
+            "i do not have information about",
+            "i do not have that information",
         ]:
-            if forbidden_str in response_lower_final:
+            if forbidden_str in normalized_response_final:
                 logger.critical(
                     f"🚨🚨🚨 CRITICAL ERROR: Forbidden phrase STILL in response after rewrite! "
                     f"This should NEVER happen. Response: {response[:300]}..."
@@ -2016,6 +2023,34 @@ Alternative queries (one per line, no numbering):"""
                 cached_response["cached_at"] = cached_response.get(
                     "cached_at", "unknown"
                 )
+                cached_response_text = cached_response.get("response", "")
+                context_data_for_cache = {
+                    "demo_links": cached_response.get("demo_links", []),
+                    "contact_info": cached_response.get("contact_info", {}),
+                }
+
+                cleaned_response = self._remove_forbidden_phrases(
+                    cached_response_text, context_data_for_cache, message
+                )
+
+                if cleaned_response != cached_response_text:
+                    cached_response["response"] = cleaned_response
+                    cached_response["cached_at"] = asyncio.get_event_loop().time()
+                    try:
+                        await cache_service.set(
+                            cache_key, cached_response, self.CACHE_TTL_SECONDS
+                        )
+                        logger.info(
+                            "♻️  Refreshed cached response after cleaning forbidden phrases"
+                        )
+                    except Exception as cache_update_error:
+                        logger.warning(
+                            "Failed to refresh sanitized cache entry: %s",
+                            cache_update_error,
+                        )
+                else:
+                    cached_response["response"] = cleaned_response
+
                 return cached_response
 
             return None
@@ -2049,7 +2084,7 @@ Alternative queries (one per line, no numbering):"""
 
             # Cache for 1 hour (3600 seconds)
             # Common questions will be served instantly
-            await cache_service.set(cache_key, cache_data, 3600)
+            await cache_service.set(cache_key, cache_data, self.CACHE_TTL_SECONDS)
 
             logger.debug("Cached response for query: %s", message[:50])
 
