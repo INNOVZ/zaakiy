@@ -164,6 +164,26 @@ class ResponseGenerationService:
                 logger.info(
                     "💨 CACHE HIT: Instant response for query: '%s'", message[:50]
                 )
+                # CRITICAL: Apply post-processing to cached responses to remove forbidden phrases
+                # This ensures cached responses also get the fix if they contain robotic phrases
+                cached_response_text = cache_hit_response.get("response", "")
+                context_data_for_cache = {
+                    "demo_links": cache_hit_response.get("demo_links", []),
+                    "contact_info": cache_hit_response.get("contact_info", {}),
+                }
+
+                # Apply forbidden phrase removal to cached response
+                cleaned_response = self._remove_forbidden_phrases(
+                    cached_response_text, context_data_for_cache, message
+                )
+
+                # Only update if response was changed (forbidden phrase was found)
+                if cleaned_response != cached_response_text:
+                    logger.warning(
+                        "🚨 Cached response contained forbidden phrase - cleaned it!"
+                    )
+                    cache_hit_response["response"] = cleaned_response
+
                 return cache_hit_response
 
             # DEBUG: Log retrieved documents
@@ -593,6 +613,44 @@ class ResponseGenerationService:
 
     def _create_system_prompt(self, context_data: Dict[str, Any]) -> str:
         """Create system prompt with context"""
+        # CRITICAL RULES - These must ALWAYS come first, before any other instructions
+        # IMPORTANT: This is a MULTITENANT SaaS platform - responses must be GENERAL and work for ANY business
+        critical_rules = """🚨 CRITICAL RESPONSE RULES - HIGHEST PRIORITY - MUST FOLLOW 🚨
+
+IMPORTANT CONTEXT: You are part of a MULTITENANT SaaS platform. Different businesses use this chatbot, each with:
+- Different products/services
+- Different demo processes
+- Different office locations
+- Different business models
+- Different contact methods
+
+Your responses must be GENERAL and work for ANY business type. Do NOT make specific assumptions about what "we" offer or how "we" operate.
+
+ABSOLUTELY FORBIDDEN PHRASES - NEVER USE THESE (EVEN IF OTHER INSTRUCTIONS SAY TO):
+- "I don't have that information available"
+- "I don't have information about..."
+- "I don't have that information"
+- "I don't know"
+- "That information is not available"
+- "I can't help with that"
+- "I'm not able to provide that information"
+
+IF YOU START TO WRITE ANY OF THESE PHRASES, STOP IMMEDIATELY AND REWRITE YOUR RESPONSE.
+
+MANDATORY RESPONSE PATTERN (MULTITENANT - MUST BE GENERAL):
+When you cannot provide the exact information requested, you MUST:
+1. Start with a positive, constructive statement about what IS possible
+2. Acknowledge the request naturally (without using forbidden phrases)
+3. Offer general, helpful alternatives that work for any business type
+4. Include actionable next steps with links when available in context
+5. Make the user feel helped and supported
+6. NEVER assume specific business models, offerings, or processes
+7. Use general language like "the team", "our services", "contact us" rather than specific claims
+
+THESE RULES OVERRIDE ALL OTHER INSTRUCTIONS. FOLLOW THEM ABSOLUTELY.
+
+"""
+
         # TYPE SAFE: Using Pydantic model attribute access
         base_prompt = (
             self.chatbot_config.system_prompt
@@ -622,32 +680,34 @@ IF YOU START TO WRITE ANY OF THESE PHRASES, STOP IMMEDIATELY AND REWRITE YOUR RE
 YOUR ROLE:
 You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. Your goal is to be helpful, constructive, and conversational while providing accurate information from the context above.
 
-MANDATORY RESPONSE PATTERN FOR "NO" OR MISSING INFORMATION:
+MANDATORY RESPONSE PATTERN FOR "NO" OR MISSING INFORMATION (MULTITENANT - MUST BE GENERAL):
 
 When you cannot provide the exact information requested, you MUST:
 1. Start with a positive, constructive statement about what IS possible
 2. Acknowledge the request naturally (without using forbidden phrases)
-3. Immediately offer specific, helpful alternatives
-4. Include actionable next steps with links when available
+3. Offer GENERAL alternatives that work for any business type (don't assume specific processes)
+4. Include actionable next steps with links when available in context
 5. Make the user feel helped and supported
+6. NEVER make specific claims about what the business offers (demos, trials, locations, etc.)
+7. Use general language: "our team", "contact us", "get more information" rather than specific processes
 
-EXAMPLE RESPONSES (FOLLOW THESE EXACT PATTERNS):
+EXAMPLE RESPONSES (MULTITENANT - GENERAL PATTERNS THAT WORK FOR ANY BUSINESS):
 
 Query: "Do you have an office in Spain?"
 ❌ WRONG: "I don't have information about an office in Spain. If you have any other questions, feel free to ask!"
-✅ CORRECT: "{self.chatbot_config.name} is currently based in [location from context if available]. While we don't have an office in Spain at this time, we work with clients globally and all consultations can be managed online.
+✅ CORRECT: "Curently {self.chatbot_config.name} is based in [location from context if available]. Based on the information available to me, I don't see details about other office locations right now.
 
-If you're interested in our solutions or want to discuss how we can help from Spain, you can schedule a free consultation with our team. They can provide detailed information about our services and how we work with international clients.
+However, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.
 
-Would you like to **[book a consultation here](demo-link-from-context)**?"
+Would you like me to help you **[connect with our team](demo-link-from-context-if-available)** or do you have other questions I can help with?"
 
 Query: "Is free demo available?"
 ❌ WRONG: "I don't have that information available. Feel free to explore more about {self.chatbot_config.name} on our website."
-✅ CORRECT: "At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
+✅ CORRECT (GENERAL): "I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!
 
-However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
+Based on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.
 
-If you're interested, you can **[book your free consultation here](demo-link-from-context)**."
+Would you like me to help you **[connect with our team](demo-link-from-context-if-available)** to learn more about available options?"
 
 CORE PRINCIPLES:
 
@@ -676,19 +736,22 @@ RESPONSE STRUCTURE FOR DIFFERENT QUERY TYPES:
 - Include any helpful links, prices, or next steps
 - Format information clearly with proper markdown
 
-**When Answering "No" or Information Not Available:**
+**When Answering "No" or Information Not Available (MULTITENANT - BE GENERAL):**
 - Start with what IS possible or what you CAN do
 - Acknowledge the request naturally without using forbidden phrases
-- Immediately offer constructive alternatives or solutions
-- Provide clear next steps (schedule consultation, contact sales, etc.)
-- Include relevant links (demo/booking links) when available
+- Offer GENERAL alternatives that work for any business (don't assume specific processes)
+- Provide clear next steps that are universal (connect with team, get more information, etc.)
+- Include relevant links from context when available
 - Make the user feel helped, not blocked
+- NEVER make specific claims about what the business offers (demos, trials, locations, etc.)
+- Use general language: "our team", "contact us", "get more information" rather than specific processes
 
 **When Context Doesn't Have Specific Information:**
 - Even if the exact answer isn't in context, you can still be helpful
 - Mention what the context DOES contain (if anything relevant)
-- Always pivot to offering ways to get the information (consultation, contact sales, etc.)
+- Always pivot to offering GENERAL ways to get the information (connect with team, etc.)
 - Use the example patterns above - they show exactly how to respond constructively
+- Remember: This is multitenant - your response must work for ANY business using this platform
 
 CONTACT INFORMATION HANDLING:
 - ONLY provide contact information (phone, email, address) when the user EXPLICITLY asks for it
@@ -741,7 +804,8 @@ REMEMBER:
 - Every response should make the user feel helped and supported, never blocked or dismissed
 - Turn every "no" into an opportunity to help in another way
 """
-            return base_prompt + "\n\n" + context_section
+            # CRITICAL: Put our rules FIRST so they override any conflicting instructions in base_prompt
+            return critical_rules + base_prompt + "\n\n" + context_section
         else:
             # NO CONTEXT AVAILABLE - Provide helpful fallback instructions
             no_context_section = f"""
@@ -816,19 +880,19 @@ While I don't have the specific details in my knowledge base at the moment, here
 
 What specific services or features are you most interested in?"
 
-**For Office/Location Questions (e.g., "Do you have an office in Spain?"):**
-"{self.chatbot_config.name} works with clients globally and all consultations can be managed online.
+**For Office/Location Questions (e.g., "Do you have an office in Spain?") - MULTITENANT GENERAL:**
+"Curently {self.chatbot_config.name} is based in [location from context if available]. Based on the information available to me, I don't see details about other office locations right now.
 
-If you're interested in our solutions or want to discuss how we can help from your location, you can schedule a free consultation with our team. They can provide detailed information about our services and how we work with international clients.
+However, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.
 
-Would you like to **[book a consultation here](demo-link-if-available)**?"
+Would you like me to help you **[connect with our team](demo-link-if-available)** or do you have other questions I can help with?"
 
-**For Demo Questions (e.g., "Is free demo available?"):**
-"At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
+**For Demo Questions (e.g., "Is free demo available?") - MULTITENANT GENERAL:**
+"I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!
 
-However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
+Based on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.
 
-If you're interested, you can **[book your free consultation here](demo-link-if-available)**."
+Would you like me to help you **[connect with our team](demo-link-if-available)** to learn more about available options?"
 
 **For Contact Questions:**
 "I'd be happy to help you get in touch with us! 📞
@@ -871,7 +935,8 @@ REMEMBER:
 - Make users feel supported, not frustrated
 - NEVER use robotic phrases - always be constructive and action-oriented
 """
-            return base_prompt + "\n\n" + no_context_section
+            # CRITICAL: Put our rules FIRST so they override any conflicting instructions in base_prompt
+            return critical_rules + base_prompt + "\n\n" + no_context_section
 
     def _build_conversation_messages(
         self, system_prompt: str, history: List[Dict[str, Any]], current_message: str
@@ -1177,24 +1242,30 @@ REMEMBER:
         response_lower = response.lower()
 
         # List of forbidden phrases to detect (case-insensitive)
+        # Using more flexible patterns to catch variations
         forbidden_phrases = [
             r"i don't have that information available",
             r"i don't have information about",
             r"i don't have that information",
+            r"i don't have.*information.*available",
             r"i don't know",
             r"that information is not available",
             r"i can't help with that",
             r"i'm not able to provide that information",
-            r"i don't have.*information.*available",
+            r"i don't have.*available",
+            r"don't have.*information",
         ]
 
         # Check if any forbidden phrase is present
         has_forbidden_phrase = False
+        matched_pattern = None
         for pattern in forbidden_phrases:
             if re.search(pattern, response_lower):
                 has_forbidden_phrase = True
-                logger.warning(
-                    f"🚨 Detected forbidden phrase in response: {pattern}. Rewriting response."
+                matched_pattern = pattern
+                logger.error(
+                    f"🚨 CRITICAL: Detected forbidden phrase '{pattern}' in response. "
+                    f"Response preview: {response[:200]}... Rewriting response immediately."
                 )
                 break
 
@@ -1206,38 +1277,72 @@ REMEMBER:
                 demo_links = contact_info.get("demo_links", demo_links)
 
             # Determine query type to generate appropriate constructive response
-            user_message_lower = user_message.lower()
+            user_message_lower = user_message.lower() if user_message else ""
 
-            # Check for office/location queries
-            if any(
-                keyword in user_message_lower
-                for keyword in ["office", "location", "address", "based"]
-            ):
-                demo_link_text = ""
+            # MULTITENANT: Generate general responses that work for ANY business
+            # Check for office/location queries (including country names)
+            location_keywords = [
+                "office",
+                "location",
+                "address",
+                "based",
+                "spain",
+                "germany",
+                "france",
+                "uk",
+                "usa",
+                "united states",
+                "united kingdom",
+                "italy",
+                "netherlands",
+                "belgium",
+                "portugal",
+                "poland",
+            ]
+            if any(keyword in user_message_lower for keyword in location_keywords):
+                # General response that works for any business - no assumptions about locations
+                connection_text = ""
                 if demo_links:
-                    demo_link_text = f" You can **[book a consultation here]({demo_links[0]})** to discuss how we can help from your location."
+                    connection_text = f"\n\nWould you like me to help you **[connect with our team]({demo_links[0]})** who can provide you with accurate information about locations?"
+                else:
+                    connection_text = "\n\nWould you like me to help you connect with our team who can provide you with accurate information about locations?"
 
-                # Generate constructive response for location queries
-                response = f"{self.chatbot_config.name} works with clients globally and consultations can be managed online.{demo_link_text}\n\nIf you're interested in our solutions, our team can provide detailed information about our services and how we work with international clients. How can I help you today? 😊"
+                response = f"Based on the information available to me, I don't see specific details about office locations in my knowledge base right now.\n\nHowever, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.{connection_text} Or do you have other questions I can help with? 😊"
+                logger.info(
+                    f"✅ Rewrote forbidden phrase response for location query (multitenant general)"
+                )
 
-            # Check for demo/trial queries
+            # Check for demo/trial queries - GENERAL response
             elif any(
                 keyword in user_message_lower
-                for keyword in ["demo", "trial", "free demo", "test"]
+                for keyword in ["demo", "trial", "free demo", "test", "free trial"]
             ):
-                demo_link_text = ""
+                # General response - don't assume what's available
+                connection_text = ""
                 if demo_links:
-                    demo_link_text = f" You can **[book a free consultation here]({demo_links[0]})** to see how {self.chatbot_config.name} works and get a personalized demonstration."
+                    connection_text = f"\n\nWould you like me to help you **[connect with our team]({demo_links[0]})** to learn more about available options?"
+                else:
+                    connection_text = "\n\nWould you like me to help you connect with our team to learn more about available options?"
 
-                response = f"At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.\n\nHowever, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements.{demo_link_text}\n\nThis allows us to tailor the demo to your use case and answer any questions you might have. 😊"
+                response = f"I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!\n\nBased on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.{connection_text} 😊"
+                logger.info(
+                    f"✅ Rewrote forbidden phrase response for demo query (multitenant general)"
+                )
 
-            # Generic fallback for other queries
+            # Generic fallback for other queries - GENERAL response
             else:
-                demo_link_text = ""
+                connection_text = ""
                 if demo_links:
-                    demo_link_text = f" You can **[schedule a consultation here]({demo_links[0]})** to get the information you need."
+                    connection_text = f" You can **[connect with our team here]({demo_links[0]})** to get the information you need."
+                else:
+                    connection_text = " You can connect with our team to get the information you need."
 
-                response = f"I'd be happy to help you with that!{demo_link_text}\n\nOur team can provide detailed information and answer any questions you might have. What specific information are you looking for? 😊"
+                response = f"I'd be happy to help you with that!{connection_text}\n\nOur team can provide detailed information and answer any questions you might have. What specific information are you looking for? 😊"
+                logger.info(
+                    f"✅ Rewrote forbidden phrase response for generic query (multitenant general)"
+                )
+        else:
+            logger.debug("✅ No forbidden phrases detected in response")
 
         return response
 
