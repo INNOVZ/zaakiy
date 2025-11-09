@@ -230,8 +230,11 @@ class PromptSanitizer:
 
     def sanitize_fallback(self, fallback: str) -> str:
         """Sanitize fallback message"""
+        # Use a constructive fallback message that doesn't contain forbidden phrases
+        safe_fallback = "I'd be happy to help you with that! Could you provide more details or rephrase your question so I can assist you better?"
+
         if not fallback or not isinstance(fallback, str):
-            return "I'm sorry, I don't have information about that."
+            return safe_fallback
 
         # Check for injection
         is_injection, pattern, matched = self.injection_detector.check_for_injection(
@@ -239,7 +242,7 @@ class PromptSanitizer:
         )
         if is_injection:
             logger.error(f"Blocked prompt injection in fallback: {pattern}")
-            return "I'm sorry, I don't have information about that."
+            return safe_fallback
 
         # Remove control characters but keep newlines
         fallback = re.sub(r"[\t\v\f]", " ", fallback)
@@ -255,7 +258,7 @@ class PromptSanitizer:
         fallback = fallback[: self.MAX_FALLBACK_LENGTH].strip()
 
         if not fallback:
-            return "I'm sorry, I don't have information about that."
+            return safe_fallback
 
         return fallback
 

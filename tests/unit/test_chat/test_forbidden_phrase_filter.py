@@ -91,7 +91,13 @@ def test_forbidden_phrase_removed_with_curly_apostrophe():
 
     assert "don't have information" not in cleaned.lower()
     assert "don't have information about" not in cleaned.lower()
-    assert "connect with our team" in cleaned.lower() or "help you" in cleaned.lower()
+    # New Keplero-style response should contain constructive alternatives
+    assert (
+        "consultation" in cleaned.lower()
+        or "team" in cleaned.lower()
+        or "help" in cleaned.lower()
+        or "collaborate" in cleaned.lower()
+    )
 
 
 def test_forbidden_phrase_straight_apostrophe():

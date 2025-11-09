@@ -718,15 +718,15 @@ RESPONSE STRUCTURE FOR DIFFERENT QUERY TYPES:
 - Include any helpful links, prices, or next steps
 - Format information clearly with proper markdown
 
-**When Answering "No" or Information Not Available (MULTITENANT - BE GENERAL):**
-- Start with what IS possible or what you CAN do
-- Acknowledge the request naturally without using forbidden phrases
-- Offer GENERAL alternatives that work for any business (don't assume specific processes)
-- Provide clear next steps that are universal (connect with team, get more information, etc.)
-- Include relevant links from context when available
-- Make the user feel helped, not blocked
-- NEVER make specific claims about what the business offers (demos, trials, locations, etc.)
-- Use general language: "our team", "contact us", "get more information" rather than specific processes
+**When Answering "No" or Information Not Available (MULTITENANT - BE CONSTRUCTIVE LIKE KEPLERO AI):**
+- Be direct and honest about what you don't offer or know (e.g., "At the moment, we do not offer a free demo")
+- IMMEDIATELY pivot to constructive alternatives with clear benefits
+- Explain WHAT the user gets from the alternative (e.g., "to see how it works, discuss your needs, get personalized demonstration")
+- Provide clear, actionable next steps with links when available
+- Use natural, conversational flow - structure: [Direct answer] → [However/But] → [Constructive alternative with benefits] → [Clear call-to-action]
+- When location info is available in context, mention it constructively (e.g., "We are currently based in [location]")
+- When demo/consultation links are available, ALWAYS include them in the response
+- Make the user feel helped and supported, not blocked
 
 **When Context Doesn't Have Specific Information:**
 - Even if the exact answer isn't in context, you can still be helpful
@@ -776,15 +776,18 @@ TONE AND LANGUAGE:
 - Avoid being robotic or overly technical
 - Make users feel understood and supported
 
-REMEMBER:
+REMEMBER (KEPLERO AI STYLE - CONSTRUCTIVE FALLBACKS):
 - Accuracy is important, but being helpful and constructive is equally important
-- When you can't give a direct answer, always offer a constructive alternative
-- Provide clear calls to action with links when relevant
+- When you can't give a direct answer, be direct about it, then IMMEDIATELY offer a constructive alternative
+- Structure responses like Keplero AI: [Honest answer] → [However/But] → [Alternative with benefits] → [Clear call-to-action]
+- Always explain WHAT the user gets from the alternative (benefits, value proposition)
+- Provide clear calls to action with links when relevant - make it easy for users to take next steps
 - Make every response feel like it adds value, even when the answer is "no"
-- NEVER use phrases like "I don't have that information" - always be constructive
+- NEVER use phrases like "I don't have that information" - be direct but constructive
 - If context has demo/booking links, ALWAYS include them when offering consultations or demos
 - Every response should make the user feel helped and supported, never blocked or dismissed
-- Turn every "no" into an opportunity to help in another way
+- Turn every "no" into an opportunity to help in another way - show value in alternatives
+- Extract and use available context information (locations, services) to make responses more specific and helpful
 """
             # CRITICAL: Put our rules FIRST so they override any conflicting instructions in base_prompt
             return critical_rules + base_prompt + "\n\n" + context_section
@@ -863,18 +866,16 @@ While I don't have the specific details in my knowledge base at the moment, here
 What specific services or features are you most interested in?"
 
 **For Office/Location Questions (e.g., "Do you have an office in Spain?") - MULTITENANT GENERAL:**
-"Curently {self.chatbot_config.name} is based in [location from context if available]. Based on the information available to me, I don't see details about other office locations right now.
+"{self.chatbot_config.name} is currently based in [location from context if available]. We do not have an office in [requested location] at this time.
 
-However, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.
-
-Would you like me to help you **[connect with our team](demo-link-if-available)** or do you have other questions I can help with?"
+However, all interactions and consultations can be managed online, and our team can assist you regardless of your location. If you're interested in our solutions or want to collaborate, you can schedule a consultation with our team to discuss your needs and see how we can help. **[Book a consultation here](demo-link-if-available)**"
 
 **For Demo Questions (e.g., "Is free demo available?") - MULTITENANT GENERAL:**
-"I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!
+"At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
 
-Based on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.
+However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
 
-Would you like me to help you **[connect with our team](demo-link-if-available)** to learn more about available options?"
+If you're interested, you can **[book your free consultation here](demo-link-if-available)**"
 
 **For Contact Questions:**
 "I'd be happy to help you get in touch with us! 📞
@@ -1394,34 +1395,51 @@ REMEMBER:
                 "poland",
             ]
             if any(keyword in user_message_lower for keyword in location_keywords):
-                # MULTITENANT GENERAL: Response that works for any business - no assumptions
-                connection_text = ""
-                if demo_links:
-                    connection_text = f"\n\nWould you like me to help you **[connect with our team]({demo_links[0]})** who can provide you with accurate information about locations?"
-                else:
-                    connection_text = "\n\nWould you like me to help you connect with our team who can provide you with accurate information about locations?"
+                # MULTITENANT GENERAL: Constructive response like Keplero AI example
+                # Try to extract location info from context if available
+                contact_info = context_data.get("contact_info", {})
+                addresses = contact_info.get("addresses", [])
+                base_location = addresses[0] if addresses else None
 
-                # Use general, multitenant-friendly response
-                response = f"Based on the information available to me, I don't see specific details about office locations in my knowledge base right now.\n\nHowever, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.{connection_text} Or do you have other questions I can help with? 😊"
+                # Build response with available context information
+                if base_location:
+                    # We have location info - mention it constructively
+                    response = f"{self.chatbot_config.name} is currently based in {base_location}. "
+                else:
+                    # No location info - start constructively
+                    response = f"Based on the information in my knowledge base, I don't see specific details about office locations in other regions right now. "
+
+                # Always offer constructive alternatives
+                response += f"However, all interactions and consultations can be managed online, and our team can assist you regardless of your location.\n\n"
+
+                # Add benefits and call-to-action
+                if demo_links:
+                    response += f"If you're interested in our solutions or want to collaborate, you can schedule a consultation with our team to discuss your needs and see how we can help. **[Book a consultation here]({demo_links[0]})**"
+                else:
+                    response += f"If you're interested in our solutions or want to collaborate, I can help you connect with our team who can provide accurate information about locations and discuss how we can assist you. Would you like me to help you get in touch with them?"
                 logger.error(
                     f"🚨 REWRITTEN: Forbidden phrase detected and replaced for location query. "
                     f"Original response contained: '{matched_pattern}' (detected via {detection_method}). "
                     f"New response: {response[:200]}..."
                 )
 
-            # Check for demo/trial queries - GENERAL response
+            # Check for demo/trial queries - Constructive response like Keplero AI example
             elif any(
                 keyword in user_message_lower
                 for keyword in ["demo", "trial", "free demo", "test", "free trial"]
             ):
-                # General response - don't assume what's available
-                connection_text = ""
-                if demo_links:
-                    connection_text = f"\n\nWould you like me to help you **[connect with our team]({demo_links[0]})** to learn more about available options?"
-                else:
-                    connection_text = "\n\nWould you like me to help you connect with our team to learn more about available options?"
+                # Constructive response that matches Keplero AI quality
+                chatbot_name = self.chatbot_config.name
+                response = f"At the moment, we do not offer a free demo or trial version of {chatbot_name}. "
 
-                response = f"I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!\n\nBased on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.{connection_text} 😊"
+                # Immediately pivot to constructive alternative with benefits
+                response += f"However, you can schedule a free consultation call with our team to see how {chatbot_name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. "
+
+                # Add call-to-action with link if available
+                if demo_links:
+                    response += f"This allows us to tailor the demonstration to your use case and answer any questions you might have.\n\nIf you're interested, you can **[book your free consultation here]({demo_links[0]})**"
+                else:
+                    response += "This allows us to tailor the demonstration to your use case and answer any questions you might have.\n\nWould you like me to help you connect with our team to schedule a consultation?"
                 logger.error(
                     f"🚨 REWRITTEN: Forbidden phrase detected and replaced for demo query. "
                     f"Original response contained: '{matched_pattern}'. "
@@ -1706,6 +1724,16 @@ REMEMBER:
         response_text = fallback_messages.get(
             error_type,
             self.chatbot_config.fallback_message,
+        )
+
+        # CRITICAL: Clean fallback message through forbidden phrase removal
+        # The chatbot's fallback_message from database might contain forbidden phrases
+        context_data = {
+            "demo_links": [],
+            "contact_info": {},
+        }
+        response_text = self._remove_forbidden_phrases(
+            response_text, context_data, message
         )
 
         return {

@@ -12,10 +12,18 @@ from typing import Dict, Optional, Tuple
 
 from supabase import Client
 
-from app.models.subscription import (DEFAULT_CHANNEL_LIMITS, SUBSCRIPTION_PLANS,
-                                     Channel, OnboardingRequest, OnboardingResponse,
-                                     SubscriptionPlan, SubscriptionStatus,
-                                     SubscriptionUsage, TokenUsageRequest)
+from app.models.subscription import (
+    DEFAULT_CHANNEL_LIMITS,
+    SUBSCRIPTION_PLANS,
+    Channel,
+    EnhancedPlanFeatures,
+    OnboardingRequest,
+    OnboardingResponse,
+    SubscriptionPlan,
+    SubscriptionStatus,
+    SubscriptionUsage,
+    TokenUsageRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +121,10 @@ class SubscriptionService:
                 },
             )
 
-            # Get plan features
-            plan_features = SUBSCRIPTION_PLANS[request.selected_plan]
+            # Get plan features from database (source of truth for limits and pricing)
+            plan_features = await self._get_plan_features_with_db_values(
+                request.selected_plan
+            )
 
             if request.entity_type == "user":
                 entity_id = await self._create_user(request, admin_user_id)
@@ -786,7 +796,79 @@ class SubscriptionService:
             return False, 0
 
     async def get_plan_features(self, plan: SubscriptionPlan) -> Dict:
-        """Get features for a specific plan"""
+        """
+        Get features for a specific plan from database, with fallback to hardcoded values.
+        Prioritizes database subscription_plans table as source of truth for all plan features.
+        """
+        try:
+            # Try to read from database first
+            result = (
+                self.supabase.table("subscription_plans")
+                .select("*")
+                .eq("plan_name", plan.value)
+                .execute()
+            )
+
+            if result.data and len(result.data) > 0:
+                db_plan = result.data[0]
+                # Use all database values - database is the source of truth
+                # Handle potential None values with defaults from hardcoded fallback
+                hardcoded_features = SUBSCRIPTION_PLANS[plan]
+
+                # Helper to safely get values with fallback (handles None but preserves False)
+                def get_db_value(key, fallback, type_converter=None):
+                    """Get value from db_plan with proper None handling (False values are preserved)"""
+                    if key not in db_plan or db_plan[key] is None:
+                        return fallback
+                    value = db_plan[key]
+                    if type_converter and value is not None:
+                        try:
+                            return type_converter(value)
+                        except (ValueError, TypeError):
+                            return fallback
+                    return value
+
+                return {
+                    "name": get_db_value("display_name", hardcoded_features.name),
+                    "monthly_token_limit": get_db_value(
+                        "monthly_token_limit",
+                        hardcoded_features.monthly_token_limit,
+                        int,
+                    ),
+                    "price_per_month": get_db_value(
+                        "price_per_month", hardcoded_features.price_per_month, float
+                    ),
+                    "max_chatbots": get_db_value(
+                        "max_chatbots", hardcoded_features.max_chatbots, int
+                    ),
+                    "max_documents_per_chatbot": get_db_value(
+                        "max_documents_per_chatbot",
+                        hardcoded_features.max_documents_per_chatbot,
+                        int,
+                    ),
+                    "priority_support": get_db_value(
+                        "priority_support", hardcoded_features.priority_support
+                    ),
+                    "custom_branding": get_db_value(
+                        "custom_branding", hardcoded_features.custom_branding
+                    ),
+                    "api_access": get_db_value(
+                        "api_access", hardcoded_features.api_access
+                    ),
+                    "analytics_retention_days": get_db_value(
+                        "analytics_retention_days",
+                        hardcoded_features.analytics_retention_days,
+                        int,
+                    ),
+                }
+        except Exception as e:
+            logger.warning(
+                "Failed to read plan %s from database, using hardcoded values: %s",
+                plan.value,
+                str(e),
+            )
+
+        # Fallback to hardcoded values if database read fails
         plan_features = SUBSCRIPTION_PLANS[plan]
         return {
             "name": plan_features.name,
@@ -801,10 +883,95 @@ class SubscriptionService:
         }
 
     async def get_all_plans(self) -> Dict:
-        """Get all available subscription plans"""
+        """Get all available subscription plans from database with fallback"""
         return {
             plan.value: await self.get_plan_features(plan) for plan in SubscriptionPlan
         }
+
+    async def _get_plan_features_with_db_values(self, plan: SubscriptionPlan):
+        """
+        Get EnhancedPlanFeatures with ALL database values from subscription_plans table.
+        Uses database as source of truth for all plan features, falls back to hardcoded values.
+        Channel-related features (not in DB) come from hardcoded defaults.
+
+        Returns:
+            EnhancedPlanFeatures object with database values where available
+        """
+        # Start with hardcoded features (for channel configs, etc. that aren't in DB)
+        plan_features = SUBSCRIPTION_PLANS[plan]
+
+        try:
+            # Try to read from database - database is source of truth for all plan features
+            result = (
+                self.supabase.table("subscription_plans")
+                .select("*")
+                .eq("plan_name", plan.value)
+                .execute()
+            )
+
+            if result.data and len(result.data) > 0:
+                db_plan = result.data[0]
+
+                # Helper to safely get values with fallback (handles None but preserves False)
+                def get_db_value(key, fallback, type_converter=None):
+                    """Get value from db_plan with proper None handling (False values are preserved)"""
+                    if key not in db_plan or db_plan[key] is None:
+                        return fallback
+                    value = db_plan[key]
+                    if type_converter and value is not None:
+                        try:
+                            return type_converter(value)
+                        except (ValueError, TypeError):
+                            return fallback
+                    return value
+
+                # Use ALL database values for plan features
+                # Channel-related features (supported_channels, channel_limits, etc.)
+                # are not in DB, so use hardcoded values for those
+                return EnhancedPlanFeatures(
+                    name=get_db_value("display_name", plan_features.name),
+                    monthly_token_limit=get_db_value(
+                        "monthly_token_limit", plan_features.monthly_token_limit, int
+                    ),
+                    price_per_month=get_db_value(
+                        "price_per_month", plan_features.price_per_month, float
+                    ),
+                    max_chatbots=get_db_value(
+                        "max_chatbots", plan_features.max_chatbots, int
+                    ),
+                    max_documents_per_chatbot=get_db_value(
+                        "max_documents_per_chatbot",
+                        plan_features.max_documents_per_chatbot,
+                        int,
+                    ),
+                    priority_support=get_db_value(
+                        "priority_support", plan_features.priority_support
+                    ),
+                    custom_branding=get_db_value(
+                        "custom_branding", plan_features.custom_branding
+                    ),
+                    api_access=get_db_value("api_access", plan_features.api_access),
+                    analytics_retention_days=get_db_value(
+                        "analytics_retention_days",
+                        plan_features.analytics_retention_days,
+                        int,
+                    ),
+                    # Channel-related features not in DB - use hardcoded values
+                    supported_channels=plan_features.supported_channels,
+                    channel_limits=plan_features.channel_limits,
+                    concurrent_conversations=plan_features.concurrent_conversations,
+                    webhook_support=plan_features.webhook_support,
+                    white_label_options=plan_features.white_label_options,
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to read plan %s from database, using hardcoded values: %s",
+                plan.value,
+                str(e),
+            )
+
+        # Return hardcoded features if database read fails
+        return plan_features
 
     async def _create_default_channel_configurations(
         self, subscription_id: str, plan_features
