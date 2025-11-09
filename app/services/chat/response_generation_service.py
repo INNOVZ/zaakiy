@@ -636,25 +636,51 @@ RESPONSE STRUCTURE FOR DIFFERENT QUERY TYPES:
 - Format information clearly with proper markdown
 
 **When Answering "No" or Information Not Available:**
-- First, directly and honestly acknowledge what you don't have
+- NEVER start with "I don't have that information" or "I don't know" - these are robotic and unhelpful
+- Instead, provide context about what IS available or what CAN be done
 - Immediately offer constructive alternatives or solutions
 - Provide clear next steps (schedule consultation, contact sales, etc.)
 - Include relevant links (demo/booking links) when available
 - Make the user feel helped, not blocked
 
-**Example for "No" Answers:**
-User: "Do you have an office in New Zealand?"
-Response: "{self.chatbot_config.name} is based in [location from context], and currently all official contact details, including our main office, are located there. We do not have an office in New Zealand at this time.
+**CRITICAL: Forbidden Phrases - NEVER Use These:**
+- ❌ "I don't have that information available"
+- ❌ "I don't have that information"
+- ❌ "I don't know"
+- ❌ "That information is not available"
+- ❌ "I can't help with that"
+- ❌ "I'm not able to provide that information"
 
-However, if you're interested in our solutions or want to collaborate from New Zealand, all interactions and consultations can be managed online. If you'd like to talk to our team, you can always book a free consultation here: **[Book a Consultation](demo-link-from-context)**"
+**Instead, Use Constructive Alternatives:**
+- ✅ "Based on the information available to me..."
+- ✅ "While I don't see [specific detail] available..."
+- ✅ "At the moment, we [do/don't] offer [specific thing]..."
+- ✅ "Currently, [company] [status/action]..."
+- ✅ Always follow with: "However, I can help you by..."
 
-**Example for Missing Information:**
-User: "Is there a free demo?"
-Response: "At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
+**Example for "No" Answers (Office Location):**
+User: "Do you have an office in Germany?"
+❌ BAD: "I don't have that information available. If you have any other questions, feel free to ask!"
+✅ GOOD: "{self.chatbot_config.name} is currently based in [location from context if available, or 'our headquarters']. While we don't have an office in Germany at this time, we work with clients globally and all consultations can be managed online.
 
-However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your needs, and get a personalized demonstration based on your requirements.
+If you're interested in our solutions or want to discuss how we can help from Germany, you can schedule a free consultation with our team. They can provide detailed information about our services and how we work with international clients.
 
-If you're interested, you can book your free call here: **[Book a Free Consultation](demo-link-from-context)**"
+Would you like to **[book a consultation here](demo-link-from-context)**?"
+
+**Example for Missing Information (Free Demo):**
+User: "Is there a free demo available?"
+❌ BAD: "I don't have that information available. Feel free to explore more about {self.chatbot_config.name} on our website."
+✅ GOOD: "At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
+
+However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
+
+If you're interested, you can **[book your free consultation here](demo-link-from-context)**."
+
+**When Context Doesn't Have Specific Information:**
+- Even if the exact answer isn't in context, you can still be helpful
+- Mention what the context DOES contain (if anything relevant)
+- Always pivot to offering ways to get the information (consultation, contact sales, etc.)
+- Never leave the user with just "I don't have that information"
 
 CONTACT INFORMATION HANDLING:
 - ONLY provide contact information (phone, email, address) when the user EXPLICITLY asks for it
@@ -702,6 +728,10 @@ REMEMBER:
 - When you can't give a direct answer, always offer a constructive alternative
 - Provide clear calls to action with links when relevant
 - Make every response feel like it adds value, even when the answer is "no"
+- NEVER use phrases like "I don't have that information" - always be constructive
+- If context has demo/booking links, ALWAYS include them when offering consultations or demos
+- Every response should make the user feel helped and supported, never blocked or dismissed
+- Turn every "no" into an opportunity to help in another way
 """
             return base_prompt + "\n\n" + context_section
         else:
@@ -786,11 +816,25 @@ GENERAL GUIDELINES:
 - Use emojis sparingly but effectively to enhance readability
 - Maintain a {self.chatbot_config.tone} tone throughout
 
+**CRITICAL: Forbidden Phrases - NEVER Use These:**
+- ❌ "I don't have that information available"
+- ❌ "I don't have that information"
+- ❌ "I don't know"
+- ❌ "That information is not available"
+- ❌ "I can't help with that"
+
+**Instead, Always:**
+- ✅ Start with what you CAN do or offer
+- ✅ Provide specific next steps (schedule consultation, contact sales, etc.)
+- ✅ Include links when available (demo/booking links)
+- ✅ Make the user feel helped, not blocked
+
 REMEMBER:
 - Being helpful is more important than having all the answers
 - Turn limitations into opportunities to guide users
 - Every response should add value and provide next steps
 - Make users feel supported, not frustrated
+- NEVER use robotic phrases - always be constructive and action-oriented
 """
             return base_prompt + "\n\n" + no_context_section
 
@@ -965,34 +1009,92 @@ REMEMBER:
         if contact_info:
             demo_links = contact_info.get("demo_links", demo_links)
 
-        # If response mentions demo/booking but doesn't have the link from context, add it
-        if demo_links and any(
-            keyword in validated_response.lower()
-            for keyword in ["demo", "book", "booking", "schedule"]
-        ):
-            # Check if any demo link from context is in the response
-            has_demo_link = any(link in validated_response for link in demo_links)
-            if not has_demo_link:
-                # Add the demo link if it's missing
-                logger.info("Adding demo link to response: %s", demo_links[0])
-                # Find a good place to insert the link (after demo/booking mention)
-                demo_link_text = f"**[Book a Demo]({demo_links[0]})**"
-                # Try to insert after "demo" or "book" mention
-                import re
+        # PROACTIVE: Always add demo links when offering consultations, demos, or when response seems incomplete
+        # Check if response mentions consultation/demo keywords or seems to be offering help
+        consultation_keywords = [
+            "consultation",
+            "demo",
+            "book",
+            "booking",
+            "schedule",
+            "call",
+            "talk",
+            "discuss",
+            "connect",
+            "contact sales",
+            "reach out",
+            "get in touch",
+            "speak with",
+        ]
 
-                demo_pattern = r"(demo|book|booking|schedule)[^\n]*"
-                match = re.search(demo_pattern, validated_response, re.IGNORECASE)
+        response_lower = validated_response.lower()
+        mentions_consultation = any(
+            keyword in response_lower for keyword in consultation_keywords
+        )
+
+        # Also check if response seems to be offering alternatives (common patterns)
+        offers_alternatives = any(
+            phrase in response_lower
+            for phrase in [
+                "however",
+                "you can",
+                "we can",
+                "i can help",
+                "let me",
+                "schedule",
+                "contact",
+                "reach",
+                "connect",
+            ]
+        )
+
+        # If we have demo links and response is offering help/consultation, ensure link is included
+        if demo_links and (mentions_consultation or offers_alternatives):
+            # Check if any demo link from context is already in the response
+            has_demo_link = any(link in validated_response for link in demo_links)
+
+            if not has_demo_link:
+                # Add the demo link proactively
+                logger.info("Adding demo link to response: %s", demo_links[0])
+                demo_link_text = f"**[Book a Consultation]({demo_links[0]})**"
+
+                # Try to find a good insertion point (after consultation/demo mentions)
+                # Search in the original response (case-insensitive)
+                demo_pattern = r"(consultation|demo|call|talk|discuss|schedule|book|booking)[^\n\.!?]*(?:\.|!|\?|$)"
+                match = re.search(demo_pattern, response_lower, re.IGNORECASE)
+
                 if match:
-                    # Insert link after the match
+                    # Insert link after the match position
                     pos = match.end()
-                    validated_response = (
-                        validated_response[:pos]
-                        + f" - {demo_link_text}"
-                        + validated_response[pos:]
-                    )
+                    # Add link with proper formatting
+                    if pos < len(validated_response):
+                        # Check if there's already punctuation or whitespace
+                        next_char = (
+                            validated_response[pos : pos + 1]
+                            if pos < len(validated_response)
+                            else ""
+                        )
+                        if next_char.strip() and next_char not in [".", "!", "?"]:
+                            validated_response = (
+                                validated_response[:pos]
+                                + f". You can {demo_link_text}."
+                                + validated_response[pos:]
+                            )
+                        else:
+                            validated_response = (
+                                validated_response[:pos]
+                                + f" You can {demo_link_text}."
+                                + validated_response[pos:].lstrip()
+                            )
+                    else:
+                        # Append at end
+                        validated_response += f"\n\nYou can {demo_link_text}."
                 else:
-                    # Append at the end if no good insertion point
-                    validated_response += f"\n\n{demo_link_text}"
+                    # Check if response ends with punctuation, add link naturally
+                    if validated_response.strip().endswith((".", "!", "?")):
+                        validated_response += f" You can {demo_link_text}."
+                    else:
+                        validated_response += f"\n\nYou can {demo_link_text}."
 
         # SECURITY: Sanitize response for context leakage
         # Check if response contains too much raw context
