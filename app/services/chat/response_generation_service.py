@@ -260,6 +260,7 @@ class ResponseGenerationService:
                 retrieved_documents,
                 context_data,
                 is_contact_query,
+                message,  # Pass user message for phrase removal
             )
 
             # Add token usage information to the response
@@ -605,8 +606,48 @@ class ResponseGenerationService:
 CONTEXT INFORMATION:
 {context_text}
 
+🚨 CRITICAL RESPONSE RULES - MUST FOLLOW 🚨
+
+ABSOLUTELY FORBIDDEN PHRASES - NEVER USE THESE:
+- "I don't have that information available"
+- "I don't have information about..."
+- "I don't have that information"
+- "I don't know"
+- "That information is not available"
+- "I can't help with that"
+- "I'm not able to provide that information"
+
+IF YOU START TO WRITE ANY OF THESE PHRASES, STOP IMMEDIATELY AND REWRITE YOUR RESPONSE.
+
 YOUR ROLE:
 You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. Your goal is to be helpful, constructive, and conversational while providing accurate information from the context above.
+
+MANDATORY RESPONSE PATTERN FOR "NO" OR MISSING INFORMATION:
+
+When you cannot provide the exact information requested, you MUST:
+1. Start with a positive, constructive statement about what IS possible
+2. Acknowledge the request naturally (without using forbidden phrases)
+3. Immediately offer specific, helpful alternatives
+4. Include actionable next steps with links when available
+5. Make the user feel helped and supported
+
+EXAMPLE RESPONSES (FOLLOW THESE EXACT PATTERNS):
+
+Query: "Do you have an office in Spain?"
+❌ WRONG: "I don't have information about an office in Spain. If you have any other questions, feel free to ask!"
+✅ CORRECT: "{self.chatbot_config.name} is currently based in [location from context if available]. While we don't have an office in Spain at this time, we work with clients globally and all consultations can be managed online.
+
+If you're interested in our solutions or want to discuss how we can help from Spain, you can schedule a free consultation with our team. They can provide detailed information about our services and how we work with international clients.
+
+Would you like to **[book a consultation here](demo-link-from-context)**?"
+
+Query: "Is free demo available?"
+❌ WRONG: "I don't have that information available. Feel free to explore more about {self.chatbot_config.name} on our website."
+✅ CORRECT: "At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
+
+However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
+
+If you're interested, you can **[book your free consultation here](demo-link-from-context)**."
 
 CORE PRINCIPLES:
 
@@ -636,51 +677,18 @@ RESPONSE STRUCTURE FOR DIFFERENT QUERY TYPES:
 - Format information clearly with proper markdown
 
 **When Answering "No" or Information Not Available:**
-- NEVER start with "I don't have that information" or "I don't know" - these are robotic and unhelpful
-- Instead, provide context about what IS available or what CAN be done
+- Start with what IS possible or what you CAN do
+- Acknowledge the request naturally without using forbidden phrases
 - Immediately offer constructive alternatives or solutions
 - Provide clear next steps (schedule consultation, contact sales, etc.)
 - Include relevant links (demo/booking links) when available
 - Make the user feel helped, not blocked
 
-**CRITICAL: Forbidden Phrases - NEVER Use These:**
-- ❌ "I don't have that information available"
-- ❌ "I don't have that information"
-- ❌ "I don't know"
-- ❌ "That information is not available"
-- ❌ "I can't help with that"
-- ❌ "I'm not able to provide that information"
-
-**Instead, Use Constructive Alternatives:**
-- ✅ "Based on the information available to me..."
-- ✅ "While I don't see [specific detail] available..."
-- ✅ "At the moment, we [do/don't] offer [specific thing]..."
-- ✅ "Currently, [company] [status/action]..."
-- ✅ Always follow with: "However, I can help you by..."
-
-**Example for "No" Answers (Office Location):**
-User: "Do you have an office in Germany?"
-❌ BAD: "I don't have that information available. If you have any other questions, feel free to ask!"
-✅ GOOD: "{self.chatbot_config.name} is currently based in [location from context if available, or 'our headquarters']. While we don't have an office in Germany at this time, we work with clients globally and all consultations can be managed online.
-
-If you're interested in our solutions or want to discuss how we can help from Germany, you can schedule a free consultation with our team. They can provide detailed information about our services and how we work with international clients.
-
-Would you like to **[book a consultation here](demo-link-from-context)**?"
-
-**Example for Missing Information (Free Demo):**
-User: "Is there a free demo available?"
-❌ BAD: "I don't have that information available. Feel free to explore more about {self.chatbot_config.name} on our website."
-✅ GOOD: "At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
-
-However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
-
-If you're interested, you can **[book your free consultation here](demo-link-from-context)**."
-
 **When Context Doesn't Have Specific Information:**
 - Even if the exact answer isn't in context, you can still be helpful
 - Mention what the context DOES contain (if anything relevant)
 - Always pivot to offering ways to get the information (consultation, contact sales, etc.)
-- Never leave the user with just "I don't have that information"
+- Use the example patterns above - they show exactly how to respond constructively
 
 CONTACT INFORMATION HANDLING:
 - ONLY provide contact information (phone, email, address) when the user EXPLICITLY asks for it
@@ -739,6 +747,19 @@ REMEMBER:
             no_context_section = f"""
 NO KNOWLEDGE BASE CONTEXT AVAILABLE
 
+🚨 CRITICAL RESPONSE RULES - MUST FOLLOW 🚨
+
+ABSOLUTELY FORBIDDEN PHRASES - NEVER USE THESE:
+- "I don't have that information available"
+- "I don't have information about..."
+- "I don't have that information"
+- "I don't know"
+- "That information is not available"
+- "I can't help with that"
+- "I'm not able to provide that information"
+
+IF YOU START TO WRITE ANY OF THESE PHRASES, STOP IMMEDIATELY AND REWRITE YOUR RESPONSE.
+
 YOUR ROLE:
 You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. While you don't have specific information in your knowledge base right now, your goal is to be helpful, constructive, and guide users toward getting the information they need.
 
@@ -795,13 +816,27 @@ While I don't have the specific details in my knowledge base at the moment, here
 
 What specific services or features are you most interested in?"
 
-**For Contact/Location Questions:**
+**For Office/Location Questions (e.g., "Do you have an office in Spain?"):**
+"{self.chatbot_config.name} works with clients globally and all consultations can be managed online.
+
+If you're interested in our solutions or want to discuss how we can help from your location, you can schedule a free consultation with our team. They can provide detailed information about our services and how we work with international clients.
+
+Would you like to **[book a consultation here](demo-link-if-available)**?"
+
+**For Demo Questions (e.g., "Is free demo available?"):**
+"At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
+
+However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
+
+If you're interested, you can **[book your free consultation here](demo-link-if-available)**."
+
+**For Contact Questions:**
 "I'd be happy to help you get in touch with us! 📞
 
-While I don't have contact information in my knowledge base right now, here's how you can reach us:
+Our team can provide contact details and answer your questions. Here's how you can reach us:
 
-• **Contact Support** - Our support team can provide contact details and answer your questions
 • **Schedule a Call** - Book a consultation to speak directly with our team
+• **Contact Support** - Our support team can provide contact details
 • **Visit Our Website** - You can find our contact information on our main website
 
 Is there something specific you'd like to discuss? I can help connect you with the right person!"
@@ -994,6 +1029,7 @@ REMEMBER:
         retrieved_documents: List[Dict[str, Any]],
         context_data: Dict[str, Any],
         is_contact_query: bool = False,
+        user_message: str = "",
     ) -> Dict[str, Any]:
         """Format the final response with metadata and validate for hallucinations"""
 
@@ -1104,6 +1140,12 @@ REMEMBER:
             threshold=0.8,  # 80% overlap threshold
         )
 
+        # CRITICAL: Post-process to remove forbidden robotic phrases
+        # This is a safety net to catch any phrases that might still appear
+        sanitized_response = self._remove_forbidden_phrases(
+            sanitized_response, context_data, user_message
+        )
+
         # Post-process to ensure proper markdown formatting
         formatted_response = self._ensure_markdown_formatting(sanitized_response)
 
@@ -1124,6 +1166,80 @@ REMEMBER:
                 "message_count": 1,  # Current message
             },
         }
+
+    def _remove_forbidden_phrases(
+        self, response: str, context_data: Dict[str, Any], user_message: str
+    ) -> str:
+        """
+        Post-process response to remove forbidden robotic phrases.
+        This is a safety net to catch phrases that might still appear despite prompt instructions.
+        """
+        response_lower = response.lower()
+
+        # List of forbidden phrases to detect (case-insensitive)
+        forbidden_phrases = [
+            r"i don't have that information available",
+            r"i don't have information about",
+            r"i don't have that information",
+            r"i don't know",
+            r"that information is not available",
+            r"i can't help with that",
+            r"i'm not able to provide that information",
+            r"i don't have.*information.*available",
+        ]
+
+        # Check if any forbidden phrase is present
+        has_forbidden_phrase = False
+        for pattern in forbidden_phrases:
+            if re.search(pattern, response_lower):
+                has_forbidden_phrase = True
+                logger.warning(
+                    f"🚨 Detected forbidden phrase in response: {pattern}. Rewriting response."
+                )
+                break
+
+        if has_forbidden_phrase:
+            # Extract demo links from context
+            demo_links = context_data.get("demo_links", [])
+            contact_info = context_data.get("contact_info", {})
+            if contact_info:
+                demo_links = contact_info.get("demo_links", demo_links)
+
+            # Determine query type to generate appropriate constructive response
+            user_message_lower = user_message.lower()
+
+            # Check for office/location queries
+            if any(
+                keyword in user_message_lower
+                for keyword in ["office", "location", "address", "based"]
+            ):
+                demo_link_text = ""
+                if demo_links:
+                    demo_link_text = f" You can **[book a consultation here]({demo_links[0]})** to discuss how we can help from your location."
+
+                # Generate constructive response for location queries
+                response = f"{self.chatbot_config.name} works with clients globally and consultations can be managed online.{demo_link_text}\n\nIf you're interested in our solutions, our team can provide detailed information about our services and how we work with international clients. How can I help you today? 😊"
+
+            # Check for demo/trial queries
+            elif any(
+                keyword in user_message_lower
+                for keyword in ["demo", "trial", "free demo", "test"]
+            ):
+                demo_link_text = ""
+                if demo_links:
+                    demo_link_text = f" You can **[book a free consultation here]({demo_links[0]})** to see how {self.chatbot_config.name} works and get a personalized demonstration."
+
+                response = f"At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.\n\nHowever, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements.{demo_link_text}\n\nThis allows us to tailor the demo to your use case and answer any questions you might have. 😊"
+
+            # Generic fallback for other queries
+            else:
+                demo_link_text = ""
+                if demo_links:
+                    demo_link_text = f" You can **[schedule a consultation here]({demo_links[0]})** to get the information you need."
+
+                response = f"I'd be happy to help you with that!{demo_link_text}\n\nOur team can provide detailed information and answer any questions you might have. What specific information are you looking for? 😊"
+
+        return response
 
     def _ensure_markdown_formatting(self, response: str) -> str:
         """Post-process response to ensure proper markdown formatting"""
