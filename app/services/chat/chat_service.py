@@ -4,6 +4,7 @@ Lightweight coordinator that integrates all modular chat services
 """
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -64,8 +65,6 @@ class ChatService:
 
         # Initialize clients with lazy loading (avoid blocking initialization)
         try:
-            import os
-
             from ..storage.pinecone_client import get_pinecone_index
             from ..storage.supabase_client import get_supabase_client
 

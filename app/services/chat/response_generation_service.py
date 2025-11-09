@@ -177,12 +177,19 @@ class ResponseGenerationService:
                     cached_response_text, context_data_for_cache, message
                 )
 
-                # Only update if response was changed (forbidden phrase was found)
+                # ALWAYS update cached response with cleaned version (even if unchanged, for consistency)
+                # Only log if response was changed (forbidden phrase was found)
                 if cleaned_response != cached_response_text:
-                    logger.warning(
-                        "🚨 Cached response contained forbidden phrase - cleaned it!"
+                    logger.error(
+                        f"🚨 CRITICAL: Cached response contained forbidden phrase! "
+                        f"Original: {cached_response_text[:200]}... "
+                        f"Cleaned: {cleaned_response[:200]}..."
                     )
-                    cache_hit_response["response"] = cleaned_response
+                else:
+                    logger.debug("✅ Cached response passed forbidden phrase check")
+
+                # Always use cleaned response (even if unchanged)
+                cache_hit_response["response"] = cleaned_response
 
                 return cache_hit_response
 
@@ -1197,22 +1204,44 @@ REMEMBER:
                     else:
                         validated_response += f"\n\nYou can {demo_link_text}."
 
+        # CRITICAL: Post-process to remove forbidden robotic phrases FIRST
+        # This must happen BEFORE any other processing to catch phrases early
+        # Do this BEFORE leakage detection to ensure we catch the phrases
+        cleaned_response = self._remove_forbidden_phrases(
+            validated_response, context_data, user_message
+        )
+
         # SECURITY: Sanitize response for context leakage
         # Check if response contains too much raw context
+        # NOTE: Do this AFTER forbidden phrase removal so we don't interfere with detection
         sanitized_response = self.leakage_detector.sanitize_response_for_leakage(
-            validated_response,
+            cleaned_response,
             context_data.get("context_text", ""),
             threshold=0.8,  # 80% overlap threshold
         )
 
-        # CRITICAL: Post-process to remove forbidden robotic phrases
-        # This is a safety net to catch any phrases that might still appear
+        # DOUBLE CHECK: Run forbidden phrase removal AGAIN after leakage detection
+        # This ensures leakage detector didn't reintroduce forbidden phrases
         sanitized_response = self._remove_forbidden_phrases(
             sanitized_response, context_data, user_message
         )
 
         # Post-process to ensure proper markdown formatting
         formatted_response = self._ensure_markdown_formatting(sanitized_response)
+
+        # FINAL SAFETY CHECK: Run forbidden phrase removal ONE MORE TIME after all formatting
+        # This is the absolute last chance to catch any forbidden phrases
+        final_response = self._remove_forbidden_phrases(
+            formatted_response, context_data, user_message
+        )
+
+        # Log if final check found anything
+        if final_response != formatted_response:
+            logger.error(
+                "🚨 FINAL CHECK: Found forbidden phrase after all processing! "
+                f"Original: {formatted_response[:200]}... Rewritten to: {final_response[:200]}..."
+            )
+            formatted_response = final_response
 
         return {
             "response": formatted_response,
@@ -1238,36 +1267,99 @@ REMEMBER:
         """
         Post-process response to remove forbidden robotic phrases.
         This is a safety net to catch phrases that might still appear despite prompt instructions.
+
+        CRITICAL: This function MUST catch and rewrite responses containing:
+        - "I don't have information about"
+        - "I don't have that information available"
+        - Any variations of these phrases
         """
+        # Log entry to function for debugging
+        logger.info(
+            f"🔍 _remove_forbidden_phrases called. Response length: {len(response)}, "
+            f"User message: {user_message[:100] if user_message else 'N/A'}"
+        )
+
+        if not response or not isinstance(response, str):
+            logger.warning(
+                "⚠️ Empty or invalid response passed to _remove_forbidden_phrases"
+            )
+            return response or ""
+
         response_lower = response.lower()
 
-        # List of forbidden phrases to detect (case-insensitive)
-        # Using more flexible patterns to catch variations
-        forbidden_phrases = [
-            r"i don't have that information available",
-            r"i don't have information about",
-            r"i don't have that information",
-            r"i don't have.*information.*available",
-            r"i don't know",
-            r"that information is not available",
-            r"i can't help with that",
-            r"i'm not able to provide that information",
-            r"i don't have.*available",
-            r"don't have.*information",
+        # MULTI-LAYER DETECTION: Use both regex patterns AND simple string checks
+        # This ensures we catch ALL variations, even if regex fails
+
+        # Simple string checks (case-insensitive) - MOST RELIABLE
+        forbidden_strings = [
+            "i don't have that information available",
+            "i don't have information about",
+            "i don't have that information",
+            "i don't know",
+            "that information is not available",
+            "i can't help with that",
+            "i'm not able to provide that information",
+            "don't have information about",
+            "don't have that information",
         ]
 
-        # Check if any forbidden phrase is present
+        # Regex patterns for more complex matching
+        forbidden_patterns = [
+            r"i\s+don'?t\s+have\s+that\s+information\s+available",
+            r"i\s+don'?t\s+have\s+information\s+about",
+            r"i\s+don'?t\s+have\s+.*information\s+about",  # Matches "I don't have information about X"
+            r"i\s+don'?t\s+have\s+that\s+information",
+            r"i\s+don'?t\s+have\s+.*information.*available",
+            r"i\s+don'?t\s+know",
+            r"that\s+information\s+is\s+not\s+available",
+            r"i\s+can'?t\s+help\s+with\s+that",
+            r"i'?m\s+not\s+able\s+to\s+provide\s+that\s+information",
+            r"don'?t\s+have\s+.*information",
+            r"don'?t\s+have\s+information\s+about",
+            r"don'?t\s+have\s+.*information\s+about",
+        ]
+
+        # Check if any forbidden phrase is present - LOG EVERYTHING FOR DEBUGGING
         has_forbidden_phrase = False
         matched_pattern = None
-        for pattern in forbidden_phrases:
-            if re.search(pattern, response_lower):
+        detection_method = None
+
+        logger.info(
+            f"🔍 Checking response for forbidden phrases. Response length: {len(response)}"
+        )
+        logger.debug(f"🔍 Response text (first 500 chars): {response[:500]}")
+
+        # FIRST: Check simple string matches (most reliable)
+        for forbidden_str in forbidden_strings:
+            if forbidden_str in response_lower:
                 has_forbidden_phrase = True
-                matched_pattern = pattern
+                matched_pattern = forbidden_str
+                detection_method = "string_match"
                 logger.error(
-                    f"🚨 CRITICAL: Detected forbidden phrase '{pattern}' in response. "
-                    f"Response preview: {response[:200]}... Rewriting response immediately."
+                    f"🚨 CRITICAL: Detected forbidden phrase via STRING MATCH! "
+                    f"Phrase: '{forbidden_str}'. "
+                    f"Response preview: {response[:300]}... Rewriting response immediately."
                 )
                 break
+
+        # SECOND: Check regex patterns if string match didn't find anything
+        if not has_forbidden_phrase:
+            for pattern in forbidden_patterns:
+                match_result = re.search(pattern, response_lower)
+                if match_result:
+                    has_forbidden_phrase = True
+                    matched_pattern = pattern
+                    matched_text = match_result.group(0) if match_result else "unknown"
+                    detection_method = "regex_match"
+                    logger.error(
+                        f"🚨 CRITICAL: Detected forbidden phrase via REGEX! "
+                        f"Pattern: '{pattern}', Matched: '{matched_text}'. "
+                        f"Response preview: {response[:300]}... Rewriting response immediately."
+                    )
+                    break
+
+        if not has_forbidden_phrase:
+            logger.debug("✅ No forbidden phrases detected in response")
 
         if has_forbidden_phrase:
             # Extract demo links from context
@@ -1300,16 +1392,19 @@ REMEMBER:
                 "poland",
             ]
             if any(keyword in user_message_lower for keyword in location_keywords):
-                # General response that works for any business - no assumptions about locations
+                # MULTITENANT GENERAL: Response that works for any business - no assumptions
                 connection_text = ""
                 if demo_links:
                     connection_text = f"\n\nWould you like me to help you **[connect with our team]({demo_links[0]})** who can provide you with accurate information about locations?"
                 else:
                     connection_text = "\n\nWould you like me to help you connect with our team who can provide you with accurate information about locations?"
 
+                # Use general, multitenant-friendly response
                 response = f"Based on the information available to me, I don't see specific details about office locations in my knowledge base right now.\n\nHowever, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.{connection_text} Or do you have other questions I can help with? 😊"
-                logger.info(
-                    f"✅ Rewrote forbidden phrase response for location query (multitenant general)"
+                logger.error(
+                    f"🚨 REWRITTEN: Forbidden phrase detected and replaced for location query. "
+                    f"Original response contained: '{matched_pattern}' (detected via {detection_method}). "
+                    f"New response: {response[:200]}..."
                 )
 
             # Check for demo/trial queries - GENERAL response
@@ -1325,8 +1420,10 @@ REMEMBER:
                     connection_text = "\n\nWould you like me to help you connect with our team to learn more about available options?"
 
                 response = f"I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!\n\nBased on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.{connection_text} 😊"
-                logger.info(
-                    f"✅ Rewrote forbidden phrase response for demo query (multitenant general)"
+                logger.error(
+                    f"🚨 REWRITTEN: Forbidden phrase detected and replaced for demo query. "
+                    f"Original response contained: '{matched_pattern}'. "
+                    f"New response: {response[:200]}..."
                 )
 
             # Generic fallback for other queries - GENERAL response
@@ -1338,12 +1435,33 @@ REMEMBER:
                     connection_text = " You can connect with our team to get the information you need."
 
                 response = f"I'd be happy to help you with that!{connection_text}\n\nOur team can provide detailed information and answer any questions you might have. What specific information are you looking for? 😊"
-                logger.info(
-                    f"✅ Rewrote forbidden phrase response for generic query (multitenant general)"
+                logger.error(
+                    f"🚨 REWRITTEN: Forbidden phrase detected and replaced for generic query. "
+                    f"Original response contained: '{matched_pattern}'. "
+                    f"New response: {response[:200]}..."
                 )
         else:
-            logger.debug("✅ No forbidden phrases detected in response")
+            logger.debug(
+                f"✅ No forbidden phrases detected. Response: {response[:200]}..."
+            )
 
+        # FINAL VERIFICATION: Check one more time before returning
+        # This is a paranoid check to ensure we never return a forbidden phrase
+        response_lower_final = response.lower()
+        for forbidden_str in [
+            "i don't have information about",
+            "i don't have that information available",
+        ]:
+            if forbidden_str in response_lower_final:
+                logger.critical(
+                    f"🚨🚨🚨 CRITICAL ERROR: Forbidden phrase STILL in response after rewrite! "
+                    f"This should NEVER happen. Response: {response[:300]}..."
+                )
+                # Force rewrite one more time with generic response
+                response = f"I'd be happy to help you with that! I can help you connect with our team who can provide you with accurate information. What specific information are you looking for? 😊"
+                break
+
+        logger.info(f"✅ Returning cleaned response. Length: {len(response)}")
         return response
 
     def _ensure_markdown_formatting(self, response: str) -> str:
