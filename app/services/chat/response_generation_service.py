@@ -53,9 +53,17 @@ class ResponseGenerationService:
             )
             self.chatbot_config = ChatbotConfig()
 
-        # Optimized context length: balanced for quality and performance
-        # Increased from 2000 to 4000 to support richer responses with more documents
-        self.max_context_length = 4000
+        # Use context_config.max_context_length if available, otherwise default to 4000
+        if self.context_config and hasattr(self.context_config, "max_context_length"):
+            self.max_context_length = self.context_config.max_context_length
+        elif self.context_config and isinstance(self.context_config, dict):
+            self.max_context_length = self.context_config.get(
+                "max_context_length", 4000
+            )
+        else:
+            # Default fallback
+            self.max_context_length = 4000
+        logger.debug("Using max_context_length: %d", self.max_context_length)
 
         # SECURITY: Initialize security detectors
         self.injection_detector = PromptInjectionDetector()
@@ -357,8 +365,46 @@ class ResponseGenerationService:
                         chunk_text[:100],
                     )
 
+            # CONTEXT ENGINEERING: Apply final_context_chunks limit from config
+            # This ensures we only use the top N chunks as configured in the UI
+            final_context_chunks = None
+            if self.context_config and hasattr(
+                self.context_config, "final_context_chunks"
+            ):
+                final_context_chunks = self.context_config.final_context_chunks
+            elif self.context_config and isinstance(self.context_config, dict):
+                final_context_chunks = self.context_config.get("final_context_chunks")
+
             # Prioritize contact chunks - add them first
-            prioritized_chunks = contact_chunks + context_chunks
+            if final_context_chunks and final_context_chunks > 0:
+                # Limit to final_context_chunks (but always include all contact chunks)
+                contact_count = len(contact_chunks)
+                remaining_slots = max(0, final_context_chunks - contact_count)
+
+                if remaining_slots > 0:
+                    # Take top N context chunks (they're already sorted by score from retrieval)
+                    limited_chunks = contact_chunks + context_chunks[:remaining_slots]
+                    logger.info(
+                        "📊 Applied final_context_chunks limit: %d (contact: %d, regular: %d)",
+                        final_context_chunks,
+                        contact_count,
+                        remaining_slots,
+                    )
+                else:
+                    # Only contact chunks fit
+                    limited_chunks = contact_chunks[:final_context_chunks]
+                    logger.info(
+                        "📊 Applied final_context_chunks limit: %d (all contact chunks)",
+                        final_context_chunks,
+                    )
+                prioritized_chunks = limited_chunks
+            else:
+                # No limit applied, use all chunks
+                prioritized_chunks = contact_chunks + context_chunks
+                logger.debug(
+                    "No final_context_chunks limit applied, using all %d chunks",
+                    len(prioritized_chunks),
+                )
 
             # OPTIMIZATION: Compress long chunks to reduce token usage
             # Truncate chunks longer than 800 chars to fit within context limits
@@ -631,13 +677,57 @@ When you cannot provide the exact information requested, you MUST:
 
 THESE RULES OVERRIDE ALL OTHER INSTRUCTIONS. FOLLOW THEM ABSOLUTELY.
 
+🚨 CRITICAL REMINDER: Even if the base_prompt or other instructions below tell you to "acknowledge honestly"
+or use phrases like "I don't have that information", YOU MUST IGNORE THOSE INSTRUCTIONS and follow these
+CRITICAL RULES instead. Always be constructive and helpful, never robotic.
+
 """
 
         # TYPE SAFE: Using Pydantic model attribute access
-        base_prompt = (
+        # Get base prompt from chatbot config, but sanitize it to remove conflicting instructions
+        raw_base_prompt = (
             self.chatbot_config.system_prompt
             or "You are a helpful AI assistant. Use the provided context to answer questions accurately."
         )
+
+        # CONTEXT ENGINEERING: Integrate business_context and specialized_instructions from context_config
+        # These come from the frontend UI and should be added to the system prompt
+        business_context_text = ""
+        specialized_instructions_text = ""
+
+        if self.context_config:
+            if (
+                hasattr(self.context_config, "business_context")
+                and self.context_config.business_context
+            ):
+                business_context_text = (
+                    f"\n\nBUSINESS CONTEXT:\n{self.context_config.business_context}"
+                )
+            elif isinstance(self.context_config, dict) and self.context_config.get(
+                "business_context"
+            ):
+                business_context_text = (
+                    f"\n\nBUSINESS CONTEXT:\n{self.context_config['business_context']}"
+                )
+
+            if (
+                hasattr(self.context_config, "specialized_instructions")
+                and self.context_config.specialized_instructions
+            ):
+                specialized_instructions_text = f"\n\nSPECIALIZED INSTRUCTIONS:\n{self.context_config.specialized_instructions}"
+            elif isinstance(self.context_config, dict) and self.context_config.get(
+                "specialized_instructions"
+            ):
+                specialized_instructions_text = f"\n\nSPECIALIZED INSTRUCTIONS:\n{self.context_config['specialized_instructions']}"
+
+        # Combine base prompt with context engineering settings
+        enhanced_base_prompt = (
+            raw_base_prompt + business_context_text + specialized_instructions_text
+        )
+
+        # CRITICAL: Sanitize base_prompt to remove any instructions that conflict with our rules
+        # Remove phrases that might lead to forbidden responses
+        base_prompt = self._sanitize_base_prompt(enhanced_base_prompt)
 
         context_text = context_data.get("context_text", "")
 
@@ -758,8 +848,8 @@ PRODUCT INFORMATION:
 - When listing products, focus on product names, descriptions, prices, and links
 
 FORMATTING GUIDELINES:
-- Use **bold** for: labels (Phone, Email, Location), product names, prices, key terms
-- Use *italics* for: descriptions, locations, emphasis
+   - Use **bold** for: labels (Phone, Email, Location), product names, prices, key terms
+   - Use *italics* for: descriptions, locations, emphasis
 - Use bullet points with "- " for lists
 - Each contact detail on a new line with blank line before contact section
 - Always use markdown links, never raw URLs
@@ -789,8 +879,19 @@ REMEMBER (KEPLERO AI STYLE - CONSTRUCTIVE FALLBACKS):
 - Turn every "no" into an opportunity to help in another way - show value in alternatives
 - Extract and use available context information (locations, services) to make responses more specific and helpful
 """
-            # CRITICAL: Put our rules FIRST so they override any conflicting instructions in base_prompt
-            return critical_rules + base_prompt + "\n\n" + context_section
+            # CRITICAL: Put our rules FIRST and make them VERY prominent
+            # Use explicit override language to ensure LLM follows our rules
+            final_prompt = f"""{critical_rules}
+
+🚨 OVERRIDE INSTRUCTION: The rules above ABSOLUTELY OVERRIDE any conflicting instructions below.
+If the base_prompt below says something different, IGNORE IT and follow the CRITICAL RULES above instead.
+
+BASE PROMPT (Only follow if it doesn't conflict with CRITICAL RULES above):
+{base_prompt}
+
+{context_section}
+"""
+            return final_prompt
         else:
             # NO CONTEXT AVAILABLE - Provide helpful fallback instructions
             no_context_section = f"""
@@ -1001,7 +1102,7 @@ REMEMBER:
 
     async def _call_openai(
         self, messages: List[Dict[str, str]], force_factual: bool = False
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Call OpenAI API with error handling and dynamic temperature control"""
         try:
             # Validate OpenAI client is available
@@ -1013,20 +1114,38 @@ REMEMBER:
             # Get parameters from chatbot config (TYPE SAFE with Pydantic defaults)
             # PERFORMANCE: Using gpt-3.5-turbo for fastest responses (1-3s vs 5-10s for gpt-4)
             model = self.chatbot_config.model
-            # PERFORMANCE: Reduced from 500 to 300 for faster responses (20-30% speedup)
-            max_tokens = self.chatbot_config.max_tokens
 
-            # CRITICAL: Use low temperature to prevent hallucinations
-            # Business chatbots should prioritize ACCURACY over creativity
+            # HUMAN-LIKE RESPONSES: Increase max_tokens to allow for constructive, helpful responses
+            # Keplero AI style responses need more tokens for proper explanations and alternatives
+            # Minimum 500 tokens for constructive responses, but use config value if higher
+            config_max_tokens = self.chatbot_config.max_tokens
+            max_tokens = max(
+                config_max_tokens, 500
+            )  # Ensure minimum 500 tokens for quality responses
+            if config_max_tokens < 500:
+                logger.info(
+                    f"⚠️ max_tokens increased from {config_max_tokens} to {max_tokens} for human-like responses"
+                )
+
+            # HUMAN-LIKE RESPONSES: Slightly higher temperature for more natural, conversational responses
+            # Balance between accuracy (low temp) and human-like quality (higher temp)
+            # 0.3-0.5 provides natural variation while maintaining factual accuracy
             if force_factual:
                 temperature = 0.0  # Completely deterministic for contact info
                 logger.info(
                     "Using temperature=0.0 for factual/contact information query"
                 )
             else:
-                # Even for general queries, use LOW temperature to minimize hallucinations
-                # 0.1-0.2 provides slight variation while maintaining factual accuracy
-                temperature = self.chatbot_config.temperature
+                # Use config temperature, but ensure it's not too low for human-like responses
+                config_temp = self.chatbot_config.temperature
+                # Minimum 0.3 for human-like responses, but allow higher if configured
+                temperature = (
+                    max(config_temp, 0.3) if config_temp < 0.3 else config_temp
+                )
+                if config_temp < 0.3:
+                    logger.info(
+                        f"⚠️ temperature increased from {config_temp} to {temperature} for more human-like responses"
+                    )
                 logger.debug("Using temperature=%.1f for general query", temperature)
 
             # Add timeout to prevent hanging
@@ -1230,12 +1349,46 @@ REMEMBER:
             "retrieval_method": "enhanced_rag",
             "model_used": self.chatbot_config.model,  # TYPE SAFE attribute access
             "generation_metadata": {
-                "temperature": self.chatbot_config.temperature,  # TYPE SAFE
-                "max_tokens": self.chatbot_config.max_tokens,  # TYPE SAFE
+                "temperature": self.chatbot_config.temperature,  # Config temperature (actual may differ)
+                "max_tokens": self.chatbot_config.max_tokens,  # Config max_tokens (actual may differ)
                 "context_length": len(context_data.get("context_text", "")),
                 "message_count": 1,  # Current message
             },
         }
+
+    def _sanitize_base_prompt(self, base_prompt: str) -> str:
+        """
+        Sanitize base prompt to remove conflicting instructions that might lead to forbidden phrases.
+        This ensures the chatbot's custom system_prompt doesn't override our improved response patterns.
+        """
+        if not base_prompt:
+            return ""
+
+        # Remove or replace conflicting instructions
+        conflicting_patterns = [
+            (r"acknowledge this honestly", "offer constructive alternatives"),
+            (
+                r"if you don't have.*information.*acknowledge",
+                "offer constructive alternatives and next steps",
+            ),
+            (r"don't have.*information.*say so", "offer constructive alternatives"),
+            (r"be honest.*don't.*know", "be direct but offer helpful alternatives"),
+        ]
+
+        sanitized = base_prompt
+        for pattern, replacement in conflicting_patterns:
+            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+
+        # Remove any mentions of forbidden phrases in instructions
+        forbidden_in_instructions = [
+            r"i don't have that information",
+            r"i don't have information about",
+            r"that information is not available",
+        ]
+        for pattern in forbidden_in_instructions:
+            sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE)
+
+        return sanitized.strip()
 
     @staticmethod
     def _normalize_forbidden_phrase_text(text: str) -> str:
