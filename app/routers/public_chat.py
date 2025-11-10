@@ -30,13 +30,88 @@ async def get_cached_chatbot_config(chatbot_id: str):
     """Get chatbot configuration with caching for better performance"""
     cache_key = f"chatbot_config:{chatbot_id}"
 
+    # Import sanitizer at module level for reuse
+    from ..services.chat.prompt_sanitizer import get_prompt_sanitizer
+
+    sanitizer = get_prompt_sanitizer()
+
+    def _sanitize_chatbot_config(chatbot: dict) -> dict:
+        """Sanitize chatbot config to remove forbidden phrases from fallback_message and system_prompt."""
+        chatbot = chatbot.copy()  # Don't mutate the original
+
+        # Sanitize fallback_message
+        if "fallback_message" in chatbot and chatbot["fallback_message"]:
+            original_fallback = chatbot["fallback_message"]
+            sanitized_fallback = sanitizer.sanitize_fallback(original_fallback)
+            if original_fallback != sanitized_fallback:
+                logger.warning(
+                    "🚨 Sanitized fallback_message from cache/database (public chat)",
+                    extra={
+                        "chatbot_id": chatbot_id,
+                        "original": original_fallback[:100],
+                        "sanitized": sanitized_fallback[:100],
+                    },
+                )
+            chatbot["fallback_message"] = sanitized_fallback
+
+        # CRITICAL: Remove FALLBACK references from system_prompt
+        # Old system prompts might contain "FALLBACK: ..." which teaches the LLM to use forbidden phrases
+        if "system_prompt" in chatbot and chatbot["system_prompt"]:
+            original_prompt = chatbot["system_prompt"]
+            # Remove FALLBACK line from system prompt (it might contain forbidden phrases)
+            sanitized_prompt = re.sub(
+                r"FALLBACK:\s*.*?(?=\n|$)",
+                "",
+                original_prompt,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            # Also remove any mentions of fallback_message in the prompt
+            sanitized_prompt = re.sub(
+                r"fallback\s*message[:\s]*.*?(?=\n|$)",
+                "",
+                sanitized_prompt,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            sanitized_prompt = sanitized_prompt.strip()
+
+            if original_prompt != sanitized_prompt:
+                logger.warning(
+                    "🚨 Removed FALLBACK references from system_prompt (public chat)",
+                    extra={
+                        "chatbot_id": chatbot_id,
+                        "original_length": len(original_prompt),
+                        "sanitized_length": len(sanitized_prompt),
+                    },
+                )
+            chatbot["system_prompt"] = sanitized_prompt
+
+        return chatbot
+
     # Try cache first (only if available)
     if cache_service:
         try:
             cached_config = await cache_service.get(cache_key)
             if cached_config:
                 logger.debug(f"Chatbot config cache HIT for {chatbot_id}")
-                return cached_config
+                # CRITICAL: Sanitize cached config - cache might contain old unsanitized config
+                # This ensures we always sanitize, even if cache was populated before the fix
+                sanitized_cached_config = _sanitize_chatbot_config(cached_config)
+
+                # If sanitization changed the config, update the cache with sanitized version
+                if sanitized_cached_config != cached_config:
+                    logger.info(
+                        f"🔄 Updating cache with sanitized config for {chatbot_id}"
+                    )
+                    try:
+                        await cache_service.set(
+                            cache_key, sanitized_cached_config, CHATBOT_CACHE_TTL
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to update cache with sanitized config: {e}"
+                        )
+
+                return sanitized_cached_config
         except Exception as e:
             logger.warning(f"Cache retrieval failed: {e}")
 
@@ -59,64 +134,16 @@ async def get_cached_chatbot_config(chatbot_id: str):
 
     # CRITICAL: Sanitize fallback_message and system_prompt to remove forbidden phrases
     # The database might contain old fallback messages or system prompts with forbidden phrases
-    from ..services.chat.prompt_sanitizer import get_prompt_sanitizer
+    sanitized_chatbot = _sanitize_chatbot_config(chatbot)
 
-    sanitizer = get_prompt_sanitizer()
-
-    # Sanitize fallback_message
-    if "fallback_message" in chatbot and chatbot["fallback_message"]:
-        original_fallback = chatbot["fallback_message"]
-        sanitized_fallback = sanitizer.sanitize_fallback(original_fallback)
-        if original_fallback != sanitized_fallback:
-            logger.warning(
-                "🚨 Sanitized fallback_message from database (public chat)",
-                extra={
-                    "chatbot_id": chatbot_id,
-                    "original": original_fallback[:100],
-                    "sanitized": sanitized_fallback[:100],
-                },
-            )
-        chatbot["fallback_message"] = sanitized_fallback
-
-    # CRITICAL: Remove FALLBACK references from system_prompt
-    # Old system prompts might contain "FALLBACK: ..." which teaches the LLM to use forbidden phrases
-    if "system_prompt" in chatbot and chatbot["system_prompt"]:
-        original_prompt = chatbot["system_prompt"]
-        # Remove FALLBACK line from system prompt (it might contain forbidden phrases)
-        sanitized_prompt = re.sub(
-            r"FALLBACK:\s*.*?(?=\n|$)",
-            "",
-            original_prompt,
-            flags=re.IGNORECASE | re.MULTILINE,
-        )
-        # Also remove any mentions of fallback_message in the prompt
-        sanitized_prompt = re.sub(
-            r"fallback\s*message[:\s]*.*?(?=\n|$)",
-            "",
-            sanitized_prompt,
-            flags=re.IGNORECASE | re.MULTILINE,
-        )
-        sanitized_prompt = sanitized_prompt.strip()
-
-        if original_prompt != sanitized_prompt:
-            logger.warning(
-                "🚨 Removed FALLBACK references from system_prompt (public chat)",
-                extra={
-                    "chatbot_id": chatbot_id,
-                    "original_length": len(original_prompt),
-                    "sanitized_length": len(sanitized_prompt),
-                },
-            )
-        chatbot["system_prompt"] = sanitized_prompt
-
-    # Cache for future requests (only if available)
+    # Cache for future requests (only if available) - cache the SANITIZED version
     if cache_service:
         try:
-            await cache_service.set(cache_key, chatbot, CHATBOT_CACHE_TTL)
+            await cache_service.set(cache_key, sanitized_chatbot, CHATBOT_CACHE_TTL)
         except Exception as e:
             logger.warning(f"Cache set failed: {e}")
 
-    return chatbot
+    return sanitized_chatbot
 
 
 @router.post("/chat", response_model=PublicChatResponse)
