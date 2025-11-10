@@ -229,7 +229,7 @@ class PromptSanitizer:
         return greeting
 
     def sanitize_fallback(self, fallback: str) -> str:
-        """Sanitize fallback message"""
+        """Sanitize fallback message and remove forbidden phrases"""
         # Use a constructive fallback message that doesn't contain forbidden phrases
         safe_fallback = "I'd be happy to help you with that! Could you provide more details or rephrase your question so I can assist you better?"
 
@@ -243,6 +243,59 @@ class PromptSanitizer:
         if is_injection:
             logger.error(f"Blocked prompt injection in fallback: {pattern}")
             return safe_fallback
+
+        # CRITICAL: Remove forbidden phrases from fallback message
+        # Normalize to handle curly quotes/apostrophes
+        normalized_fallback = (
+            fallback.replace("'", "'")
+            .replace("'", "'")
+            .replace('"', '"')
+            .replace('"', '"')
+        )
+        fallback_lower = normalized_fallback.lower()
+
+        # Check for forbidden phrases (same patterns as in response_generation_service)
+        forbidden_phrases = [
+            "i don't have that information available",
+            "i don't have information about",
+            "i don't have that information",
+            "i don't know",
+            "that information is not available",
+            "i can't help with that",
+            "i'm not able to provide that information",
+            "don't have information about",
+            "don't have that information",
+            "i do not have information about",
+            "i do not have that information",
+            "i cannot help with that",
+            "i am not able to provide that information",
+        ]
+
+        # If any forbidden phrase is found, replace with safe fallback
+        for phrase in forbidden_phrases:
+            if phrase in fallback_lower:
+                logger.warning(
+                    f"🚨 FORBIDDEN PHRASE DETECTED in fallback_message: '{phrase}'. Replacing with safe fallback."
+                )
+                return safe_fallback
+
+        # Also check with regex patterns for variations
+        forbidden_patterns = [
+            r"i\s+don['']?t\s+have\s+that\s+information\s+available",
+            r"i\s+don['']?t\s+have\s+information\s+about",
+            r"i\s+don['']?t\s+have\s+.*information\s+about",
+            r"i\s+don['']?t\s+have\s+that\s+information",
+            r"that\s+information\s+is\s+not\s+available",
+            r"i\s+can['']?t\s+help\s+with\s+that",
+            r"i['']?m\s+not\s+able\s+to\s+provide\s+that\s+information",
+        ]
+
+        for pattern in forbidden_patterns:
+            if re.search(pattern, fallback_lower, re.IGNORECASE):
+                logger.warning(
+                    f"🚨 FORBIDDEN PHRASE PATTERN DETECTED in fallback_message: '{pattern}'. Replacing with safe fallback."
+                )
+                return safe_fallback
 
         # Remove control characters but keep newlines
         fallback = re.sub(r"[\t\v\f]", " ", fallback)
