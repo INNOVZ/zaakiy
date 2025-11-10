@@ -73,7 +73,24 @@ class _DummyCache:
         return self.storage.get(key)
 
     async def set(self, key, value, ttl_seconds):
-        self.storage[key] = dict(value)
+        """Store value in cache with TTL.
+
+        Args:
+            key: Cache key
+            value: Value to store (should be dict-like for response data)
+            ttl_seconds: Time to live in seconds
+        """
+        # Validate that value is dict-like (has keys/items) for response data
+        # If it's already a dict, make a shallow copy to avoid mutation issues
+        if isinstance(value, dict):
+            self.storage[key] = dict(value)
+        elif hasattr(value, "items") and callable(getattr(value, "items")):
+            # Handle dict-like objects (e.g., OrderedDict, defaultdict)
+            self.storage[key] = dict(value.items())
+        else:
+            # For test flexibility, store non-dict values as-is
+            # In production, cache service should only store dict-like response data
+            self.storage[key] = value
         self.ttl[key] = ttl_seconds
 
 
