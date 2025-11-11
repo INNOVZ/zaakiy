@@ -19,6 +19,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from PyPDF2 import PdfReader
 
 from ...utils.env_loader import is_test_environment
+from ..chat.contact_extractor import contact_extractor
 from ..storage.pinecone_client import get_pinecone_index
 from ..storage.supabase_client import get_supabase_client
 from .text_cleaner import TextCleaner
@@ -30,6 +31,16 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_UPLOADS = int(os.getenv("SCRAPER_MAX_CONCURRENCY", "3"))
 MAX_UPLOAD_BATCH = int(os.getenv("SCRAPER_MAX_UPLOAD_BATCH", "25"))
+
+# Metadata detection patterns
+PRICING_PATTERN = re.compile(
+    r"(\$|€|£|aed|usd|price|pricing|cost|plans|tier|package|per\s+(?:month|year)|monthly|yearly)",
+    re.IGNORECASE,
+)
+BOOKING_PATTERN = re.compile(
+    r"(book|booking|schedule|consultation|demo|trial|appointment|talk to sales|contact sales)",
+    re.IGNORECASE,
+)
 
 # Import both scrapers for JavaScript and non-JavaScript sites
 try:
@@ -126,10 +137,14 @@ def _safe_json_dumps(data: Any) -> str:
     orjson stubs are missing.
     """
     if orjson is not None and hasattr(orjson, "dumps"):
-        indent_option = getattr(orjson, "OPT_INDENT_2", 2)
-        return orjson.dumps(data, option=indent_option).decode(
-            "utf-8"
-        )  # pylint: disable=no-member
+        dumps_kwargs = {}
+        indent_option = getattr(orjson, "OPT_INDENT_2", None)
+        if indent_option is not None:
+            dumps_kwargs["option"] = indent_option
+        return orjson.dumps(  # pylint: disable=no-member
+            data,
+            **dumps_kwargs,
+        ).decode("utf-8")
     return json.dumps(data, indent=2)
 
 
@@ -670,6 +685,45 @@ def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list
     return list(set(product_links))  # Remove duplicates
 
 
+def extract_metadata_flags(chunk: str) -> dict:
+    """Detect key metadata flags (pricing, booking, contact info) for a chunk."""
+    flags = {
+        "has_pricing": False,
+        "has_booking": False,
+        "has_contact_info": False,
+        "contact_has_phone": False,
+        "contact_has_email": False,
+        "contact_has_address": False,
+    }
+
+    if not chunk or len(chunk) < 5:
+        return flags
+
+    if PRICING_PATTERN.search(chunk):
+        flags["has_pricing"] = True
+
+    if BOOKING_PATTERN.search(chunk):
+        flags["has_booking"] = True
+
+    try:
+        contact_info = contact_extractor.extract_contact_info(chunk)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug("Contact extraction failed for metadata flags: %s", exc)
+        return flags
+
+    has_phone = bool(contact_info.get("phones"))
+    has_email = bool(contact_info.get("emails"))
+    has_address = bool(contact_info.get("addresses"))
+
+    if has_phone or has_email or has_address:
+        flags["has_contact_info"] = True
+        flags["contact_has_phone"] = has_phone
+        flags["contact_has_email"] = has_email
+        flags["contact_has_address"] = has_address
+
+    return flags
+
+
 def upload_to_pinecone(
     chunks: list, vectors: list, namespace: str, upload_id: str, source_url: str = None
 ):
@@ -694,6 +748,8 @@ def upload_to_pinecone(
             metadata["has_products"] = True
         else:
             metadata["has_products"] = False
+
+        metadata.update(extract_metadata_flags(chunk))
 
         to_upsert.append((f"{upload_id}-{i}", vec, metadata))
 

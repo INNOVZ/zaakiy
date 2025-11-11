@@ -534,9 +534,8 @@ Rules:
             metadata_filters["has_products"] = {"$eq": True}
         elif intent == IntentType.BOOKING:
             metadata_filters["has_booking"] = {"$eq": True}
-
-        # Do not force a `has_pricing` filter – most ingested docs don't set it yet.
-        # Rely on the query itself so pricing answers still work.
+        elif intent == IntentType.PRICING:
+            metadata_filters["has_pricing"] = {"$eq": True}
 
         return {
             "k_values": k_config,

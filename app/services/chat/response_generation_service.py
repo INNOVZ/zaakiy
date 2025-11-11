@@ -409,33 +409,35 @@ class ResponseGenerationService:
                     retrieved_documents, context_text
                 )
                 logger.info(
-                    "Pricing intent detected (has_pricing_context=%s) - returning consultation fallback",
+                    "Pricing intent detected (has_pricing_context=%s)",
                     has_pricing_context,
                 )
-                fallback_response = self._build_pricing_fallback_response(
-                    context_data, intent_result
-                )
-                fallback_response.update(
-                    {
-                        "tokens_used": 0,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "document_count": len(retrieved_documents),
-                        "retrieval_method": "enhanced_rag",
-                        "model_used": self.chatbot_config.model,
-                        "generation_metadata": {
-                            "temperature": intent_response_config.get("temperature")
-                            if intent_response_config
-                            else self.chatbot_config.temperature,
-                            "max_tokens": intent_response_config.get("max_tokens")
-                            if intent_response_config
-                            else self.chatbot_config.max_tokens,
-                            "context_length": len(context_text),
-                            "message_count": 1,
-                        },
-                    }
-                )
-                return fallback_response
+
+                if not has_pricing_context:
+                    fallback_response = self._build_pricing_fallback_response(
+                        context_data, intent_result
+                    )
+                    fallback_response.update(
+                        {
+                            "tokens_used": 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "document_count": len(retrieved_documents),
+                            "retrieval_method": "enhanced_rag",
+                            "model_used": self.chatbot_config.model,
+                            "generation_metadata": {
+                                "temperature": intent_response_config.get("temperature")
+                                if intent_response_config
+                                else self.chatbot_config.temperature,
+                                "max_tokens": intent_response_config.get("max_tokens")
+                                if intent_response_config
+                                else self.chatbot_config.max_tokens,
+                                "context_length": len(context_text),
+                                "message_count": 1,
+                            },
+                        }
+                    )
+                    return fallback_response
 
             if is_contact_query:
                 # Check if we have any contact info
