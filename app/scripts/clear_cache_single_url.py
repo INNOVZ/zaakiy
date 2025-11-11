@@ -8,16 +8,65 @@ Usage:
 """
 
 import asyncio
+from typing import Any, Dict, List
 
 from app.services.scraping.scraping_cache_service import scraping_cache_service
 from app.services.storage.pinecone_client import get_pinecone_index
-from app.services.storage.supabase_client import get_supabase_client
+from app.services.storage.supabase_client import (
+    get_supabase_client,
+    get_supabase_http_client,
+)
+
+HTTP_ARG_ERROR = "http_client"
+
+
+async def _fetch_url_uploads() -> List[Dict[str, Any]]:
+    """
+    Fetch URL uploads. Falls back to direct REST calls when the supabase
+    python client is out of sync with the installed PostgREST version.
+    """
+    supabase = get_supabase_client()
+    try:
+        result = supabase.table("uploads").select("*").eq("type", "url").execute()
+        return result.data or []
+    except TypeError as exc:
+        if HTTP_ARG_ERROR not in str(exc):
+            raise
+        client = get_supabase_http_client()
+        if client is None:
+            raise RuntimeError("Supabase HTTP client unavailable") from exc
+        response = await client.get(
+            "/uploads",
+            params={"select": "*", "type": "eq.url", "order": "created_at.desc"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def _mark_upload_pending(upload_id: str) -> None:
+    """Update upload status with graceful fallback when supabase client mismatches."""
+    supabase = get_supabase_client()
+    payload = {"status": "pending", "error_message": None}
+    try:
+        supabase.table("uploads").update(payload).eq("id", upload_id).execute()
+    except TypeError as exc:
+        if HTTP_ARG_ERROR not in str(exc):
+            raise
+        client = get_supabase_http_client()
+        if client is None:
+            raise RuntimeError("Supabase HTTP client unavailable") from exc
+        response = await client.patch(
+            "/uploads",
+            params={"id": f"eq.{upload_id}"},
+            json=payload,
+            headers={"Prefer": "return=representation"},
+        )
+        response.raise_for_status()
 
 
 async def clear_cache_single_url():
     """Clear cache and re-index a single e-commerce URL"""
 
-    supabase = get_supabase_client()
     index = get_pinecone_index()
 
     print("=" * 80)
@@ -26,9 +75,9 @@ async def clear_cache_single_url():
     print()
 
     # List all e-commerce uploads
-    result = supabase.table("uploads").select("*").eq("type", "url").execute()
+    uploads = await _fetch_url_uploads()
 
-    if not result.data:
+    if not uploads:
         print("❌ No URL uploads found")
         return
 
@@ -43,7 +92,7 @@ async def clear_cache_single_url():
     ]
 
     ecommerce_uploads = []
-    for upload in result.data:
+    for upload in uploads:
         source = upload.get("source", "")
         if any(pattern in source.lower() for pattern in ecommerce_patterns):
             ecommerce_uploads.append(upload)
@@ -115,9 +164,7 @@ async def clear_cache_single_url():
     # Step 3: Mark as pending
     print("\n♻️  Step 3: Marking for re-processing...")
     try:
-        supabase.table("uploads").update(
-            {"status": "pending", "error_message": None}
-        ).eq("id", upload_id).execute()
+        await _mark_upload_pending(upload_id)
         print(f"✅ Marked as 'pending'")
     except Exception as e:
         print(f"❌ Error: {e}")

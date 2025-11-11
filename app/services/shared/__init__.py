@@ -7,6 +7,7 @@ external APIs, and caching systems used across the application.
 
 import logging
 import os
+import threading
 from typing import Any, Dict, Optional
 
 import openai
@@ -62,8 +63,6 @@ class ClientManager:
             except Exception as e:
                 logger.error("❌ Failed to initialize Supabase: %s", e)
                 self.supabase = None
-            else:
-                logger.warning("⚠️ Supabase configuration not found")
 
             # Initialize Redis
             redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -71,17 +70,29 @@ class ClientManager:
                 self.redis = redis.from_url(
                     redis_url,
                     decode_responses=False,  # We handle encoding manually
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
-                    retry_on_timeout=True,
+                    socket_connect_timeout=2,  # Reduced from 5 to 2 seconds
+                    socket_timeout=2,  # Reduced from 5 to 2 seconds
+                    retry_on_timeout=False,  # Don't retry on timeout
                     health_check_interval=30,
                 )
 
-                # Test connection
-                self.redis.ping()
-                logger.info("✅ Redis client initialized")
+                # Test connection with timeout (non-blocking)
+                # Even if ping fails, we'll create the client and let it fail gracefully on use
+                try:
+                    self.redis.ping()
+                    logger.info("✅ Redis client initialized and connected")
+                    redis_available = True
+                except Exception as ping_error:
+                    logger.warning(
+                        "⚠️ Redis client created but connection test failed (non-critical): %s",
+                        ping_error,
+                    )
+                    # Redis client is created but may not be fully connected
+                    # This is OK - the server can start and Redis will be checked again on use
+                    redis_available = False
 
-                # Initialize vector cache service
+                # Initialize vector cache service (even if Redis ping failed)
+                # VectorCacheService should handle Redis unavailability gracefully
                 cache_enabled = (
                     os.getenv("VECTOR_CACHE_ENABLED", "true").lower() == "true"
                 )
@@ -94,11 +105,18 @@ class ClientManager:
                     key_prefix=cache_prefix,
                     enabled=cache_enabled,
                 )
-                logger.info(
-                    "✅ Vector cache service initialized (TTL: %ss, Enabled: %s)",
-                    cache_ttl,
-                    cache_enabled,
-                )
+                if redis_available:
+                    logger.info(
+                        "✅ Vector cache service initialized (TTL: %ss, Enabled: %s)",
+                        cache_ttl,
+                        cache_enabled,
+                    )
+                else:
+                    logger.info(
+                        "⚠️ Vector cache service initialized but Redis may be unavailable (TTL: %ss, Enabled: %s)",
+                        cache_ttl,
+                        cache_enabled,
+                    )
 
             except Exception as e:
                 logger.warning("⚠️ Redis initialization failed: %s", e)
@@ -112,53 +130,112 @@ class ClientManager:
             logger.error("❌ Client initialization failed: %s", e)
             raise
 
-    def health_check(self) -> Dict[str, bool]:
-        """Check health of all clients"""
+    def health_check(self, timeout: float = 2.0) -> Dict[str, bool]:
+        """
+        Check health of all clients with timeout protection
+
+        Args:
+            timeout: Maximum time in seconds to wait for each health check (default: 2.0)
+
+        Returns:
+            Dictionary mapping client names to health status (True/False)
+        """
         health = {}
 
-        # OpenAI health
-        try:
-            if self.openai:
-                # Simple test call
-                self.openai.models.list()
-                health["openai"] = True
-            else:
-                health["openai"] = False
-        except Exception:
+        def check_with_timeout(check_func, client_name: str, default: bool = False):
+            """Execute a health check with timeout using threading"""
+            result = {"status": default, "error": None, "completed": False}
+
+            def run_check():
+                try:
+                    check_result = check_func()
+                    result["status"] = (
+                        bool(check_result) if check_result is not None else True
+                    )
+                except Exception as e:
+                    result["error"] = str(e)
+                    result["status"] = False
+                finally:
+                    result["completed"] = True
+
+            thread = threading.Thread(target=run_check, daemon=True)
+            thread.start()
+            thread.join(timeout=timeout)
+
+            if not result["completed"]:
+                # Thread is still running, health check timed out
+                logger.warning(
+                    "Health check for %s timed out after %s seconds (non-critical)",
+                    client_name,
+                    timeout,
+                )
+                return False
+
+            if result.get("error"):
+                logger.debug(
+                    "Health check for %s failed: %s (non-critical)",
+                    client_name,
+                    result["error"],
+                )
+
+            return result["status"]
+
+        # OpenAI health check with timeout
+        if self.openai:
+
+            def check_openai():
+                try:
+                    self.openai.models.list()
+                    return True
+                except Exception:
+                    return False
+
+            health["openai"] = check_with_timeout(check_openai, "openai")
+        else:
             health["openai"] = False
 
-        # Pinecone health
-        try:
-            if self.pinecone_index:
-                # Simple query test
-                self.pinecone_index.query(
-                    vector=[0.0] * 1536, top_k=1, include_metadata=False
-                )
-                health["pinecone"] = True
-            else:
-                health["pinecone"] = False
-        except Exception:
+        # Pinecone health check with timeout
+        if self.pinecone_index:
+
+            def check_pinecone():
+                try:
+                    self.pinecone_index.query(
+                        vector=[0.0] * 1536, top_k=1, include_metadata=False
+                    )
+                    return True
+                except Exception:
+                    return False
+
+            health["pinecone"] = check_with_timeout(check_pinecone, "pinecone")
+        else:
             health["pinecone"] = False
 
-        # Supabase health
-        try:
-            if self.supabase:
-                # Simple query test
-                self.supabase.table("organizations").select("id").limit(1).execute()
-                health["supabase"] = True
-            else:
-                health["supabase"] = False
-        except Exception:
+        # Supabase health check with timeout
+        if self.supabase:
+
+            def check_supabase():
+                try:
+                    self.supabase.table("organizations").select("id").limit(1).execute()
+                    return True
+                except Exception:
+                    return False
+
+            health["supabase"] = check_with_timeout(check_supabase, "supabase")
+        else:
             health["supabase"] = False
 
-        # Redis health
-        try:
-            if self.redis:
-                self.redis.ping()
-                health["redis"] = True
-            else:
-                health["redis"] = False
-        except Exception:
+        # Redis health check with timeout
+        if self.redis:
+
+            def check_redis():
+                try:
+                    self.redis.ping()
+                    return True
+                except Exception:
+                    return False
+
+            health["redis"] = check_with_timeout(check_redis, "redis")
+        else:
             health["redis"] = False
 
         return health

@@ -57,36 +57,60 @@ async def lifespan(fastapi_app: FastAPI):
     # Startup
     logger.info("Starting ZaaKy AI Platform")
 
-    # Initialize shared clients
+    # Initialize shared clients (non-blocking, fast startup)
     try:
         client_manager = get_client_manager()
-        health = client_manager.health_check()
-        logger.info(
-            "Client health check completed",
-            extra={"health_status": health, "all_healthy": all(health.values())},
-        )
+        logger.info("Client manager initialized, performing quick health check...")
 
-        if not all(health.values()):
-            failed_clients = [client for client, status in health.items() if not status]
-            logger.warning(
-                "Some clients failed health check but server will continue",
-                extra={"failed_clients": failed_clients},
+        # Perform health check with short timeout (2 seconds max per service)
+        # Don't block startup if health checks fail - just log warnings
+        try:
+            health = client_manager.health_check(timeout=2.0)
+            logger.info(
+                "Client health check completed",
+                extra={"health_status": health, "all_healthy": all(health.values())},
             )
-        else:
-            logger.info("All API clients initialized successfully")
+
+            if not all(health.values()):
+                failed_clients = [
+                    client for client, status in health.items() if not status
+                ]
+                logger.warning(
+                    "Some clients failed health check but server will continue",
+                    extra={"failed_clients": failed_clients},
+                )
+            else:
+                logger.info("All API clients initialized successfully")
+        except Exception as health_error:
+            # Don't fail startup if health check fails - just log warning
+            logger.warning(
+                "Health check encountered an error (non-critical): %s",
+                str(health_error),
+            )
+            logger.info(
+                "Server will continue to start - health checks can be retried later"
+            )
 
     except Exception as e:
-        logger.error("Client initialization failed: %s", str(e))
-        raise SystemExit(1) from e
+        # Only fail startup if client manager itself can't be initialized
+        logger.error("Client manager initialization failed: %s", str(e))
+        # Don't raise SystemExit - allow server to start with degraded functionality
+        logger.warning(
+            "Server will start with limited functionality - some features may not work"
+        )
 
-    # Start background services
+    # Start background services (non-blocking)
     logger.info("Starting background worker")
     try:
         start_background_worker()
         logger.info("Background worker started successfully")
     except Exception as e:
+        # Don't fail startup if background worker can't start - log error but continue
         logger.error("Failed to start background worker: %s", str(e))
-        raise SystemExit(1) from e
+        logger.warning(
+            "Server will continue without background worker - some features may be limited"
+        )
+        # Don't raise SystemExit - allow server to start
 
     # Start error monitoring
     logger.info("Starting error monitoring")

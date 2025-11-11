@@ -16,6 +16,7 @@ from playwright.async_api import async_playwright
 
 from ...utils.logging_config import get_logger
 from .content_extractors import ContactExtractor
+from .url_utils import log_domain_safely
 
 logger = get_logger(__name__)
 
@@ -28,18 +29,50 @@ class ProductContentExtractor:
         """Extract individual product cards from listing pages"""
         products = []
 
-        # Common product card selectors
+        # Common product card selectors - expanded for better coverage
+        # Shopify uses various structures, so we need comprehensive selectors
         product_selectors = [
+            # Shopify-specific (comprehensive list)
             {"class_": re.compile(r"product[-_]?(card|item|tile|grid[-_]?item)", re.I)},
             {"class_": re.compile(r"collection[-_]?item", re.I)},
+            {"class_": re.compile(r"grid-product", re.I)},
+            {"class_": re.compile(r"product-card-wrapper", re.I)},
+            {"class_": re.compile(r"product-item-wrapper", re.I)},
+            {
+                "class_": re.compile(r"grid__item", re.I)
+            },  # Shopify grid items (very common)
+            {"class_": re.compile(r"product-block", re.I)},
+            {"class_": re.compile(r"card-wrapper", re.I)},  # Shopify Dawn theme
+            {"class_": re.compile(r"product-card", re.I)},  # Generic product card
+            {"class_": re.compile(r"product-item", re.I)},  # Generic product item
+            # Data attributes (Shopify uses these extensively)
             {"data-product-id": True},
+            {"data-product-handle": True},
+            {"data-product-title": True},
+            {"data-product-url": True},
+            # Shopify-specific data attributes
+            {"data-product": True},  # Some themes use just data-product
+            # Schema.org markup
             {"itemtype": re.compile(r"schema.org/Product", re.I)},
+            # WooCommerce
+            {"class_": re.compile(r"product", re.I), "data-product-id": True},
+            # Generic e-commerce patterns
+            {"class_": re.compile(r"item|product-item", re.I)},
+            {"class_": re.compile(r"product-tile|product-card", re.I)},
+            # Additional patterns - look for elements containing product links
+            # This is a fallback: if we find links to /products/, the parent might be a product card
         ]
 
+        # First pass: try standard selectors
+        found_elements = set()  # Track found elements to avoid duplicates
         for selector in product_selectors:
-            product_elements = soup.find_all(["div", "article", "li"], **selector)
+            product_elements = soup.find_all(["div", "article", "li", "a"], **selector)
 
             for element in product_elements:
+                # Skip if we've already processed this element
+                if id(element) in found_elements:
+                    continue
+                found_elements.add(id(element))
                 product_data = {
                     "title": "",
                     "description": "",
@@ -50,7 +83,7 @@ class ProductContentExtractor:
                     "sku": "",
                 }
 
-                # Extract product title
+                # Extract product title - try multiple strategies
                 title_elem = element.find(
                     ["h2", "h3", "h4", "a"],
                     class_=re.compile(r"title|name|product[-_]?name", re.I),
@@ -58,17 +91,63 @@ class ProductContentExtractor:
                 if title_elem:
                     product_data["title"] = title_elem.get_text(strip=True)
 
-                # Extract product link
+                # Fallback: check for data attributes or itemprop
+                if not product_data["title"]:
+                    # Check data-product-title
+                    if element.get("data-product-title"):
+                        product_data["title"] = element.get("data-product-title")
+                    # Check itemprop="name"
+                    elif element.find(attrs={"itemprop": "name"}):
+                        product_data["title"] = element.find(
+                            attrs={"itemprop": "name"}
+                        ).get_text(strip=True)
+                    # Check for any heading inside
+                    elif element.find(["h1", "h2", "h3", "h4", "h5", "h6"]):
+                        product_data["title"] = element.find(
+                            ["h1", "h2", "h3", "h4", "h5", "h6"]
+                        ).get_text(strip=True)
+
+                # Extract product link - try multiple strategies
                 link_elem = element.find("a", href=True)
                 if link_elem:
-                    product_data["link"] = link_elem.get("href", "")
+                    href = link_elem.get("href", "")
+                    # Make absolute URL if relative
+                    if href and not href.startswith(("http://", "https://")):
+                        # Will be made absolute later
+                        product_data["link"] = href
+                    else:
+                        product_data["link"] = href
 
-                # Extract price
+                # Also check for data attributes that might contain product URLs
+                if not product_data["link"]:
+                    for attr in ["data-product-url", "data-href", "data-link"]:
+                        if element.get(attr):
+                            product_data["link"] = element.get(attr)
+                            break
+
+                # Extract price - try multiple strategies
                 price_elem = element.find(
                     ["span", "div", "p"], class_=re.compile(r"price", re.I)
                 )
                 if price_elem:
                     product_data["price"] = price_elem.get_text(strip=True)
+
+                # Fallback: check for data attributes or itemprop
+                if not product_data["price"]:
+                    # Check data-price
+                    if element.get("data-price"):
+                        product_data["price"] = element.get("data-price")
+                    # Check itemprop="price"
+                    elif element.find(attrs={"itemprop": "price"}):
+                        price_item = element.find(attrs={"itemprop": "price"})
+                        product_data["price"] = price_item.get(
+                            "content"
+                        ) or price_item.get_text(strip=True)
+                    # Check for money class (common in Shopify)
+                    elif element.find(class_=re.compile(r"money|price-money", re.I)):
+                        product_data["price"] = element.find(
+                            class_=re.compile(r"money|price-money", re.I)
+                        ).get_text(strip=True)
 
                 # Extract description
                 desc_elem = element.find(
@@ -93,6 +172,84 @@ class ProductContentExtractor:
                 # Only add if we have at least a title
                 if product_data["title"]:
                     products.append(product_data)
+
+        # Second pass: If no products found, try finding product links and extracting from their parent containers
+        # This handles cases where Shopify uses non-standard structures
+        if not products:
+            logger.debug(
+                "No products found with standard selectors, trying link-based detection"
+            )
+            # Find all links that look like product URLs
+            product_links = soup.find_all("a", href=re.compile(r"/product[s]?/", re.I))
+
+            for link in product_links[
+                :50
+            ]:  # Limit to 50 to avoid too many false positives
+                # Find the parent container that likely contains the product card
+                parent = link.parent
+                max_depth = 5  # Don't go too far up
+                depth = 0
+
+                while parent and depth < max_depth:
+                    # Check if this parent looks like a product container
+                    parent_class = parent.get("class", [])
+                    parent_class_str = (
+                        " ".join(parent_class).lower() if parent_class else ""
+                    )
+
+                    # Look for product-related classes
+                    if any(
+                        keyword in parent_class_str
+                        for keyword in ["product", "item", "card", "grid"]
+                    ):
+                        # Skip if we've already processed this element
+                        if id(parent) in found_elements:
+                            break
+                        found_elements.add(id(parent))
+
+                        # Try to extract product data from this parent
+                        product_data = {
+                            "title": "",
+                            "description": "",
+                            "price": "",
+                            "link": link.get("href", ""),
+                            "image": "",
+                            "availability": "",
+                            "sku": "",
+                        }
+
+                        # Extract title from link text or nearby elements
+                        link_text = link.get_text(strip=True)
+                        if link_text and len(link_text) > 3:
+                            product_data["title"] = link_text
+                        else:
+                            # Try to find title in parent
+                            title_elem = parent.find(
+                                ["h2", "h3", "h4", "span", "div"],
+                                class_=re.compile(r"title|name|product", re.I),
+                            )
+                            if title_elem:
+                                product_data["title"] = title_elem.get_text(strip=True)
+
+                        # Extract price from parent
+                        price_elem = parent.find(
+                            ["span", "div", "p"],
+                            class_=re.compile(r"price|money", re.I),
+                        )
+                        if price_elem:
+                            product_data["price"] = price_elem.get_text(strip=True)
+
+                        # Extract image
+                        img_elem = parent.find("img", src=True)
+                        if img_elem:
+                            product_data["image"] = img_elem.get("src", "")
+
+                        if product_data["title"]:
+                            products.append(product_data)
+                            break
+
+                    parent = parent.parent
+                    depth += 1
 
         return products
 
@@ -343,19 +500,31 @@ class EnhancedEcommerceProductScraper:
                 element.decompose()
 
             # Remove common UI clutter selectors
+            # BUT be careful not to remove product content areas
             clutter_selectors = [
                 {"class_": re.compile(r"modal|popup|overlay|newsletter|cookie", re.I)},
                 {"class_": re.compile(r"login|signup|account[-_]?menu", re.I)},
                 {"class_": re.compile(r"cart|checkout|wishlist", re.I)},
                 {"class_": re.compile(r"social[-_]?share|social[-_]?media", re.I)},
-                {"class_": re.compile(r"breadcrumb|pagination", re.I)},
-                {"class_": re.compile(r"filter|sort|sidebar", re.I)},
+                {
+                    "class_": re.compile(r"breadcrumb", re.I)
+                },  # Keep pagination - might have product links
+                # Don't remove filter/sort/sidebar - they might contain product info
+                # Only remove if they're clearly UI-only (like filter buttons, not product containers)
                 {"id": re.compile(r"cart|checkout|wishlist", re.I)},
             ]
 
             for selector in clutter_selectors:
                 for element in soup.find_all(**selector):
-                    element.decompose()
+                    # Don't remove if it contains product links or product data
+                    has_product_link = element.find(
+                        "a", href=re.compile(r"/product[s]?/", re.I)
+                    )
+                    has_product_data = element.find(
+                        attrs={"data-product-id": True}
+                    ) or element.find(attrs={"data-product-handle": True})
+                    if not has_product_link and not has_product_data:
+                        element.decompose()
 
             # STEP 2: Extract contact info
             contact_info = self._extract_contact_information(soup)
@@ -378,18 +547,86 @@ class EnhancedEcommerceProductScraper:
             else:
                 # Extract product collection
                 products = self.extractor.extract_product_cards(soup)
-                structured_content.append(
-                    self._format_product_collection(soup, products, contact_info, url)
-                )
 
-                # Extract product URLs for individual scraping
+                # Extract product URLs for individual scraping (do this BEFORE formatting)
+                # This helps even if product cards weren't fully detected
                 if self.extract_product_links:
+                    # First, get links from detected products
                     for product in products:
                         if product["link"]:
+                            # Make absolute URL
                             absolute_url = urljoin(url, product["link"])
-                            product_urls.append(absolute_url)
+                            # Clean URL (remove fragments, query params that aren't needed)
+                            parsed = urlparse(absolute_url)
+                            clean_url = (
+                                f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                            )
+                            if parsed.query and "variant" not in parsed.query.lower():
+                                clean_url += f"?{parsed.query}"
+                            product_urls.append(clean_url)
+
+                    # Also extract product links from page (in case products list didn't capture them)
+                    # Look for common product URL patterns in links
+                    all_links = soup.find_all("a", href=True)
+                    for link in all_links:
+                        href = link.get("href", "")
+                        if href:
+                            # Check if it looks like a product URL
+                            product_patterns = [
+                                r"/product[s]?/",
+                                r"/item[s]?/",
+                                r"/p/",
+                                r"/products/[^/]+$",
+                            ]
+                            for pattern in product_patterns:
+                                if re.search(pattern, href, re.I):
+                                    absolute_url = urljoin(url, href)
+                                    if absolute_url not in product_urls:
+                                        product_urls.append(absolute_url)
+                                    break
+
+                # Format the collection content
+                formatted_text = self._format_product_collection(
+                    soup, products, contact_info, url
+                )
+
+                # If no products were found but we have product URLs, add them to the text
+                if not products and product_urls:
+                    logger.info(
+                        f"Found {len(product_urls)} product URLs but no product cards detected"
+                    )
+                    if formatted_text.strip():
+                        formatted_text += (
+                            f"\n\nPRODUCTS FOUND ({len(product_urls)} product URLs):\n"
+                        )
+                        for i, product_url in enumerate(
+                            product_urls[:20], 1
+                        ):  # Limit to 20 for display
+                            formatted_text += f"{i}. {product_url}\n"
+                    else:
+                        # If formatted_text is empty, create basic structure
+                        formatted_text = f"COLLECTION PAGE\n"
+                        if contact_info:
+                            formatted_text += (
+                                f"CONTACT INFORMATION:\n{contact_info}\n\n"
+                            )
+                        formatted_text += (
+                            f"PRODUCTS FOUND ({len(product_urls)} product URLs):\n"
+                        )
+                        for i, product_url in enumerate(product_urls[:20], 1):
+                            formatted_text += f"{i}. {product_url}\n"
+
+                structured_content.append(formatted_text)
 
             final_text = "\n".join(structured_content)
+
+            # Log what we extracted for debugging
+            logger.info(
+                f"E-commerce extraction summary: products={len(products)}, "
+                f"product_urls={len(product_urls)}, "
+                f"structured_text_length={len(final_text)}, "
+                f"is_single_product={is_single_product}"
+            )
 
             # If no structured content was extracted, fall back to extracting main content
             if not final_text.strip():
@@ -397,7 +634,12 @@ class EnhancedEcommerceProductScraper:
                     f"No structured content extracted, falling back to main content extraction"
                 )
                 main_content = self.extractor.extract_main_content(soup)
-                cleaned_content = self.extractor.clean_product_text(main_content)
+                # Use less aggressive cleaning for fallback - we want to preserve content
+                # Only do basic whitespace cleaning, not aggressive noise removal
+                cleaned_content = main_content.strip()
+                # Just normalize whitespace, don't remove content
+                cleaned_content = re.sub(r"\s{3,}", " ", cleaned_content)
+                cleaned_content = re.sub(r"\n{3,}", "\n\n", cleaned_content)
 
                 # Build simple structured output
                 structured_content = []
@@ -411,8 +653,12 @@ class EnhancedEcommerceProductScraper:
                         f"TITLE: {title_elem.get_text(strip=True)}"
                     )
 
-                # Add cleaned main content
-                if cleaned_content and len(cleaned_content) > 100:
+                # Add main content - be very lenient with length for collection pages
+                # Collection pages might have minimal text but still be valid
+                if cleaned_content and len(cleaned_content) > 10:  # Very low threshold
+                    structured_content.append(f"\n{cleaned_content}")
+                elif cleaned_content:
+                    # Even if very short, include it - chunking will handle it
                     structured_content.append(f"\n{cleaned_content}")
 
                 final_text = "\n".join(structured_content)
@@ -420,43 +666,84 @@ class EnhancedEcommerceProductScraper:
             # If still no content, get soup text as last resort
             if not final_text.strip():
                 logger.warning(
-                    "No content after all extractions, using soup text as fallback"
+                    "No content after all extractions, using soup text as fallback",
+                    extra={
+                        "url": log_domain_safely(url),
+                        "products_found": len(products),
+                        "product_urls_found": len(product_urls),
+                    },
                 )
+                # Get ALL text from soup (we've already removed nav/header/footer)
                 all_text = soup.get_text(separator=" ", strip=True)
-                # Clean it aggressively to remove all UI noise
-                all_text = self.extractor.clean_product_text(all_text)
+                logger.info(f"Fallback soup text length: {len(all_text)} chars")
 
-                # Additional aggressive cleaning for common patterns
-                all_text = re.sub(
-                    r"(Email|Password|Forgot your password)",
-                    "",
-                    all_text,
-                    flags=re.IGNORECASE,
-                )
-                all_text = re.sub(
-                    r"\b(Dhs\.|AED|USD|EUR|GBP)\s*\d+\.?\d*\b", "", all_text
-                )  # Remove currency amounts
-                all_text = re.sub(
-                    r"\b\d+\.\d{2}\s*(Dhs|AED|USD)\b", "", all_text
-                )  # Remove more currency patterns
+                # For last resort, use LESS aggressive cleaning - we need to preserve content
+                # Only remove obvious UI noise, not everything
+                # Remove only the most obvious noise patterns
+                basic_noise = [
+                    r"^\s*(Sign In|Sign Up|Log in|Create Account)\s*$",
+                    r"^\s*(Add to cart|View Cart|Checkout)\s*$",
+                ]
+                for pattern in basic_noise:
+                    all_text = re.sub(
+                        pattern, "", all_text, flags=re.IGNORECASE | re.MULTILINE
+                    )
 
-                # Remove empty lines and excessive whitespace
-                all_text = re.sub(r"\s{2,}", " ", all_text)
-                all_text = re.sub(r"\n{2,}", "\n", all_text)
+                # Just normalize whitespace - don't remove content
+                all_text = re.sub(r"\s{3,}", " ", all_text)
+                all_text = re.sub(r"\n{3,}", "\n\n", all_text)
                 all_text = all_text.strip()
 
-                # Only use if we have substantial content left
-                if len(all_text) > 200:  # At least 200 characters of meaningful content
-                    final_text = (
-                        f"PAGE CONTENT:\n{all_text[:10000]}"  # Limit to 10000 chars
+                # Always use the text - even if short, chunking/filtering will handle it
+                if len(all_text) > 0:
+                    # Prepend contact info if we have it
+                    if contact_info:
+                        final_text = f"CONTACT INFORMATION:\n{contact_info}\n\nPAGE CONTENT:\n{all_text[:10000]}"
+                    else:
+                        final_text = f"PAGE CONTENT:\n{all_text[:10000]}"
+
+                    logger.info(
+                        f"Using fallback text: {len(final_text)} chars (original: {len(all_text)} chars)"
                     )
                 else:
-                    logger.warning("Cleaned text too short, using as-is")
-                    final_text = all_text
+                    logger.error("Even fallback extraction returned empty text!")
+                    final_text = ""
+
+            # CRITICAL: Ensure we always return some text, even if minimal
+            if not final_text or len(final_text.strip()) < 10:
+                logger.error(
+                    f"⚠️ E-commerce scraper returned minimal/empty text! "
+                    f"Length: {len(final_text)}, Preview: {final_text[:100] if final_text else 'EMPTY'}",
+                    extra={"url": log_domain_safely(url)},
+                )
+                # Create minimal text from URL and any found product URLs
+                minimal_text = f"Collection page: {url}\n"
+                if product_urls:
+                    minimal_text += f"Found {len(product_urls)} product URLs:\n"
+                    for i, purl in enumerate(product_urls[:10], 1):
+                        minimal_text += f"{i}. {purl}\n"
+                elif products:
+                    minimal_text += f"Found {len(products)} products:\n"
+                    for i, product in enumerate(products[:10], 1):
+                        if product.get("title"):
+                            minimal_text += f"{i}. {product['title']}\n"
+                else:
+                    minimal_text += "No products detected on this collection page."
+                final_text = minimal_text
+                logger.warning(
+                    f"Created minimal fallback text: {len(final_text)} chars"
+                )
 
             logger.info(
                 f"✅ Successfully scraped e-commerce page: {len(final_text)} chars, "
-                f"{len(products)} products found, {len(product_urls)} product URLs"
+                f"{len(products)} products found, {len(product_urls)} product URLs",
+                extra={
+                    "url": log_domain_safely(url),
+                    "text_length": len(final_text),
+                    "products_count": len(products),
+                    "product_urls_count": len(product_urls),
+                    "text_preview": final_text[:200] if final_text else "EMPTY",
+                },
             )
 
             return {
@@ -582,14 +869,41 @@ class EnhancedEcommerceProductScraper:
                     sections.append(f"   URL: {absolute_url}")
 
                 sections.append("")  # Empty line between products
+        else:
+            # If no products found, try to extract some content from the page
+            # Look for any text content in the main area
+            main_content = soup.find(
+                ["main", "div"], class_=re.compile(r"main|content|collection", re.I)
+            )
+            if main_content:
+                # Get text but exclude navigation and UI elements
+                text_content = main_content.get_text(separator=" ", strip=True)
+                # Remove excessive whitespace
+                text_content = re.sub(r"\s{3,}", " ", text_content)
+                # Be very lenient - even short content is better than nothing
+                if text_content and len(text_content) > 10:  # Very low threshold
+                    sections.append(
+                        f"PAGE CONTENT:\n{text_content[:2000]}\n"
+                    )  # Limit to 2000 chars
+            else:
+                # Last resort: try to get any text from body
+                body_text = soup.get_text(separator=" ", strip=True)
+                body_text = re.sub(r"\s{3,}", " ", body_text)
+                if body_text and len(body_text) > 10:
+                    # Take first 2000 chars to avoid too much noise
+                    sections.append(f"PAGE CONTENT:\n{body_text[:2000]}\n")
 
         return "\n".join(sections)
 
     async def _load_page_with_fallback(self, page: Page, url: str) -> str:
         """Load page with multiple fallback strategies"""
         strategies = [
-            ("domcontentloaded", min(self.timeout, 15000)),  # Fastest - 15s max
-            ("load", min(self.timeout, 20000)),  # Slower - 20s max
+            ("domcontentloaded", min(self.timeout, 20000)),  # Increased for Shopify
+            ("load", min(self.timeout, 30000)),  # Increased for Shopify
+            (
+                "networkidle",
+                min(self.timeout, 40000),
+            ),  # Added networkidle for JS-heavy sites
         ]
 
         last_error = None
@@ -597,8 +911,32 @@ class EnhancedEcommerceProductScraper:
             try:
                 await page.goto(url, wait_until=wait_until, timeout=timeout)
 
-                # Wait a bit for any lazy-loaded content
-                await page.wait_for_timeout(2000)
+                # Wait longer for Shopify sites which often have lazy-loaded content
+                # Check if it's a Shopify site
+                is_shopify = "shopify" in url.lower() or ".myshopify.com" in url.lower()
+                wait_time = 5000 if is_shopify else 2000
+                await page.wait_for_timeout(wait_time)
+
+                # For Shopify, also wait for common content selectors
+                if is_shopify:
+                    try:
+                        # Wait for common Shopify content selectors
+                        # Also wait for product cards to appear (collection pages)
+                        await page.wait_for_selector(
+                            "main, [role='main'], .main-content, .product, .collection, "
+                            ".grid__item, .product-card, .product-item, [data-product-id]",
+                            timeout=10000,  # Increased timeout for collection pages
+                        )
+                        # Additional wait for lazy-loaded content
+                        await page.wait_for_timeout(2000)
+                    except Exception as e:
+                        logger.debug(
+                            f"Selector wait failed (non-critical): {e}",
+                            extra={"url": log_domain_safely(url)},
+                        )
+                        # Still wait a bit for content to load
+                        await page.wait_for_timeout(3000)
+                        pass  # Continue even if selector doesn't appear
 
                 return await page.content()
 

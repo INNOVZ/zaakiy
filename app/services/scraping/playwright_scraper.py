@@ -15,6 +15,7 @@ from playwright.async_api import Browser, Page, async_playwright
 
 from ...utils.logging_config import get_logger
 from .content_extractors import ContactExtractor
+from .url_utils import log_domain_safely
 
 logger = get_logger(__name__)
 
@@ -62,11 +63,29 @@ class PlaywrightWebScraper:
             # Create new page
             page = await self.browser.new_page()
 
-            # Navigate to URL and wait for network to be idle
+            # Check if this is a Shopify site for special handling
+            is_shopify = "shopify" in url.lower() or ".myshopify.com" in url.lower()
+
+            # Navigate to URL - use networkidle for better JavaScript rendering
             await page.goto(url, wait_until="networkidle", timeout=self.timeout)
 
-            # Wait a bit for any lazy-loaded content
-            await page.wait_for_timeout(2000)
+            # Wait longer for Shopify sites which often have lazy-loaded content
+            wait_time = 5000 if is_shopify else 2000
+            await page.wait_for_timeout(wait_time)
+
+            # For Shopify, wait for common content selectors
+            if is_shopify:
+                try:
+                    await page.wait_for_selector(
+                        "main, [role='main'], .main-content, body",
+                        timeout=5000,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Selector wait failed (non-critical): {e}",
+                        extra={"url": log_domain_safely(url)},
+                    )
+                    pass  # Continue even if selector doesn't appear
 
             # HYBRID APPROACH: Get rendered HTML and pass to BeautifulSoup for structured parsing
             html_content = await page.content()

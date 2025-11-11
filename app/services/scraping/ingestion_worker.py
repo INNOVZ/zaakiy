@@ -722,6 +722,11 @@ async def smart_scrape_url(url: str) -> str:
     """
     Intelligently scrape URL using the best scraper for the content type.
 
+    Uses UnifiedScraper which provides:
+    - Automatic strategy selection (e-commerce → Playwright → traditional)
+    - Retry logic with exponential backoff
+    - Better error handling
+
     This ensures multi-tenant SaaS customers can upload any URL type:
     - E-commerce product pages → Enhanced e-commerce scraper (structured data)
     - JavaScript-rendered sites (React, Vue, Angular) → Playwright
@@ -733,64 +738,39 @@ async def smart_scrape_url(url: str) -> str:
     Returns:
         Extracted text content (structured for e-commerce URLs)
     """
-    # Try enhanced e-commerce scraper first for e-commerce URLs
-    if ECOMMERCE_SCRAPER_AVAILABLE and is_ecommerce_url(url):
-        try:
+    # Use UnifiedScraper (consolidates all scraping logic with retries)
+    try:
+        from .unified_scraper import UnifiedScraper
+
+        scraper = UnifiedScraper()
+        result = await scraper.scrape(url, extract_products=True)
+
+        if result["success"] and result["text"]:
             logger.info(
-                f"[E-commerce] Attempting structured e-commerce scraping for: {url}"
+                f"[Unified] ✅ Scraping succeeded using {result['method']}: "
+                f"{len(result['text'])} chars"
             )
-            # Create scraper with longer timeout to handle slow sites
-            from .ecommerce_scraper import EnhancedEcommerceProductScraper
-
-            async with EnhancedEcommerceProductScraper(
-                headless=True, timeout=60000
-            ) as scraper:
-                result = await scraper.scrape_product_collection(url)
-
-            if result and result.get("text") and len(result["text"].strip()) > 100:
+            if result.get("products"):
                 logger.info(
-                    f"[E-commerce] ✅ Structured scraping succeeded: {len(result['text'])} chars, "
-                    f"{len(result.get('products', []))} products found"
+                    f"[Unified] Extracted {len(result['products'])} products, "
+                    f"{len(result.get('product_urls', []))} product URLs"
                 )
-                return result["text"]
-            else:
-                logger.warning(
-                    f"[E-commerce] Structured scraper returned minimal content, trying Playwright"
-                )
-        except Exception as e:
-            logger.warning(
-                f"[E-commerce] Structured scraper failed: {e}, falling back to Playwright"
-            )
+            # Return text regardless of whether products were found
+            return result["text"]
+        else:
+            error_msg = result.get("error", "Unknown error")
+            raise ValueError(f"Failed to scrape URL: {error_msg}")
 
-    # Try Playwright for JavaScript-rendered content
-    if PLAYWRIGHT_AVAILABLE:
-        try:
-            logger.info(f"[Multi-Tenant] Attempting Playwright scraping for: {url}")
-            text = await scrape_url_with_playwright(url)
-
-            # Check if we got meaningful content (not just "enable JavaScript" message)
-            if (
-                text
-                and len(text.strip()) > 100
-                and "enable JavaScript" not in text.lower()
-            ):
-                logger.info(
-                    f"[Multi-Tenant] ✅ Playwright succeeded: {len(text)} chars from {url}"
-                )
-                return text
-            else:
-                logger.warning(
-                    f"[Multi-Tenant] Playwright returned minimal content, trying traditional scraper"
-                )
-        except Exception as e:
-            logger.warning(
-                f"[Multi-Tenant] Playwright failed: {e}, falling back to traditional scraper"
-            )
-
-    # Fallback to traditional scraper
-    logger.info(f"[Multi-Tenant] Using traditional scraper for: {url}")
-    text = await scrape_url_text(url)
-    return text
+    except ImportError:
+        # Fallback if UnifiedScraper not available (shouldn't happen in production)
+        logger.error("UnifiedScraper not available - this should not happen!")
+        raise RuntimeError("Scraping system not properly configured")
+    except Exception as e:
+        logger.error(
+            f"Scraping failed for {log_domain_safely(url)}: {str(e)}",
+            exc_info=True,
+        )
+        raise
 
 
 async def recursive_scrape_website(
@@ -898,6 +878,16 @@ async def process_pending_uploads():
                 )
 
                 # Extract text based on document type
+                # First, extract the actual URL for e-commerce detection
+                actual_url = source
+                if doc_type == "url":
+                    try:
+                        source_data = json.loads(source)
+                        if isinstance(source_data, dict) and "url" in source_data:
+                            actual_url = source_data["url"]
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Not JSON, use source as-is
+
                 if doc_type == "pdf":
                     text = await extract_text_from_pdf_url(source)
                 elif doc_type == "url":
@@ -935,6 +925,13 @@ async def process_pending_uploads():
 
                 # Validate extracted text
                 if not text or len(text.strip()) < 10:
+                    # For e-commerce URLs, provide more specific error message
+                    if doc_type == "url" and is_ecommerce_url(actual_url):
+                        raise ValueError(
+                            f"Failed to extract meaningful content from Shopify/e-commerce site. "
+                            f"The site may require JavaScript rendering or have anti-scraping measures. "
+                            f"Extracted {len(text.strip()) if text else 0} characters."
+                        )
                     raise ValueError("No meaningful text content extracted")
 
                 logger.info(
@@ -949,9 +946,163 @@ async def process_pending_uploads():
                 # Process text into chunks and embeddings
                 chunks = split_into_chunks(text)
                 pre_filter_count = len(chunks)
-                chunks = filter_noise_chunks(chunks)
+
+                # If we have very few chunks or very short text, log a warning
+                if pre_filter_count == 0:
+                    logger.warning(
+                        "No chunks created from extracted text",
+                        extra={
+                            "upload_id": upload_id,
+                            "text_length": len(text),
+                            "text_preview": text[:500] if text else "No text",
+                        },
+                    )
+                elif pre_filter_count < 3 and len(text) < 500:
+                    logger.warning(
+                        "Very few chunks created from short text",
+                        extra={
+                            "upload_id": upload_id,
+                            "chunk_count": pre_filter_count,
+                            "text_length": len(text),
+                        },
+                    )
+
+                # Check if this is an e-commerce URL for less aggressive filtering
+                # Use actual_url which handles JSON-encoded sources
+                is_ecommerce = (
+                    is_ecommerce_url(actual_url) if doc_type == "url" else False
+                )
+
+                # Filter chunks - use less aggressive filtering for e-commerce sites
+                if is_ecommerce:
+                    # For e-commerce sites, use a more lenient filter
+                    # First try standard filtering
+                    filtered_chunks = filter_noise_chunks(chunks)
+
+                    # If all chunks were filtered out, try progressively more lenient filtering
+                    if not filtered_chunks and pre_filter_count > 0:
+                        logger.warning(
+                            "All chunks filtered out for e-commerce site, trying lenient filtering",
+                            extra={
+                                "upload_id": upload_id,
+                                "pre_filter_count": pre_filter_count,
+                                "source": log_domain_safely(actual_url),
+                            },
+                        )
+                        # Use TextCleaner directly with lower min_length
+                        from .text_cleaner import TextCleaner
+
+                        # Try progressively more lenient thresholds
+                        for min_len in [30, 20, 10]:
+                            filtered_chunks = TextCleaner.filter_noise_chunks(
+                                chunks, min_length=min_len
+                            )
+                            if filtered_chunks:
+                                logger.info(
+                                    f"Lenient filtering succeeded with min_length={min_len}",
+                                    extra={
+                                        "upload_id": upload_id,
+                                        "chunks_kept": len(filtered_chunks),
+                                        "min_length": min_len,
+                                    },
+                                )
+                                break
+
+                        # Last resort: if still no chunks, keep any chunk > 5 chars that doesn't match noise patterns
+                        if not filtered_chunks:
+                            logger.warning(
+                                "Even lenient filtering removed all chunks, using last resort filter",
+                                extra={
+                                    "upload_id": upload_id,
+                                    "pre_filter_count": pre_filter_count,
+                                    "text_length": len(text),
+                                },
+                            )
+                            # Keep chunks that are at least 5 chars and don't match strict noise patterns
+                            import re
+
+                            strict_noise = [
+                                r"^\s*(Sign In|Sign Up|Log in)\s*$",
+                                r"^\s*(Add to cart|View Cart|Checkout)\s*$",
+                                r"^\s*(Cookie Policy|Privacy Policy)\s*$",
+                            ]
+                            compiled_strict = [
+                                re.compile(pat, re.IGNORECASE) for pat in strict_noise
+                            ]
+
+                            filtered_chunks = []
+                            for chunk in chunks:
+                                chunk_stripped = chunk.strip()
+                                if len(chunk_stripped) >= 5:
+                                    # Only filter if it matches strict noise patterns
+                                    is_strict_noise = any(
+                                        pat.search(chunk_stripped)
+                                        for pat in compiled_strict
+                                    )
+                                    if not is_strict_noise:
+                                        filtered_chunks.append(chunk)
+
+                            if filtered_chunks:
+                                logger.info(
+                                    f"Last resort filter kept {len(filtered_chunks)} chunks",
+                                    extra={
+                                        "upload_id": upload_id,
+                                        "chunks_kept": len(filtered_chunks),
+                                    },
+                                )
+                            else:
+                                # Absolute last resort: if we have ANY text at all, create a single chunk from it
+                                # This handles cases where collection pages have very minimal but valid content
+                                if text and len(text.strip()) > 10:
+                                    logger.warning(
+                                        "All chunks filtered, creating single chunk from full text as absolute last resort",
+                                        extra={
+                                            "upload_id": upload_id,
+                                            "text_length": len(text),
+                                            "text_preview": text[:200],
+                                        },
+                                    )
+                                    # Create one chunk from the full text (will be truncated by chunker if too long)
+                                    filtered_chunks = [text.strip()]
+
+                    chunks = filtered_chunks
+                else:
+                    chunks = filter_noise_chunks(chunks)
+
+                # CRITICAL: If still no chunks (including case where pre_filter_count == 0),
+                # create a single chunk from the full text as absolute last resort
+                if not chunks and text and len(text.strip()) > 10:
+                    logger.warning(
+                        "No chunks after all processing, creating single chunk from full text as absolute last resort",
+                        extra={
+                            "upload_id": upload_id,
+                            "text_length": len(text),
+                            "pre_filter_count": pre_filter_count,
+                            "text_preview": text[:200],
+                        },
+                    )
+                    chunks = [text.strip()]
+
                 if not chunks:
-                    raise ValueError("No text chunks generated")
+                    # Provide detailed error message with diagnostics
+                    error_details = {
+                        "pre_filter_count": pre_filter_count,
+                        "text_length": len(text),
+                        "text_preview": text[:200] if text else "No text",
+                        "is_ecommerce": is_ecommerce,
+                        "source": log_domain_safely(
+                            actual_url if doc_type == "url" else source
+                        ),
+                    }
+                    logger.error(
+                        "No text chunks generated after filtering",
+                        extra={"upload_id": upload_id, **error_details},
+                    )
+                    raise ValueError(
+                        f"No text chunks generated after filtering. "
+                        f"Extracted {len(text)} characters, created {pre_filter_count} chunks before filtering. "
+                        f"This may indicate the content was mostly UI noise or the scraper needs adjustment."
+                    )
 
                 embeddings = get_embeddings_for_chunks(chunks)
                 if not embeddings:

@@ -166,15 +166,30 @@ class TextCleaner:
         compiled = [re.compile(pat, re.IGNORECASE) for pat in noise_patterns]
 
         def is_noise(text: str) -> bool:
-            if len(text.strip()) < min_length:
+            stripped = text.strip()
+            if len(stripped) < min_length:
                 return True
-            # If a chunk contains a very long list of countries (comma/space heavy), drop it
-            comma_count = text.count(",")
-            if comma_count >= 20:
+
+            # Large comma counts usually indicate country/region lists
+            if stripped.count(",") >= 20:
                 return True
+
+            # Track how much of the chunk is actually noise. Some Shopify chunks
+            # contain phrases like "Showing 1-8 of 20" next to real product data,
+            # so we only drop the chunk if noise dominates the content.
+            noise_chars = 0
             for pattern in compiled:
-                if pattern.search(text):
-                    return True
+                for match in pattern.finditer(stripped):
+                    noise_chars += len(match.group(0))
+                    # Bail out early if noise clearly overwhelms the chunk
+                    if noise_chars >= len(stripped) * 0.65:
+                        return True
+
+            # If we saw any noise but the chunk is still relatively short,
+            # treat it as noise (pure nav/login text, cookie banners, etc.).
+            if noise_chars and len(stripped) <= max(min_length * 2, 180):
+                return True
+
             return False
 
         filtered = [c for c in chunks if not is_noise(c)]
