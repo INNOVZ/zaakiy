@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import re
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Union
 
 from app.models.chatbot_config import ChatbotConfig
@@ -13,8 +14,10 @@ from app.services.shared import cache_service
 
 from .chat_utilities import ChatUtilities
 from .contact_extractor import contact_extractor
+from .context_builder import ContextBuilder
 from .context_leakage_detector import get_context_leakage_detector
 from .prompt_sanitizer import PromptInjectionDetector
+from .response_post_processor import ResponsePostProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +40,6 @@ class ResponseGenerationService:
     ):
         self.org_id = org_id
         self.openai_client = openai_client
-        self.context_config = context_config
-
         # TYPE SAFETY: Convert dict to Pydantic model for validation and type safety
         # This prevents configuration errors and provides IDE autocompletion
         if isinstance(chatbot_config, dict):
@@ -53,24 +54,30 @@ class ResponseGenerationService:
             )
             self.chatbot_config = ChatbotConfig()
 
-        # Use context_config.max_context_length if available, otherwise default to 4000
-        if self.context_config and hasattr(self.context_config, "max_context_length"):
-            self.max_context_length = self.context_config.max_context_length
-        elif self.context_config and isinstance(self.context_config, dict):
-            self.max_context_length = self.context_config.get(
-                "max_context_length", 4000
-            )
-        else:
-            # Default fallback
-            self.max_context_length = 4000
-        logger.debug("Using max_context_length: %d", self.max_context_length)
-
         # SECURITY: Initialize security detectors
         self.injection_detector = PromptInjectionDetector()
         self.leakage_detector = get_context_leakage_detector()
 
         # UTILITY: Initialize chat utilities for product extraction
         self.chat_utilities = ChatUtilities()
+        self.context_builder = ContextBuilder(self.chat_utilities)
+        self.response_post_processor = ResponsePostProcessor(
+            self.leakage_detector, self.chatbot_config
+        )
+
+        self._context_config = None
+        self.max_context_length = 4000
+        self.context_config = context_config
+
+    @property
+    def context_config(self):
+        return self._context_config
+
+    @context_config.setter
+    def context_config(self, value):
+        self._context_config = value
+        self.max_context_length = self._determine_max_context_length(value)
+        logger.debug("Using max_context_length: %d", self.max_context_length)
 
     async def generate_enhanced_response(
         self,
@@ -184,7 +191,12 @@ class ResponseGenerationService:
             )
 
             # Build context from retrieved documents
-            context_data = self._build_context(retrieved_documents)
+            context_result = self.context_builder.build(
+                documents=retrieved_documents,
+                max_context_length=self.max_context_length,
+                context_config=self.context_config,
+            )
+            context_data = asdict(context_result)
 
             # DEBUG: Log context information
             context_text = context_data.get("context_text", "")
@@ -265,12 +277,12 @@ class ResponseGenerationService:
             )
 
             # Process and format the response
-            formatted_response = self._format_response(
+            formatted_response = self.response_post_processor.format_response(
                 openai_response["content"],
                 retrieved_documents,
                 context_data,
                 is_contact_query,
-                message,  # Pass user message for phrase removal
+                message,
             )
 
             # Add token usage information to the response
@@ -292,352 +304,13 @@ class ResponseGenerationService:
             raise ResponseGenerationError(f"Response generation failed: {e}") from e
 
     def _build_context(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Build context from retrieved documents with contact info prioritization"""
-        try:
-            if not documents:
-                return {
-                    "context_text": "",
-                    "sources": [],
-                    "contact_info": {},
-                    "demo_links": [],
-                    "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
-                }
-
-            # Extract contact information from all documents
-            all_phones = set()
-            all_emails = set()
-            all_addresses = []
-            all_demo_links = set()
-            all_links = set()
-
-            # Combine document chunks with contact info prioritization
-            context_chunks = []
-            contact_chunks = []  # Chunks with contact info (prioritized)
-            sources = []
-            total_score = 0
-
-            for idx, doc in enumerate(documents):
-                chunk_text = doc.get("chunk", "")
-                source = doc.get("source", "")
-                score = doc.get("score", 0)
-
-                if chunk_text and len(chunk_text.strip()) > 10:
-                    # Extract contact info from this chunk
-                    contact_info = contact_extractor.extract_contact_info(chunk_text)
-
-                    # Collect contact information
-                    if contact_info.get("phones"):
-                        all_phones.update(contact_info["phones"])
-                    if contact_info.get("emails"):
-                        all_emails.update(contact_info["emails"])
-                    if contact_info.get("addresses"):
-                        all_addresses.extend(contact_info["addresses"])
-                    if contact_info.get("demo_links"):
-                        all_demo_links.update(contact_info["demo_links"])
-                    if contact_info.get("links"):
-                        all_links.update(contact_info["links"])
-
-                    # Prioritize chunks with contact info
-                    if contact_info.get("has_contact_info"):
-                        contact_chunks.append(chunk_text)
-                        logger.debug(
-                            "📞 Contact chunk %d (score: %.3f): phones=%d, emails=%d, demo_links=%d",
-                            idx + 1,
-                            score,
-                            len(contact_info.get("phones", [])),
-                            len(contact_info.get("emails", [])),
-                            len(contact_info.get("demo_links", [])),
-                        )
-                    else:
-                        context_chunks.append(chunk_text)
-
-                    if source and source not in sources:
-                        sources.append(source)
-                    total_score += score
-
-                    # DEBUG: Log each chunk being added
-                    logger.debug(
-                        "📄 Chunk %d (score: %.3f, length: %d, has_contact: %s): %s...",
-                        idx + 1,
-                        score,
-                        len(chunk_text),
-                        contact_info.get("has_contact_info", False),
-                        chunk_text[:100],
-                    )
-
-            # CONTEXT ENGINEERING: Apply final_context_chunks limit from config
-            # This ensures we only use the top N chunks as configured in the UI
-            final_context_chunks = None
-            if self.context_config and hasattr(
-                self.context_config, "final_context_chunks"
-            ):
-                final_context_chunks = self.context_config.final_context_chunks
-            elif self.context_config and isinstance(self.context_config, dict):
-                final_context_chunks = self.context_config.get("final_context_chunks")
-
-            # Prioritize contact chunks - add them first
-            if final_context_chunks and final_context_chunks > 0:
-                # Limit to final_context_chunks (but always include all contact chunks)
-                contact_count = len(contact_chunks)
-                remaining_slots = max(0, final_context_chunks - contact_count)
-
-                if remaining_slots > 0:
-                    # Take top N context chunks (they're already sorted by score from retrieval)
-                    limited_chunks = contact_chunks + context_chunks[:remaining_slots]
-                    logger.info(
-                        "📊 Applied final_context_chunks limit: %d (contact: %d, regular: %d)",
-                        final_context_chunks,
-                        contact_count,
-                        remaining_slots,
-                    )
-                else:
-                    # Only contact chunks fit
-                    limited_chunks = contact_chunks[:final_context_chunks]
-                    logger.info(
-                        "📊 Applied final_context_chunks limit: %d (all contact chunks)",
-                        final_context_chunks,
-                    )
-                prioritized_chunks = limited_chunks
-            else:
-                # No limit applied, use all chunks
-                prioritized_chunks = contact_chunks + context_chunks
-                logger.debug(
-                    "No final_context_chunks limit applied, using all %d chunks",
-                    len(prioritized_chunks),
-                )
-
-            # OPTIMIZATION: Compress long chunks to reduce token usage
-            # Truncate chunks longer than 800 chars to fit within context limits
-            compressed_chunks = []
-            for chunk in prioritized_chunks:
-                if len(chunk) > 800:  # Compress long chunks
-                    # Extract first 400 and last 400 chars (key info usually at ends)
-                    compressed = chunk[:400] + "... [compressed] ..." + chunk[-400:]
-                    compressed_chunks.append(compressed)
-                else:
-                    compressed_chunks.append(chunk)
-            prioritized_chunks = compressed_chunks
-
-            # Combine context with length limit
-            context_text = self._combine_context_chunks(prioritized_chunks)
-
-            # Extract product links from documents
-            product_links = self.chat_utilities.extract_product_links_from_documents(
-                documents
-            )
-            logger.info(
-                "🛍️ Extracted %d product links from documents", len(product_links)
-            )
-
-            # Build product section for context if we have products
-            product_section = ""
-            if product_links:
-                product_section = self._build_product_section(product_links, documents)
-                logger.debug("📦 Product section: %s", product_section[:200])
-
-            # Create structured contact info section if we have contact info
-            contact_info_text = ""
-            if all_phones or all_emails or all_addresses or all_demo_links:
-                contact_info_parts = []
-
-                if all_phones:
-                    contact_info_parts.append(
-                        f"Phone Numbers: {', '.join(sorted(all_phones))}"
-                    )
-
-                if all_emails:
-                    contact_info_parts.append(
-                        f"Email Addresses: {', '.join(sorted(all_emails))}"
-                    )
-
-                if all_addresses:
-                    # Take first 3 addresses (most relevant)
-                    contact_info_parts.append(
-                        f"Addresses: {' | '.join(all_addresses[:3])}"
-                    )
-
-                if all_demo_links:
-                    contact_info_parts.append(
-                        f"Demo/Booking Links: {', '.join(sorted(all_demo_links))}"
-                    )
-
-                if contact_info_parts:
-                    contact_info_text = "\n\nCONTACT INFORMATION:\n" + "\n".join(
-                        contact_info_parts
-                    )
-
-            # Build final context: Product section → Contact section → Regular context
-            # This ensures products and contact info are prominent
-            final_context_parts = []
-            if product_section:
-                final_context_parts.append(product_section)
-            if contact_info_text:
-                final_context_parts.append(contact_info_text)
-            final_context_parts.append(context_text)
-
-            context_text = "\n".join(final_context_parts)
-
-            # Log extracted contact info
-            if all_phones or all_emails or all_demo_links:
-                logger.info(
-                    "✅ Extracted contact info: phones=%d, emails=%d, demo_links=%d, addresses=%d",
-                    len(all_phones),
-                    len(all_emails),
-                    len(all_demo_links),
-                    len(all_addresses),
-                )
-
-            # Calculate quality metrics
-            avg_score = total_score / len(documents) if documents else 0
-            coverage_score = min(len(context_text) / self.max_context_length, 1.0)
-
-            return {
-                "context_text": context_text,
-                "sources": sources,
-                "contact_info": {
-                    "phones": list(all_phones),
-                    "emails": list(all_emails),
-                    "addresses": all_addresses[:5],  # Limit to 5
-                    "demo_links": list(all_demo_links),
-                    "all_links": list(all_links),
-                },
-                "product_links": product_links,  # Include extracted product links
-                "demo_links": list(all_demo_links),  # For backward compatibility
-                "context_quality": {
-                    "coverage_score": coverage_score,
-                    "relevance_score": avg_score,
-                    "document_count": len(documents),
-                    "contact_chunks_count": len(contact_chunks),
-                    "product_links_count": len(product_links),
-                },
-            }
-
-        except Exception as e:
-            logger.error("Context building failed: %s", e)
-            return {
-                "context_text": "",
-                "sources": [],
-                "contact_info": {},
-                "product_links": [],  # Empty product links on error
-                "demo_links": [],
-                "context_quality": {"coverage_score": 0.0, "relevance_score": 0.0},
-            }
-
-    def _combine_context_chunks(self, chunks: List[str]) -> str:
-        """Combine context chunks with length limits"""
-        if not chunks:
-            return ""
-
-        combined = ""
-        current_length = 0
-
-        for chunk in chunks:
-            chunk_length = len(chunk)
-
-            # Check if adding this chunk would exceed the limit
-            if (
-                current_length + chunk_length + 50 > self.max_context_length
-            ):  # 50 char buffer
-                break
-
-            if combined:
-                combined += "\n\n---\n\n"
-                current_length += 7  # Length of separator
-
-            combined += chunk.strip()
-            current_length += chunk_length
-
-        return combined
-
-    def _build_product_section(
-        self, product_links: List[Dict[str, Any]], documents: List[Dict[str, Any]]
-    ) -> str:
-        """Build a structured product section from extracted product links
-
-        Args:
-            product_links: List of product dicts from ChatUtilities.extract_product_links_from_documents
-            documents: Original retrieved documents with chunk content
-
-        Returns:
-            Formatted product catalog string
-        """
-        if not product_links:
-            return ""
-
-        lines = ["PRODUCT CATALOG:"]
-
-        for idx, product in enumerate(product_links, start=1):
-            url = product.get("url", "")
-            name = product.get("name", "Product")
-            chunk_preview = product.get("chunk_preview", "")
-
-            # Extract price and description from chunk if available
-            price = self._extract_price_from_chunk(chunk_preview)
-            description = self._extract_description_from_chunk(chunk_preview, name)
-
-            # Format: 1. **[Product Name](URL)** - *Description* - **Price**: Amount
-            line = f"{idx}. **[{name}]({url})**"
-            if description:
-                line += f" - *{description}*"
-            if price:
-                line += f" - **Price**: {price}"
-
-            lines.append(line)
-
-        return "\n".join(lines)
-
-    def _extract_price_from_chunk(self, chunk: str) -> str:
-        """Extract price from chunk text"""
-        if not chunk:
-            return ""
-
-        # Look for common price patterns
-        price_patterns = [
-            r"(?:price|cost|₹|Rs\.?|AED|Dhs\.?|\$)\s*:?\s*([\d,]+(?:\.\d{2})?)",
-            r"(Dhs\.?\s*[\d,]+(?:\.\d{2})?)",
-            r"(₹\s*[\d,]+(?:\.\d{2})?)",
-            r"(AED\s*[\d,]+(?:\.\d{2})?)",
-        ]
-
-        for pattern in price_patterns:
-            match = re.search(pattern, chunk, re.IGNORECASE)
-            if match:
-                return (
-                    match.group(1).strip()
-                    if len(match.groups()) >= 1
-                    else match.group(0).strip()
-                )
-
-        return ""
-
-    def _extract_description_from_chunk(self, chunk: str, product_name: str) -> str:
-        """Extract product description from chunk text"""
-        if not chunk:
-            return ""
-
-        # Look for description after product name or in surrounding text
-        # Limit to first 50 words for conciseness
-        lines = chunk.strip().split("\n")
-        for line in lines:
-            # Find lines that don't contain price indicators
-            if not re.search(r"price|cost|₹|Rs\.|AED|Dhs\.|\$\d", line, re.IGNORECASE):
-                # Extract meaningful description text
-                clean_line = line.strip()
-                # Remove product name from description to avoid redundancy
-                clean_line = re.sub(
-                    re.escape(product_name), "", clean_line, flags=re.IGNORECASE
-                ).strip()
-                # Remove leading/trailing punctuation and whitespace
-                clean_line = clean_line.strip(" .-–—:")
-
-                if len(clean_line) > 20:  # Meaningful description length
-                    # Limit to ~50 words
-                    words = clean_line.split()
-                    if len(words) > 15:
-                        clean_line = " ".join(words[:15]) + "..."
-                    return clean_line
-
-        return ""
+        """Backward-compatible wrapper around ContextBuilder."""
+        context_result = self.context_builder.build(
+            documents=documents,
+            max_context_length=self.max_context_length,
+            context_config=self.context_config,
+        )
+        return asdict(context_result)
 
     def _create_system_prompt(self, context_data: Dict[str, Any]) -> str:
         """Create system prompt with context"""
@@ -835,11 +508,11 @@ CONTACT INFORMATION HANDLING:
   - 📍 **Location**: *address*
 - If contact info is NOT in context AND user asks for it, acknowledge and offer to connect them with the team
 
-DEMO/BOOKING LINKS:
-- If context has demo/booking links, use them when offering consultations or demos
-- Use the EXACT URL from the "Demo/Booking Links" section in context
-- Format as: **[Book a Consultation](exact-url-from-context)** or **[Schedule a Demo](exact-url-from-context)**
-- Include these links when offering alternatives to direct requests
+    CONTACT/BOOKING LINKS:
+    - If context has consultation or contact links, include them when offering next steps
+    - Use the EXACT URL from the "Demo/Booking Links" (or equivalent) section in context
+    - Format as: **[Connect with our team](exact-url-from-context)** or another neutral label that works for any tenant
+    - Include these links when offering alternatives to direct requests
 
 PRODUCT INFORMATION:
 - If context includes a PRODUCT CATALOG section, use those exact product links, names, and prices
@@ -969,14 +642,14 @@ What specific services or features are you most interested in?"
 **For Office/Location Questions (e.g., "Do you have an office in Spain?") - MULTITENANT GENERAL:**
 "{self.chatbot_config.name} is currently based in [location from context if available]. We do not have an office in [requested location] at this time.
 
-However, all interactions and consultations can be managed online, and our team can assist you regardless of your location. If you're interested in our solutions or want to collaborate, you can schedule a consultation with our team to discuss your needs and see how we can help. **[Book a consultation here](demo-link-if-available)**"
+However, all interactions and consultations can be managed online, and our team can assist you regardless of your location. If you're interested in our solutions or want to collaborate, you can schedule a call with our team to discuss your needs and see how we can help. **[Connect with our team here](demo-link-if-available)**"
 
 **For Demo Questions (e.g., "Is free demo available?") - MULTITENANT GENERAL:**
 "At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
 
 However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
 
-If you're interested, you can **[book your free consultation here](demo-link-if-available)**"
+If you're interested, you can **[connect with our team here](demo-link-if-available)**"
 
 **For Contact Questions:**
 "I'd be happy to help you get in touch with us! 📞
@@ -1198,163 +871,14 @@ REMEMBER:
         is_contact_query: bool = False,
         user_message: str = "",
     ) -> Dict[str, Any]:
-        """Format the final response with metadata and validate for hallucinations"""
-
-        # Only validate contact information if user actually asked for it
-        # This prevents false positives when LLM mentions numbers that aren't contact info
-        validated_response = self._validate_contact_info(
-            response_text, context_data.get("context_text", ""), is_contact_query
+        """Wrapper for ResponsePostProcessor (kept for backwards compatibility)."""
+        return self.response_post_processor.format_response(
+            response_text,
+            retrieved_documents,
+            context_data,
+            is_contact_query,
+            user_message,
         )
-
-        # Ensure demo links from context are included if missing
-        demo_links = context_data.get("demo_links", [])
-        contact_info = context_data.get("contact_info", {})
-        if contact_info:
-            demo_links = contact_info.get("demo_links", demo_links)
-
-        # PROACTIVE: Always add demo links when offering consultations, demos, or when response seems incomplete
-        # Check if response mentions consultation/demo keywords or seems to be offering help
-        consultation_keywords = [
-            "consultation",
-            "demo",
-            "book",
-            "booking",
-            "schedule",
-            "call",
-            "talk",
-            "discuss",
-            "connect",
-            "contact sales",
-            "reach out",
-            "get in touch",
-            "speak with",
-        ]
-
-        response_lower = validated_response.lower()
-        mentions_consultation = any(
-            keyword in response_lower for keyword in consultation_keywords
-        )
-
-        # Also check if response seems to be offering alternatives (common patterns)
-        offers_alternatives = any(
-            phrase in response_lower
-            for phrase in [
-                "however",
-                "you can",
-                "we can",
-                "i can help",
-                "let me",
-                "schedule",
-                "contact",
-                "reach",
-                "connect",
-            ]
-        )
-
-        # If we have demo links and response is offering help/consultation, ensure link is included
-        if demo_links and (mentions_consultation or offers_alternatives):
-            # Check if any demo link from context is already in the response
-            has_demo_link = any(link in validated_response for link in demo_links)
-
-            if not has_demo_link:
-                # Add the demo link proactively
-                logger.info("Adding demo link to response: %s", demo_links[0])
-                demo_link_text = f"**[Book a Consultation]({demo_links[0]})**"
-
-                # Try to find a good insertion point (after consultation/demo mentions)
-                # Search in the original response (case-insensitive)
-                demo_pattern = r"(consultation|demo|call|talk|discuss|schedule|book|booking)[^\n\.!?]*(?:\.|!|\?|$)"
-                match = re.search(demo_pattern, response_lower, re.IGNORECASE)
-
-                if match:
-                    # Insert link after the match position
-                    pos = match.end()
-                    # Add link with proper formatting
-                    if pos < len(validated_response):
-                        # Check if there's already punctuation or whitespace
-                        next_char = (
-                            validated_response[pos : pos + 1]
-                            if pos < len(validated_response)
-                            else ""
-                        )
-                        if next_char.strip() and next_char not in [".", "!", "?"]:
-                            validated_response = (
-                                validated_response[:pos]
-                                + f". You can {demo_link_text}."
-                                + validated_response[pos:]
-                            )
-                        else:
-                            validated_response = (
-                                validated_response[:pos]
-                                + f" You can {demo_link_text}."
-                                + validated_response[pos:].lstrip()
-                            )
-                    else:
-                        # Append at end
-                        validated_response += f"\n\nYou can {demo_link_text}."
-                else:
-                    # Check if response ends with punctuation, add link naturally
-                    if validated_response.strip().endswith((".", "!", "?")):
-                        validated_response += f" You can {demo_link_text}."
-                    else:
-                        validated_response += f"\n\nYou can {demo_link_text}."
-
-        # CRITICAL: Post-process to remove forbidden robotic phrases FIRST
-        # This must happen BEFORE any other processing to catch phrases early
-        # Do this BEFORE leakage detection to ensure we catch the phrases
-        cleaned_response = self._remove_forbidden_phrases(
-            validated_response, context_data, user_message
-        )
-
-        # SECURITY: Sanitize response for context leakage
-        # Check if response contains too much raw context
-        # NOTE: Do this AFTER forbidden phrase removal so we don't interfere with detection
-        sanitized_response = self.leakage_detector.sanitize_response_for_leakage(
-            cleaned_response,
-            context_data.get("context_text", ""),
-            threshold=0.8,  # 80% overlap threshold
-        )
-
-        # DOUBLE CHECK: Run forbidden phrase removal AGAIN after leakage detection
-        # This ensures leakage detector didn't reintroduce forbidden phrases
-        sanitized_response = self._remove_forbidden_phrases(
-            sanitized_response, context_data, user_message
-        )
-
-        # Post-process to ensure proper markdown formatting
-        formatted_response = self._ensure_markdown_formatting(sanitized_response)
-
-        # FINAL SAFETY CHECK: Run forbidden phrase removal ONE MORE TIME after all formatting
-        # This is the absolute last chance to catch any forbidden phrases
-        final_response = self._remove_forbidden_phrases(
-            formatted_response, context_data, user_message
-        )
-
-        # Log if final check found anything
-        if final_response != formatted_response:
-            logger.error(
-                "🚨 FINAL CHECK: Found forbidden phrase after all processing! "
-                f"Original: {formatted_response[:200]}... Rewritten to: {final_response[:200]}..."
-            )
-            formatted_response = final_response
-
-        return {
-            "response": formatted_response,
-            "sources": context_data.get("sources", []),
-            "context_used": context_data.get("context_text", ""),
-            "contact_info": contact_info,  # Include extracted contact info
-            "demo_links": demo_links,  # Include demo links
-            "context_quality": context_data.get("context_quality", {}),
-            "document_count": len(retrieved_documents),
-            "retrieval_method": "enhanced_rag",
-            "model_used": self.chatbot_config.model,  # TYPE SAFE attribute access
-            "generation_metadata": {
-                "temperature": self.chatbot_config.temperature,  # Config temperature (actual may differ)
-                "max_tokens": self.chatbot_config.max_tokens,  # Config max_tokens (actual may differ)
-                "context_length": len(context_data.get("context_text", "")),
-                "message_count": 1,  # Current message
-            },
-        }
 
     def _sanitize_base_prompt(self, base_prompt: str) -> str:
         """
@@ -1392,614 +916,28 @@ REMEMBER:
 
     @staticmethod
     def _normalize_forbidden_phrase_text(text: str) -> str:
-        """Normalize curly quotes/apostrophes so detection logic sees smart punctuation."""
-        if not text:
-            return ""
-
-        normalized = text
-        replacements = {
-            "’": "'",
-            "‘": "'",
-            "“": '"',
-            "”": '"',
-        }
-
-        for original, replacement in replacements.items():
-            normalized = normalized.replace(original, replacement)
-
-        return normalized
+        """Delegate to ResponsePostProcessor for normalization."""
+        return ResponsePostProcessor.normalize_forbidden_phrase_text(text)
 
     def _remove_forbidden_phrases(
         self, response: str, context_data: Dict[str, Any], user_message: str
     ) -> str:
-        """
-        Post-process response to remove forbidden robotic phrases.
-        This is a safety net to catch phrases that might still appear despite prompt instructions.
-
-        CRITICAL: This function MUST catch and rewrite responses containing:
-        - "I don't have information about"
-        - "I don't have that information available"
-        - Any variations of these phrases
-        """
-        # Log entry to function for debugging
-        logger.info(
-            f"🔍 _remove_forbidden_phrases called. Response length: {len(response)}, "
-            f"User message: {user_message[:100] if user_message else 'N/A'}"
+        """Delegate to ResponsePostProcessor sanitizer."""
+        return self.response_post_processor.remove_forbidden_phrases(
+            response, context_data, user_message
         )
-
-        if not response or not isinstance(response, str):
-            logger.warning(
-                "⚠️ Empty or invalid response passed to _remove_forbidden_phrases"
-            )
-            return response or ""
-
-        response_lower = response.lower()
-        normalized_response = self._normalize_forbidden_phrase_text(response_lower)
-
-        # MULTI-LAYER DETECTION: Use both regex patterns AND simple string checks
-        # This ensures we catch ALL variations, even if regex fails
-
-        # Simple string checks (case-insensitive) - MOST RELIABLE
-        forbidden_strings = [
-            "i don't have that information available",
-            "i don't have information about",
-            "i don't have that information",
-            "i don't know",
-            "that information is not available",
-            "i can't help with that",
-            "i'm not able to provide that information",
-            "don't have information about",
-            "don't have that information",
-            "i do not have information about",
-            "i do not have that information",
-            "i cannot help with that",
-            "i am not able to provide that information",
-        ]
-
-        # Regex patterns for more complex matching
-        forbidden_patterns = [
-            r"i\s+don['’]?t\s+have\s+that\s+information\s+available",
-            r"i\s+don['’]?t\s+have\s+information\s+about",
-            r"i\s+don['’]?t\s+have\s+.*information\s+about",  # Matches "I don't have information about X"
-            r"i\s+don['’]?t\s+have\s+that\s+information",
-            r"i\s+don['’]?t\s+have\s+.*information.*available",
-            r"i\s+don['’]?t\s+know",
-            r"that\s+information\s+is\s+not\s+available",
-            r"i\s+can['’]?t\s+help\s+with\s+that",
-            r"i['’]?m\s+not\s+able\s+to\s+provide\s+that\s+information",
-            r"don['’]?t\s+have\s+.*information",
-            r"don['’]?t\s+have\s+information\s+about",
-            r"don['’]?t\s+have\s+.*information\s+about",
-            r"i\s+do\s+not\s+have\s+.*information",
-            r"i\s+am\s+not\s+able\s+to\s+provide\s+that\s+information",
-            r"i\s+cannot\s+help\s+with\s+that",
-        ]
-
-        # Check if any forbidden phrase is present - LOG EVERYTHING FOR DEBUGGING
-        has_forbidden_phrase = False
-        matched_pattern = None
-        detection_method = None
-
-        logger.info(
-            f"🔍 Checking response for forbidden phrases. Response length: {len(response)}"
-        )
-        logger.debug(f"🔍 Response text (first 500 chars): {response[:500]}")
-
-        # FIRST: Check simple string matches (most reliable)
-        for forbidden_str in forbidden_strings:
-            if forbidden_str in normalized_response:
-                has_forbidden_phrase = True
-                matched_pattern = forbidden_str
-                detection_method = "string_match"
-                logger.error(
-                    f"🚨 CRITICAL: Detected forbidden phrase via STRING MATCH! "
-                    f"Phrase: '{forbidden_str}'. "
-                    f"Response preview: {response[:300]}... Rewriting response immediately."
-                )
-                break
-
-        # SECOND: Check regex patterns if string match didn't find anything
-        if not has_forbidden_phrase:
-            for pattern in forbidden_patterns:
-                match_result = re.search(pattern, normalized_response)
-                if match_result:
-                    has_forbidden_phrase = True
-                    matched_pattern = pattern
-                    matched_text = match_result.group(0) if match_result else "unknown"
-                    detection_method = "regex_match"
-                    logger.error(
-                        f"🚨 CRITICAL: Detected forbidden phrase via REGEX! "
-                        f"Pattern: '{pattern}', Matched: '{matched_text}'. "
-                        f"Response preview: {response[:300]}... Rewriting response immediately."
-                    )
-                    break
-
-        if not has_forbidden_phrase:
-            logger.debug("✅ No forbidden phrases detected in response")
-
-        if has_forbidden_phrase:
-            # Extract demo links from context
-            demo_links = context_data.get("demo_links", [])
-            contact_info = context_data.get("contact_info", {})
-            if contact_info:
-                demo_links = contact_info.get("demo_links", demo_links)
-
-            # Determine query type to generate appropriate constructive response
-            user_message_lower = user_message.lower() if user_message else ""
-
-            # MULTITENANT: Generate general responses that work for ANY business
-            # Check for office/location queries (including country names)
-            location_keywords = [
-                "office",
-                "location",
-                "address",
-                "based",
-                "spain",
-                "germany",
-                "france",
-                "uk",
-                "usa",
-                "united states",
-                "united kingdom",
-                "italy",
-                "netherlands",
-                "belgium",
-                "portugal",
-                "poland",
-            ]
-            if any(keyword in user_message_lower for keyword in location_keywords):
-                # MULTITENANT GENERAL: Constructive response like Keplero AI example
-                # Try to extract location info from context if available
-                contact_info = context_data.get("contact_info", {})
-                addresses = contact_info.get("addresses", [])
-                base_location = addresses[0] if addresses else None
-
-                # Build response with available context information
-                if base_location:
-                    # We have location info - mention it constructively
-                    response = f"{self.chatbot_config.name} is currently based in {base_location}. "
-                else:
-                    # No location info - start constructively
-                    response = f"Based on the information in my knowledge base, I don't see specific details about office locations in other regions right now. "
-
-                # Always offer constructive alternatives
-                response += f"However, all interactions and consultations can be managed online, and our team can assist you regardless of your location.\n\n"
-
-                # Add benefits and call-to-action
-                if demo_links:
-                    response += f"If you're interested in our solutions or want to collaborate, you can schedule a consultation with our team to discuss your needs and see how we can help. **[Book a consultation here]({demo_links[0]})**"
-                else:
-                    response += f"If you're interested in our solutions or want to collaborate, I can help you connect with our team who can provide accurate information about locations and discuss how we can assist you. Would you like me to help you get in touch with them?"
-                logger.error(
-                    f"🚨 REWRITTEN: Forbidden phrase detected and replaced for location query. "
-                    f"Original response contained: '{matched_pattern}' (detected via {detection_method}). "
-                    f"New response: {response[:200]}..."
-                )
-
-            # Check for demo/trial queries - Constructive response like Keplero AI example
-            elif any(
-                keyword in user_message_lower
-                for keyword in ["demo", "trial", "free demo", "test", "free trial"]
-            ):
-                # Constructive response that matches Keplero AI quality
-                chatbot_name = self.chatbot_config.name
-                response = f"At the moment, we do not offer a free demo or trial version of {chatbot_name}. "
-
-                # Immediately pivot to constructive alternative with benefits
-                response += f"However, you can schedule a free consultation call with our team to see how {chatbot_name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. "
-
-                # Add call-to-action with link if available
-                if demo_links:
-                    response += f"This allows us to tailor the demonstration to your use case and answer any questions you might have.\n\nIf you're interested, you can **[book your free consultation here]({demo_links[0]})**"
-                else:
-                    response += "This allows us to tailor the demonstration to your use case and answer any questions you might have.\n\nWould you like me to help you connect with our team to schedule a consultation?"
-                logger.error(
-                    f"🚨 REWRITTEN: Forbidden phrase detected and replaced for demo query. "
-                    f"Original response contained: '{matched_pattern}'. "
-                    f"New response: {response[:200]}..."
-                )
-
-            # Generic fallback for other queries - GENERAL response
-            else:
-                connection_text = ""
-                if demo_links:
-                    connection_text = (
-                        f" You can **[book a consultation or demo here]({demo_links[0]})** "
-                        "to get the information you need."
-                    )
-                else:
-                    connection_text = " You can connect with our team to get the information you need."
-
-                response = f"I'd be happy to help you with that!{connection_text}\n\nOur team can provide detailed information and answer any questions you might have. What specific information are you looking for? 😊"
-                logger.error(
-                    f"🚨 REWRITTEN: Forbidden phrase detected and replaced for generic query. "
-                    f"Original response contained: '{matched_pattern}'. "
-                    f"New response: {response[:200]}..."
-                )
-        else:
-            logger.debug(
-                f"✅ No forbidden phrases detected. Response: {response[:200]}..."
-            )
-
-        # FINAL VERIFICATION: Check one more time before returning
-        # This is a paranoid check to ensure we never return a forbidden phrase
-        response_lower_final = response.lower()
-        normalized_response_final = self._normalize_forbidden_phrase_text(
-            response_lower_final
-        )
-        for forbidden_str in [
-            "i don't have information about",
-            "i don't have that information available",
-            "i do not have information about",
-            "i do not have that information",
-        ]:
-            if forbidden_str in normalized_response_final:
-                logger.critical(
-                    f"🚨🚨🚨 CRITICAL ERROR: Forbidden phrase STILL in response after rewrite! "
-                    f"This should NEVER happen. Response: {response[:300]}..."
-                )
-                # Force rewrite one more time with generic response
-                response = f"I'd be happy to help you with that! I can help you connect with our team who can provide you with accurate information. What specific information are you looking for? 😊"
-                break
-
-        logger.info(f"✅ Returning cleaned response. Length: {len(response)}")
-        return response
 
     def _ensure_markdown_formatting(self, response: str) -> str:
-        """Post-process response to ensure proper markdown formatting"""
-
-        # Fix phone number formatting
-        # Pattern: Find "Phone: 1234567890" or "📞 Phone: 1234567890" and convert to markdown
-        # More flexible pattern to catch variations
-        phone_pattern = r"(?:📞\s*)?(?:Phone|phone|PHONE):\s*(\+?[\d\s\-\(\)]+?)(?=\s*(?:📧|Email|email|EMAIL|📍|Location|location|LOCATION|$|\n))"
-
-        def format_phone(match):
-            number = match.group(1).strip()
-            # Clean number for tel: link (remove spaces and dashes)
-            clean_number = re.sub(r"[\s\-\(\)]", "", number)
-            return f"\n📞 **Phone**: [{number}](tel:{clean_number})"
-
-        response = re.sub(phone_pattern, format_phone, response)
-
-        # Fix email formatting
-        # Pattern: Find "Email: email@example.com" or "📧 Email: email@example.com" and convert to markdown
-        email_pattern = r"(?:📧\s*)?(?:Email|email|EMAIL):\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?=\s*(?:📍|Location|location|LOCATION|$|\n))"
-
-        def format_email(match):
-            email = match.group(1).strip()
-            return f"\n📧 **Email**: [{email}](mailto:{email})"
-
-        response = re.sub(email_pattern, format_email, response)
-
-        # Fix location formatting
-        # Pattern: Find "Location: address" or "📍 Location: address" and convert to markdown
-        # Capture until we hit a sentence ending or emoji
-        location_pattern = r"(?:📍\s*)?(?:Location|location|LOCATION):\s*([^\.!?\n]+?)(?=(?:Feel|feel|Thank|thank|$|\n|\.))"
-
-        def format_location(match):
-            location = match.group(1).strip()
-            return f"\n📍 **Location**: *{location}*\n"
-
-        response = re.sub(location_pattern, format_location, response)
-
-        # Add blank line after common intro phrases before contact details
-        response = re.sub(
-            r"((?:contact details?|reach (?:me|us)|get in touch):\s*)(\n(?:📞|📧|📍)\s*\*\*(?:Phone|Email|Location))",
-            r"\1\n\2",
-            response,
-            flags=re.IGNORECASE,
-        )
-
-        # Clean up multiple consecutive newlines
-        response = re.sub(r"\n{3,}", "\n\n", response)
-
-        # Remove any duplicate emojis (but keep the formatted ones)
-        response = re.sub(r"([📞📧📍])\s*\1+", r"\1", response)
-
-        response = response.strip()
-
-        return response
+        """Delegate to ResponsePostProcessor markdown formatter."""
+        return self.response_post_processor.ensure_markdown_formatting(response)
 
     def _validate_contact_info(
         self, response: str, context: str, is_contact_query: bool = False
     ) -> str:
-        """Validate that factual information in response exists in context - prevents hallucinations
-
-        Only validates contact info when user actually asked for it to avoid false positives.
-        This prevents expensive regex operations on every response.
-        """
-
-        # OPTIMIZATION: Only validate contact information if this is actually a contact query
-        # This prevents false positives where prices or other numbers are mistaken for phone numbers
-        # and avoids expensive regex operations on every non-contact response
-        if not is_contact_query:
-            # For non-contact queries, do a quick check: if response mentions contact keywords,
-            # we might want to do light validation. Otherwise, skip entirely.
-            contact_keywords = ["phone", "contact", "call", "email", "reach", "number"]
-            has_contact_keywords = any(
-                keyword in response.lower() for keyword in contact_keywords
-            )
-
-            if not has_contact_keywords:
-                # No contact keywords at all, skip validation entirely to save performance
-                logger.debug(
-                    "Skipping contact validation - not a contact query and no contact keywords"
-                )
-                return response
-
-            # If response has contact keywords but it's not a contact query, the LLM might
-            # have mentioned contact info incidentally. We'll do a minimal check but won't
-            # run expensive validation. Just return as-is to avoid false positives.
-            logger.debug(
-                "Skipping expensive contact validation - not a contact query (keywords found but query wasn't about contact)"
-            )
-            return response
-
-        # PERFORMANCE: Only reach here if is_contact_query is True
-        # This means we only run expensive regex operations for actual contact queries
-
-        # 1. VALIDATE PHONE NUMBERS
-        # Improved pattern: more specific to avoid matching prices
-        # Phone numbers typically have country codes, area codes, or specific formatting
-        phone_pattern = r"(?:(?:\+|00)[1-9]\d{0,3}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
-        response_phones = re.findall(phone_pattern, response)
-        context_phones = re.findall(phone_pattern, context)
-
-        # Filter out false positives: prices, years, IDs that match phone pattern
-        def is_likely_phone(text: str) -> bool:
-            """Check if a matched pattern is likely a phone number vs price/ID"""
-            # Remove common phone formatting
-            cleaned = re.sub(r"[^\d+]", "", text)
-
-            # Too short or too long to be a phone
-            if len(cleaned) < 8 or len(cleaned) > 15:
-                return False
-
-            # If it's next to price indicators (₹, $, Dhs, etc.), it's probably a price
-            if re.search(r"[₹$€£Dhs]|price|cost", text, re.IGNORECASE):
-                return False
-
-            # If it's clearly in a price context (Dhs. 70.00), skip it
-            if re.search(r"dhs\.?\s*\d+|price.*\d+|\d+.*price", text, re.IGNORECASE):
-                return False
-
-            return True
-
-        # Filter to only likely phone numbers
-        response_phones = [p for p in response_phones if is_likely_phone(p)]
-        context_phones = [p for p in context_phones if is_likely_phone(p)]
-
-        # Normalize phone numbers for comparison (remove spaces, dashes, etc.)
-        def normalize_phone(phone):
-            return re.sub(r"[^\d+]", "", phone)
-
-        normalized_context_phones = set(normalize_phone(p) for p in context_phones)
-
-        # Check each phone number in response
-        for response_phone in response_phones:
-            normalized_response_phone = normalize_phone(response_phone)
-
-            # If phone number in response is not in context, it's hallucinated
-            if normalized_response_phone not in normalized_context_phones:
-                logger.warning(
-                    "🚨 HALLUCINATION DETECTED: Phone number '%s' not in context. Context has: %s",
-                    response_phone,
-                    context_phones,
-                )
-
-                # Only replace if this is a contact query - otherwise, just log it
-                if is_contact_query:
-                    # Replace hallucinated number with actual or remove it
-                    if context_phones:
-                        response = response.replace(response_phone, context_phones[0])
-                        logger.info("✅ Auto-corrected phone to: %s", context_phones[0])
-                    else:
-                        # Only insert placeholder if user asked for contact info
-                        response = re.sub(
-                            re.escape(response_phone),
-                            "[Contact number not available]",
-                            response,
-                        )
-                else:
-                    # Not a contact query - just remove the hallucinated phone to avoid confusion
-                    logger.debug(
-                        "Removing hallucinated phone from non-contact response: %s",
-                        response_phone,
-                    )
-                    response = response.replace(response_phone, "").strip()
-
-        # 2. VALIDATE EMAILS
-        email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-        response_emails = re.findall(email_pattern, response)
-        context_emails = set(re.findall(email_pattern, context))
-
-        for response_email in response_emails:
-            if response_email not in context_emails:
-                logger.warning(
-                    "🚨 HALLUCINATION DETECTED: Email '%s' not in context. Context has: %s",
-                    response_email,
-                    context_emails,
-                )
-
-                if context_emails:
-                    actual_email = list(context_emails)[0]
-                    response = response.replace(response_email, actual_email)
-                    logger.info("✅ Auto-corrected email to: %s", actual_email)
-
-        # 3. VALIDATE PRICES (₹, Rs, INR, $, etc.)
-        # Look for price patterns in both response and context
-        price_pattern = r"(?:₹|Rs\.?|INR|\$|USD|EUR|£)\s*[\d,]+(?:\.\d{2})?"
-        response_prices = re.findall(price_pattern, response, re.IGNORECASE)
-        context_prices = set(re.findall(price_pattern, context, re.IGNORECASE))
-
-        for response_price in response_prices:
-            # Normalize for comparison (remove spaces, commas)
-            normalized_response_price = re.sub(r"[\s,]", "", response_price.lower())
-            normalized_context_prices = {
-                re.sub(r"[\s,]", "", p.lower()) for p in context_prices
-            }
-
-            if normalized_response_price not in normalized_context_prices:
-                logger.warning(
-                    "🚨 POTENTIAL PRICE HALLUCINATION: '%s' not found in context. Context prices: %s",
-                    response_price,
-                    list(context_prices)[:3],  # Show first 3 prices
-                )
-
-        # 4. DETECT VAGUE PHRASES THAT INDICATE HALLUCINATION
-        hallucination_phrases = [
-            r"around \d+",  # "around 50000"
-            r"approximately \d+",
-            r"roughly \d+",
-            r"about \d+",
-            r"\d+-\d+ range",  # "40000-60000 range"
-        ]
-
-        for pattern in hallucination_phrases:
-            if re.search(pattern, response, re.IGNORECASE):
-                logger.warning(
-                    "⚠️ VAGUE/ESTIMATED LANGUAGE DETECTED: AI may be hallucinating. Pattern: %s",
-                    pattern,
-                )
-
-        return response
-
-    async def generate_fallback_response(
-        self, message: str, session_id: str, error_type: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Generate fallback response when main generation fails"""
-        fallback_messages = {
-            "AI service temporarily unavailable": "I'm experiencing some issues connecting to my AI service. Please try again in a moment.",
-            "Database connection issue": "I'm having trouble accessing my memory right now. Please try again shortly.",
-            "Knowledge retrieval issue": "I'm having difficulty finding relevant information. Please rephrase your question.",
-            "Context processing issue": "I'm having trouble understanding the context. Could you be more specific?",
-            "Response generation issue": "I'm having trouble formulating a response. Please try rephrasing your question.",
-        }
-
-        # TYPE SAFE: Use Pydantic model attribute for fallback message
-        response_text = fallback_messages.get(
-            error_type,
-            self.chatbot_config.fallback_message,
+        """Delegate to ResponsePostProcessor contact validator."""
+        return self.response_post_processor.validate_contact_info(
+            response, context, is_contact_query
         )
-
-        # CRITICAL: Clean fallback message through forbidden phrase removal
-        # The chatbot's fallback_message from database might contain forbidden phrases
-        context_data = {
-            "demo_links": [],
-            "contact_info": {},
-        }
-        response_text = self._remove_forbidden_phrases(
-            response_text, context_data, message
-        )
-
-        return {
-            "response": response_text,
-            "sources": [],
-            "conversation_id": session_id,
-            "message_id": None,
-            "processing_time_ms": 0,
-            "context_quality": {"error": True, "error_type": error_type},
-            "error_context": error_type,
-            "is_fallback": True,
-        }
-
-    async def enhance_query(
-        self, query: str, history: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Enhance query with context from conversation history - OPTIMIZED"""
-        enhanced = [query]  # Always include original query
-
-        # SPECIAL CASE: Always enhance contact-related queries regardless of settings
-        contact_variants = self._get_contact_query_variants(query)
-        if contact_variants:
-            enhanced.extend(contact_variants)
-            logger.info(
-                "🔍 Contact query detected! Generated %d query variants: %s",
-                len(enhanced),
-                enhanced,
-            )
-            return enhanced[:5]  # Limit to 5 total queries
-
-        # SPECIAL CASE: Always enhance product/pricing queries regardless of settings
-        product_variants = self._get_product_query_variants(query)
-        if product_variants:
-            enhanced.extend(product_variants)
-            logger.info(
-                "🛍️ Product/pricing query detected! Generated %d query variants: %s",
-                len(enhanced),
-                enhanced,
-            )
-            return enhanced[:5]  # Limit to 5 total queries
-
-        # EMERGENCY MODE: Always skip query enhancement for speed
-        # Saves 500-1000ms per request!
-        logger.info("⚡ EMERGENCY MODE: Skipping query enhancement for speed")
-        return enhanced
-
-        # OPTIMIZATION: Skip enhancement for very short queries or no history
-        if len(query.strip()) < 10 or not history:
-            return enhanced
-
-        try:
-            # Get recent context from conversation
-            recent_messages = history[-3:] if history else []
-            context_summary = self._summarize_recent_context(recent_messages)
-
-            if not context_summary:
-                return enhanced
-
-            # OPTIMIZATION: Add timeout to query enhancement (max 1 second)
-            # This prevents slow OpenAI calls from blocking the entire request
-            try:
-                # Generate enhanced query using OpenAI
-                enhancement_prompt = f"""
-Given this conversation context and user query, generate 1-2 alternative ways to ask the same question that might help find more relevant information.
-
-Conversation Context:
-{context_summary}
-
-Original Query: {query}
-
-Alternative queries (one per line, no numbering):"""
-
-                # Wrap the OpenAI call with a timeout
-                async def enhance_with_openai():
-                    return self.openai_client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[{"role": "user", "content": enhancement_prompt}],
-                        temperature=0.3,
-                        max_tokens=100,  # Reduced from 150 for faster response
-                    )
-
-                response = await asyncio.wait_for(enhance_with_openai(), timeout=1.0)
-
-                # Parse enhanced queries
-                enhanced_queries = (
-                    response.choices[0].message.content.strip().split("\n")
-                )
-
-                for enhanced_query in enhanced_queries:
-                    enhanced_query = enhanced_query.strip()
-                    if (
-                        enhanced_query
-                        and enhanced_query != query
-                        and len(enhanced_query) > 5
-                    ):
-                        enhanced.append(enhanced_query)
-
-                # Limit to max query variants
-                max_variants = getattr(self.context_config, "max_query_variants", 3)
-                return enhanced[:max_variants]
-
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Query enhancement timed out after 1s - using original query only"
-                )
-                return enhanced
-
-        except Exception as e:
-            logger.warning("Query enhancement failed: %s", e)
-            return enhanced
 
     def _is_contact_information_query(self, query: str) -> bool:
         """Detect if the query is asking for contact, booking, or demo information"""
@@ -2054,6 +992,18 @@ Alternative queries (one per line, no numbering):"""
             return True
 
         return False
+
+    def _determine_max_context_length(self, context_config: Any) -> int:
+        """Calculate max context length from config with safe fallbacks."""
+        if context_config and hasattr(context_config, "max_context_length"):
+            value = getattr(context_config, "max_context_length") or 0
+            if isinstance(value, int) and value > 0:
+                return value
+        if isinstance(context_config, dict):
+            value = context_config.get("max_context_length", 0)
+            if isinstance(value, int) and value > 0:
+                return value
+        return 4000
 
     def _get_product_query_variants(self, query: str) -> List[str]:
         """Generate query variants for product/pricing queries"""
@@ -2241,8 +1191,10 @@ Alternative queries (one per line, no numbering):"""
                     "contact_info": cached_response.get("contact_info", {}),
                 }
 
-                cleaned_response = self._remove_forbidden_phrases(
-                    cached_response_text, context_data_for_cache, message
+                cleaned_response = (
+                    self.response_post_processor.sanitize_cached_response(
+                        cached_response_text, context_data_for_cache, message
+                    )
                 )
 
                 if cleaned_response != cached_response_text:
