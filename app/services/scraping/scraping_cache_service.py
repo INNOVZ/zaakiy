@@ -5,6 +5,7 @@ This provides a 10x performance improvement for repeated URL scraping operations
 """
 
 import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -12,10 +13,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-import orjson
+try:
+    import orjson  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    orjson = None  # type: ignore
 
 from ..shared.cache_service import CacheCircuitBreaker, CacheMetrics, cache_service
-from .url_utils import URLSanitizer, log_domain_safely
+from .url_utils import log_domain_safely
 
 logger = logging.getLogger(__name__)
 
@@ -211,9 +215,14 @@ class ScrapingCacheService:
         # Hash scraping parameters if provided
         params_hash = ""
         if scraping_params:
-            params_str = orjson.dumps(
-                scraping_params, option=orjson.OPT_SORT_KEYS
-            ).decode()
+            if orjson is not None and hasattr(orjson, "dumps"):
+                params_str = orjson.dumps(  # pylint: disable=no-member
+                    scraping_params,
+                    option=orjson.OPT_SORT_KEYS,  # pylint: disable=no-member
+                ).decode()
+            else:
+                # Fallback to standard json with sorted keys
+                params_str = json.dumps(scraping_params, sort_keys=True)
             # SECURITY NOTE: MD5 used for cache key only (non-cryptographic purpose)
             params_hash = hashlib.md5(params_str.encode()).hexdigest()[:8]
 

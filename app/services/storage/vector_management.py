@@ -2,12 +2,9 @@
 Enhanced vector management with comprehensive fault tolerance and retry logic
 """
 import asyncio
-import logging
-import os
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from pinecone import Pinecone
 from supabase import Client, create_client

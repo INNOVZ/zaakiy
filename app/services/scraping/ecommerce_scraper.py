@@ -4,7 +4,6 @@ Enhanced Playwright scraper specifically optimized for e-commerce product pages.
 This scraper intelligently extracts product information while filtering out UI noise.
 """
 
-import asyncio
 import re
 from typing import Dict, List, Optional
 from urllib.parse import urljoin, urlparse
@@ -491,6 +490,10 @@ class EnhancedEcommerceProductScraper:
             # Parse with BeautifulSoup
             soup = BeautifulSoup(html_content, "html.parser")
 
+            # Capture contact information BEFORE mutating the DOM so we don't
+            # accidentally delete phone/email blocks that live in headers/footers.
+            contact_info = self._extract_contact_information(soup)
+
             # STEP 1: Remove unwanted elements BEFORE extraction
             for element in soup(["script", "style", "iframe", "noscript"]):
                 element.decompose()
@@ -525,9 +528,6 @@ class EnhancedEcommerceProductScraper:
                     ) or element.find(attrs={"data-product-handle": True})
                     if not has_product_link and not has_product_data:
                         element.decompose()
-
-            # STEP 2: Extract contact info
-            contact_info = self._extract_contact_information(soup)
 
             # STEP 3: Detect if this is a single product page or collection page
             is_single_product = self._is_single_product_page(soup, url)
@@ -912,8 +912,7 @@ class EnhancedEcommerceProductScraper:
                 await page.goto(url, wait_until=wait_until, timeout=timeout)
 
                 # Wait longer for Shopify sites which often have lazy-loaded content
-                # Check if it's a Shopify site
-                is_shopify = "shopify" in url.lower() or ".myshopify.com" in url.lower()
+                is_shopify = await self._detect_shopify(page, page.url or url)
                 wait_time = 5000 if is_shopify else 2000
                 await page.wait_for_timeout(wait_time)
 
@@ -959,6 +958,53 @@ class EnhancedEcommerceProductScraper:
         Uses the shared ContactExtractor utility to avoid code duplication.
         """
         return ContactExtractor.extract_from_soup(soup, include_emoji=True)
+
+    def _guess_shopify_from_url(self, url: str) -> bool:
+        if not url:
+            return False
+        url_lower = url.lower()
+        shopify_keywords = [
+            "shopify",
+            ".myshopify.com",
+            "/collections/",
+            "/products/",
+        ]
+        return any(keyword in url_lower for keyword in shopify_keywords)
+
+    async def _detect_shopify(self, page: Page, url: str) -> bool:
+        """
+        Detect Shopify storefronts even when the vanity domain does not
+        include 'shopify'. Uses multiple heuristics so we can enable the
+        longer waits/selectors that Shopify themes require.
+        """
+        if self._guess_shopify_from_url(url):
+            return True
+
+        detection_scripts = [
+            "() => Boolean(window?.Shopify?.shop)",
+            "() => Boolean(window?.Shopify?.routes)",
+        ]
+
+        for script in detection_scripts:
+            try:
+                if await page.evaluate(script):
+                    return True
+            except Exception:
+                continue
+
+        try:
+            html = await page.content()
+            shopify_indicators = [
+                "cdn.shopify.com",
+                "shopifycloud",
+                "Shopify.shop",
+            ]
+            if any(indicator in html for indicator in shopify_indicators):
+                return True
+        except Exception:
+            pass
+
+        return False
 
 
 # Convenience function

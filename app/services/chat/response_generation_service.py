@@ -1603,7 +1603,10 @@ REMEMBER:
             else:
                 connection_text = ""
                 if demo_links:
-                    connection_text = f" You can **[connect with our team here]({demo_links[0]})** to get the information you need."
+                    connection_text = (
+                        f" You can **[book a consultation or demo here]({demo_links[0]})** "
+                        "to get the information you need."
+                    )
                 else:
                     connection_text = " You can connect with our team to get the information you need."
 
@@ -1999,10 +2002,10 @@ Alternative queries (one per line, no numbering):"""
             return enhanced
 
     def _is_contact_information_query(self, query: str) -> bool:
-        """Detect if the query is asking for contact information"""
+        """Detect if the query is asking for contact, booking, or demo information"""
         query_lower = query.lower()
 
-        # Keywords that indicate a contact information query
+        # Direct contact keywords (phones, emails, addresses, etc.)
         contact_keywords = [
             "phone",
             "number",
@@ -2020,9 +2023,37 @@ Alternative queries (one per line, no numbering):"""
             "how to contact",
             "contact details",
             "contact info",
+            "talk to someone",
+            "speak to someone",
         ]
 
-        return any(keyword in query_lower for keyword in contact_keywords)
+        if any(keyword in query_lower for keyword in contact_keywords):
+            return True
+
+        # Demo / consultation booking intent
+        booking_patterns = [
+            r"book(?:ing)? (?:a )?(?:demo|consultation|call|meeting|appointment)",
+            r"schedule(?: a)? (?:demo|consultation|call|meeting)",
+            r"(?:request|arrange|set up|organize) (?:a )?(?:demo|consultation|call)",
+            r"(?:demo|consultation) (?:request|booking|schedule)",
+            r"(?:talk|speak|connect) (?:with|to) (?:sales|support|an expert|the team)",
+            r"how (?:can|do) i (?:book|schedule|arrange) (?:a )?demo",
+            r"(?:book|schedule) (?:a )?time with (?:the )?team",
+        ]
+
+        for pattern in booking_patterns:
+            if re.search(pattern, query_lower):
+                return True
+
+        # Combined keyword detection for short queries like "Book demo"
+        demo_terms = ["demo", "trial", "consultation", "meeting", "appointment"]
+        action_terms = ["book", "schedule", "arrange", "request", "set up", "organize"]
+        if any(term in query_lower for term in demo_terms) and any(
+            action in query_lower for action in action_terms
+        ):
+            return True
+
+        return False
 
     def _get_product_query_variants(self, query: str) -> List[str]:
         """Generate query variants for product/pricing queries"""

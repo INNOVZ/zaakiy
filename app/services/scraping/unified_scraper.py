@@ -13,9 +13,7 @@ maximum success rate across different website types.
 """
 
 import asyncio
-import json
 from typing import Dict
-from urllib.parse import urlparse
 
 from ...utils.logging_config import get_logger
 from .url_utils import is_ecommerce_url, log_domain_safely

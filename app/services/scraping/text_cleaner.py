@@ -165,39 +165,49 @@ class TextCleaner:
 
         compiled = [re.compile(pat, re.IGNORECASE) for pat in noise_patterns]
 
-        def is_noise(text: str) -> bool:
-            stripped = text.strip()
-            if len(stripped) < min_length:
-                return True
+        cleaned_chunks = []
+        for chunk in chunks:
+            stripped = chunk.strip()
+            if not stripped:
+                continue
 
-            # Large comma counts usually indicate country/region lists
-            if stripped.count(",") >= 20:
-                return True
+            original_length = len(stripped)
+            cleaned = stripped
+            removed_chars = 0
 
-            # Track how much of the chunk is actually noise. Some Shopify chunks
-            # contain phrases like "Showing 1-8 of 20" next to real product data,
-            # so we only drop the chunk if noise dominates the content.
-            noise_chars = 0
             for pattern in compiled:
-                for match in pattern.finditer(stripped):
-                    noise_chars += len(match.group(0))
-                    # Bail out early if noise clearly overwhelms the chunk
-                    if noise_chars >= len(stripped) * 0.65:
-                        return True
+                updated = pattern.sub(" ", cleaned)
+                removed_chars += len(cleaned) - len(updated)
+                cleaned = updated
 
-            # If we saw any noise but the chunk is still relatively short,
-            # treat it as noise (pure nav/login text, cookie banners, etc.).
-            if noise_chars and len(stripped) <= max(min_length * 2, 180):
-                return True
+            # Normalize whitespace created by replacements
+            cleaned = re.sub(r"\s{2,}", " ", cleaned)
+            cleaned = re.sub(r"\n{2,}", "\n", cleaned).strip()
 
-            return False
+            if not cleaned:
+                continue
 
-        filtered = [c for c in chunks if not is_noise(c)]
+            # Large comma counts usually indicate country lists, drop them outright
+            if cleaned.count(",") >= 20:
+                continue
+
+            # If noise dominated the chunk, drop it; otherwise keep even if it
+            # contained UI phrases (since we've stripped them out).
+            noise_ratio = removed_chars / original_length if original_length else 1
+            if noise_ratio >= 0.8 and len(cleaned) < max(min_length, 120):
+                continue
+
+            if len(cleaned) < min_length:
+                # Keep short chunks only if they still contain alphanumeric content
+                if len(cleaned) < max(25, min_length // 2):
+                    continue
+
+            cleaned_chunks.append(cleaned)
 
         # Deduplicate identical chunks to reduce redundant vectors
         seen = set()
         unique_filtered = []
-        for c in filtered:
+        for c in cleaned_chunks:
             key = c.strip()
             if key not in seen:
                 seen.add(key)

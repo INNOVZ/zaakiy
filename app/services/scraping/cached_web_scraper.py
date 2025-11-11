@@ -5,19 +5,13 @@ This wrapper provides automatic caching with 10x performance improvement
 for repeated URL scraping operations.
 """
 
-import logging
 import time
 from typing import Optional
 
 from ...utils.error_handlers import handle_errors
-from ...utils.logging_config import LogContext, PerformanceLogger, get_logger
+from ...utils.logging_config import LogContext, get_logger
 from .scraping_cache_service import scraping_cache_service
-from .url_utils import (
-    create_safe_fetch_message,
-    create_safe_success_message,
-    is_ecommerce_url,
-    log_domain_safely,
-)
+from .url_utils import is_ecommerce_url, log_domain_safely
 from .web_scraper import SecureWebScraper
 
 logger = get_logger(__name__)

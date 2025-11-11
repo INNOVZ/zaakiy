@@ -9,15 +9,19 @@ entity ownership verification, security monitoring, and suspicious activity trac
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .exceptions import AuthenticationError, AuthorizationError
 from .jwt_handler import verify_jwt_token
-from .permissions import (Permission, UserRole, check_org_permission,
-                          check_user_permission, get_user_role)
+from .permissions import (
+    Permission,
+    UserRole,
+    check_org_permission,
+    check_user_permission,
+    get_user_role,
+)
 from .user_auth import get_user_by_id, get_user_with_org
 
 logger = logging.getLogger(__name__)

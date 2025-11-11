@@ -4,10 +4,15 @@ import json
 import logging
 import os
 import re
-from urllib.parse import urlparse
+from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import openai
-import orjson
+
+try:
+    import orjson  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    orjson = None  # type: ignore
 import requests
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -17,15 +22,14 @@ from ...utils.env_loader import is_test_environment
 from ..storage.pinecone_client import get_pinecone_index
 from ..storage.supabase_client import get_supabase_client
 from .text_cleaner import TextCleaner
-from .url_utils import (
-    create_safe_fetch_message,
-    create_safe_success_message,
-    is_ecommerce_url,
-    log_domain_safely,
-)
+from .url_utils import create_safe_fetch_message, is_ecommerce_url, log_domain_safely
+from .web_scraper import SecureWebScraper
 
 # Initialize logger FIRST (needed for imports below)
 logger = logging.getLogger(__name__)
+
+MAX_CONCURRENT_UPLOADS = int(os.getenv("SCRAPER_MAX_CONCURRENCY", "3"))
+MAX_UPLOAD_BATCH = int(os.getenv("SCRAPER_MAX_UPLOAD_BATCH", "25"))
 
 # Import both scrapers for JavaScript and non-JavaScript sites
 try:
@@ -41,7 +45,6 @@ except ImportError:
         "Playwright not available. JavaScript-rendered sites may not scrape correctly."
     )
 
-from .web_scraper import SecureWebScraper, scrape_url_text
 
 # Initialize clients
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -114,6 +117,20 @@ def get_authenticated_headers() -> dict:
     # Note: These headers contain sensitive authentication tokens
     # Never log or print these headers directly
     return headers
+
+
+def _safe_json_dumps(data: Any) -> str:
+    """
+    Serialize JSON content using orjson when available, falling back to the
+    stdlib json module otherwise. This avoids mypy/pylint attr errors when the
+    orjson stubs are missing.
+    """
+    if orjson is not None and hasattr(orjson, "dumps"):
+        indent_option = getattr(orjson, "OPT_INDENT_2", 2)
+        return orjson.dumps(data, option=indent_option).decode(
+            "utf-8"
+        )  # pylint: disable=no-member
+    return json.dumps(data, indent=2)
 
 
 def get_safe_headers_for_logging(headers: dict) -> dict:
@@ -491,9 +508,7 @@ async def extract_text_from_json_url(url: str) -> str:
                     result = str(data["body"])
                 else:
                     # Convert entire dict to text
-                    result = orjson.dumps(data, option=orjson.OPT_INDENT_2).decode(
-                        "utf-8"
-                    )
+                    result = _safe_json_dumps(data)
             elif isinstance(data, list):
                 # Join list items (limit to prevent memory issues)
                 if len(data) > 10000:
@@ -592,8 +607,6 @@ def get_embeddings_for_chunks(chunks: list) -> list:
 
 def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list:
     """Extract potential product links from text chunk"""
-    import re
-    from urllib.parse import urljoin, urlparse
 
     product_links = []
 
@@ -732,11 +745,6 @@ async def smart_scrape_url(url: str) -> str:
     - JavaScript-rendered sites (React, Vue, Angular) → Playwright
     - Traditional HTML sites → Traditional scraper
 
-    Args:
-        url: The URL to scrape
-
-    Returns:
-        Extracted text content (structured for e-commerce URLs)
     """
     # Use UnifiedScraper (consolidates all scraping logic with retries)
     try:
@@ -827,6 +835,277 @@ async def recursive_scrape_website(
         return await smart_scrape_url(start_url)
 
 
+async def _process_upload_record(upload: dict, supabase_client):
+    """
+    Process a single upload record. This mirrors the previous sequential logic
+    but allows the caller to schedule uploads concurrently with a semaphore.
+    """
+    upload_id = upload["id"]
+    org_id = upload["org_id"]
+    source = upload["source"]
+    doc_type = upload["type"]
+    namespace = upload["pinecone_namespace"]
+
+    logger.info(
+        "Processing upload for tenant",
+        extra={
+            "upload_id": upload_id,
+            "org_id": org_id,
+            "doc_type": doc_type,
+            "namespace": namespace,
+        },
+    )
+
+    # Extract text based on document type
+    # First, extract the actual URL for e-commerce detection
+    actual_url = source
+    if doc_type == "url":
+        try:
+            source_data = json.loads(source)
+            if isinstance(source_data, dict) and "url" in source_data:
+                actual_url = source_data["url"]
+        except (json.JSONDecodeError, TypeError):
+            pass  # Not JSON, use source as-is
+
+    if doc_type == "pdf":
+        text = await extract_text_from_pdf_url(source)
+    elif doc_type == "url":
+        # Check if source is JSON (recursive scraping config) or plain URL
+        try:
+            source_data = json.loads(source)
+            if isinstance(source_data, dict) and "url" in source_data:
+                # This is a recursive scraping configuration
+                url = source_data["url"]
+                recursive_config = source_data
+                logger.info(
+                    f"Recursive scraping enabled for {url}",
+                    extra={
+                        "upload_id": upload_id,
+                        "max_pages": recursive_config.get("max_pages"),
+                        "max_depth": recursive_config.get("max_depth"),
+                    },
+                )
+                # Use recursive scraper
+                text = await recursive_scrape_website(
+                    start_url=url,
+                    max_pages=recursive_config.get("max_pages"),
+                    max_depth=recursive_config.get("max_depth"),
+                )
+            else:
+                # Invalid JSON, fall back to regular scraping
+                text = await smart_scrape_url(source)
+        except (json.JSONDecodeError, TypeError):
+            # Not JSON, treat as regular URL
+            text = await smart_scrape_url(source)
+    elif doc_type == "json":
+        text = await extract_text_from_json_url(source)
+    else:
+        raise ValueError(f"Unsupported document type: {doc_type}")
+
+    # Validate extracted text
+    if not text or len(text.strip()) < 10:
+        # For e-commerce URLs, provide more specific error message
+        if doc_type == "url" and is_ecommerce_url(actual_url):
+            raise ValueError(
+                f"Failed to extract meaningful content from Shopify/e-commerce site. "
+                f"The site may require JavaScript rendering or have anti-scraping measures. "
+                f"Extracted {len(text.strip()) if text else 0} characters."
+            )
+        raise ValueError("No meaningful text content extracted")
+
+    logger.info(
+        "Text extraction successful",
+        extra={
+            "upload_id": upload_id,
+            "doc_type": doc_type,
+            "chars_extracted": len(text),
+        },
+    )
+
+    # Process text into chunks and embeddings
+    chunks = split_into_chunks(text)
+    pre_filter_count = len(chunks)
+
+    # If we have very few chunks or very short text, log a warning
+    if pre_filter_count == 0:
+        logger.warning(
+            "No chunks created from extracted text",
+            extra={
+                "upload_id": upload_id,
+                "text_length": len(text),
+                "text_preview": text[:500] if text else "No text",
+            },
+        )
+    elif pre_filter_count < 3 and len(text) < 500:
+        logger.warning(
+            "Very few chunks created from short text",
+            extra={
+                "upload_id": upload_id,
+                "chunk_count": pre_filter_count,
+                "text_length": len(text),
+            },
+        )
+
+    # Check if this is an e-commerce URL for less aggressive filtering
+    # Use actual_url which handles JSON-encoded sources
+    is_ecommerce = is_ecommerce_url(actual_url) if doc_type == "url" else False
+
+    # Filter chunks - use less aggressive filtering for e-commerce sites
+    if is_ecommerce:
+        # For e-commerce sites, use a more lenient filter
+        # First try standard filtering
+        filtered_chunks = filter_noise_chunks(chunks)
+
+        # If all chunks were filtered out, try progressively more lenient filtering
+        if not filtered_chunks and pre_filter_count > 0:
+            logger.warning(
+                "All chunks filtered out for e-commerce site, trying lenient filtering",
+                extra={
+                    "upload_id": upload_id,
+                    "pre_filter_count": pre_filter_count,
+                    "source": log_domain_safely(actual_url),
+                },
+            )
+            # Use TextCleaner directly with lower min_length
+            from .text_cleaner import TextCleaner
+
+            # Try progressively more lenient thresholds
+            for min_len in [30, 20, 10]:
+                filtered_chunks = TextCleaner.filter_noise_chunks(
+                    chunks, min_length=min_len
+                )
+                if filtered_chunks:
+                    logger.info(
+                        f"Lenient filtering succeeded with min_length={min_len}",
+                        extra={
+                            "upload_id": upload_id,
+                            "chunks_kept": len(filtered_chunks),
+                            "min_length": min_len,
+                        },
+                    )
+                    break
+
+            # Last resort: if still no chunks, keep any chunk > 5 chars that doesn't match noise patterns
+            if not filtered_chunks:
+                logger.warning(
+                    "Even lenient filtering removed all chunks, using last resort filter",
+                    extra={
+                        "upload_id": upload_id,
+                        "pre_filter_count": pre_filter_count,
+                        "text_length": len(text),
+                    },
+                )
+                # Keep chunks that are at least 5 chars and don't match strict noise patterns
+                import re
+
+                strict_noise = [
+                    r"^\s*(Sign In|Sign Up|Log in)\s*$",
+                    r"^\s*(Add to cart|View Cart|Checkout)\s*$",
+                    r"^\s*(Cookie Policy|Privacy Policy)\s*$",
+                ]
+                compiled_strict = [
+                    re.compile(pat, re.IGNORECASE) for pat in strict_noise
+                ]
+
+                filtered_chunks = []
+                for chunk in chunks:
+                    chunk_stripped = chunk.strip()
+                    if len(chunk_stripped) >= 5:
+                        # Only filter if it matches strict noise patterns
+                        is_strict_noise = any(
+                            pat.search(chunk_stripped) for pat in compiled_strict
+                        )
+                        if not is_strict_noise:
+                            filtered_chunks.append(chunk)
+
+                if filtered_chunks:
+                    logger.info(
+                        f"Last resort filter kept {len(filtered_chunks)} chunks",
+                        extra={
+                            "upload_id": upload_id,
+                            "chunks_kept": len(filtered_chunks),
+                        },
+                    )
+                else:
+                    # Absolute last resort: if we have ANY text at all, create a single chunk from it
+                    # This handles cases where collection pages have very minimal but valid content
+                    if text and len(text.strip()) > 10:
+                        logger.warning(
+                            "All chunks filtered, creating single chunk from full text as absolute last resort",
+                            extra={
+                                "upload_id": upload_id,
+                                "text_length": len(text),
+                                "text_preview": text[:200],
+                            },
+                        )
+                        # Create one chunk from the full text (will be truncated by chunker if too long)
+                        filtered_chunks = [text.strip()]
+
+        chunks = filtered_chunks
+    else:
+        chunks = filter_noise_chunks(chunks)
+
+    # CRITICAL: If still no chunks (including case where pre_filter_count == 0),
+    # create a single chunk from the full text as absolute last resort
+    if not chunks and text and len(text.strip()) > 10:
+        logger.warning(
+            "No chunks after all processing, creating single chunk from full text as absolute last resort",
+            extra={
+                "upload_id": upload_id,
+                "text_length": len(text),
+                "pre_filter_count": pre_filter_count,
+                "text_preview": text[:200],
+            },
+        )
+        chunks = [text.strip()]
+
+    if not chunks:
+        # Provide detailed error message with diagnostics
+        error_details = {
+            "pre_filter_count": pre_filter_count,
+            "text_length": len(text),
+            "text_preview": text[:200] if text else "No text",
+            "is_ecommerce": is_ecommerce,
+            "source": log_domain_safely(actual_url if doc_type == "url" else source),
+        }
+        logger.error(
+            "No text chunks generated after filtering",
+            extra={"upload_id": upload_id, **error_details},
+        )
+        raise ValueError(
+            f"No text chunks generated after filtering. "
+            f"Extracted {len(text)} characters, created {pre_filter_count} chunks before filtering. "
+            f"This may indicate the content was mostly UI noise or the scraper needs adjustment."
+        )
+
+    embeddings = get_embeddings_for_chunks(chunks)
+    if not embeddings:
+        raise ValueError("No embeddings generated")
+
+    logger.info(
+        "Chunks and embeddings generated",
+        extra={
+            "upload_id": upload_id,
+            "chunk_count": len(chunks),
+            "chunk_count_before_filter": pre_filter_count,
+            "embedding_count": len(embeddings),
+        },
+    )
+
+    # Upload to Pinecone with source URL for enhanced metadata
+    upload_to_pinecone(chunks, embeddings, namespace, upload_id, source)
+
+    # Update status to completed
+    supabase_client.table("uploads").update(
+        {"status": "completed", "error_message": None}
+    ).eq("id", upload_id).execute()
+
+    logger.info(
+        "Upload processing completed successfully",
+        extra={"upload_id": upload_id, "org_id": org_id},
+    )
+
+
 async def process_pending_uploads():
     """
     Main function to process all pending uploads with authenticated storage access.
@@ -859,303 +1138,50 @@ async def process_pending_uploads():
             extra={"upload_count": len(uploads)},
         )
 
-        for upload in uploads:
-            try:
-                upload_id = upload["id"]
-                org_id = upload["org_id"]
-                source = upload["source"]
-                doc_type = upload["type"]
-                namespace = upload["pinecone_namespace"]
+        if not uploads:
+            logger.info("No pending uploads found")
+            return
 
-                logger.info(
-                    "Processing upload for tenant",
-                    extra={
-                        "upload_id": upload_id,
-                        "org_id": org_id,
-                        "doc_type": doc_type,
-                        "namespace": namespace,
-                    },
-                )
+        if len(uploads) > MAX_UPLOAD_BATCH:
+            logger.warning(
+                "Large pending upload backlog detected, limiting batch size",
+                extra={"requested": len(uploads), "limit": MAX_UPLOAD_BATCH},
+            )
+            uploads = uploads[:MAX_UPLOAD_BATCH]
 
-                # Extract text based on document type
-                # First, extract the actual URL for e-commerce detection
-                actual_url = source
-                if doc_type == "url":
-                    try:
-                        source_data = json.loads(source)
-                        if isinstance(source_data, dict) and "url" in source_data:
-                            actual_url = source_data["url"]
-                    except (json.JSONDecodeError, TypeError):
-                        pass  # Not JSON, use source as-is
+        semaphore = asyncio.Semaphore(max(1, MAX_CONCURRENT_UPLOADS))
 
-                if doc_type == "pdf":
-                    text = await extract_text_from_pdf_url(source)
-                elif doc_type == "url":
-                    # Check if source is JSON (recursive scraping config) or plain URL
-                    try:
-                        source_data = json.loads(source)
-                        if isinstance(source_data, dict) and "url" in source_data:
-                            # This is a recursive scraping configuration
-                            url = source_data["url"]
-                            recursive_config = source_data
-                            logger.info(
-                                f"Recursive scraping enabled for {url}",
-                                extra={
-                                    "upload_id": upload_id,
-                                    "max_pages": recursive_config.get("max_pages"),
-                                    "max_depth": recursive_config.get("max_depth"),
-                                },
-                            )
-                            # Use recursive scraper
-                            text = await recursive_scrape_website(
-                                start_url=url,
-                                max_pages=recursive_config.get("max_pages"),
-                                max_depth=recursive_config.get("max_depth"),
-                            )
-                        else:
-                            # Invalid JSON, fall back to regular scraping
-                            text = await smart_scrape_url(source)
-                    except (json.JSONDecodeError, TypeError):
-                        # Not JSON, treat as regular URL
-                        text = await smart_scrape_url(source)
-                elif doc_type == "json":
-                    text = await extract_text_from_json_url(source)
-                else:
-                    raise ValueError(f"Unsupported document type: {doc_type}")
-
-                # Validate extracted text
-                if not text or len(text.strip()) < 10:
-                    # For e-commerce URLs, provide more specific error message
-                    if doc_type == "url" and is_ecommerce_url(actual_url):
-                        raise ValueError(
-                            f"Failed to extract meaningful content from Shopify/e-commerce site. "
-                            f"The site may require JavaScript rendering or have anti-scraping measures. "
-                            f"Extracted {len(text.strip()) if text else 0} characters."
-                        )
-                    raise ValueError("No meaningful text content extracted")
-
-                logger.info(
-                    "Text extraction successful",
-                    extra={
-                        "upload_id": upload_id,
-                        "doc_type": doc_type,
-                        "chars_extracted": len(text),
-                    },
-                )
-
-                # Process text into chunks and embeddings
-                chunks = split_into_chunks(text)
-                pre_filter_count = len(chunks)
-
-                # If we have very few chunks or very short text, log a warning
-                if pre_filter_count == 0:
-                    logger.warning(
-                        "No chunks created from extracted text",
+        async def worker(upload):
+            async with semaphore:
+                try:
+                    await _process_upload_record(upload, supabase_client)
+                except (ValueError, TypeError, requests.RequestException) as e:
+                    error_msg = str(e)
+                    logger.error(
+                        "Upload processing failed",
                         extra={
-                            "upload_id": upload_id,
-                            "text_length": len(text),
-                            "text_preview": text[:500] if text else "No text",
+                            "upload_id": upload.get("id", "unknown"),
+                            "error": error_msg,
+                            "error_type": type(e).__name__,
                         },
-                    )
-                elif pre_filter_count < 3 and len(text) < 500:
-                    logger.warning(
-                        "Very few chunks created from short text",
-                        extra={
-                            "upload_id": upload_id,
-                            "chunk_count": pre_filter_count,
-                            "text_length": len(text),
-                        },
+                        exc_info=True,
                     )
 
-                # Check if this is an e-commerce URL for less aggressive filtering
-                # Use actual_url which handles JSON-encoded sources
-                is_ecommerce = (
-                    is_ecommerce_url(actual_url) if doc_type == "url" else False
-                )
-
-                # Filter chunks - use less aggressive filtering for e-commerce sites
-                if is_ecommerce:
-                    # For e-commerce sites, use a more lenient filter
-                    # First try standard filtering
-                    filtered_chunks = filter_noise_chunks(chunks)
-
-                    # If all chunks were filtered out, try progressively more lenient filtering
-                    if not filtered_chunks and pre_filter_count > 0:
-                        logger.warning(
-                            "All chunks filtered out for e-commerce site, trying lenient filtering",
+                    # Update status to failed
+                    try:
+                        supabase_client.table("uploads").update(
+                            {"status": "failed", "error_message": error_msg}
+                        ).eq("id", upload["id"]).execute()
+                    except (requests.RequestException, ValueError) as update_error:
+                        logger.error(
+                            "Failed to update upload error status",
                             extra={
-                                "upload_id": upload_id,
-                                "pre_filter_count": pre_filter_count,
-                                "source": log_domain_safely(actual_url),
+                                "upload_id": upload.get("id"),
+                                "error": str(update_error),
                             },
                         )
-                        # Use TextCleaner directly with lower min_length
-                        from .text_cleaner import TextCleaner
 
-                        # Try progressively more lenient thresholds
-                        for min_len in [30, 20, 10]:
-                            filtered_chunks = TextCleaner.filter_noise_chunks(
-                                chunks, min_length=min_len
-                            )
-                            if filtered_chunks:
-                                logger.info(
-                                    f"Lenient filtering succeeded with min_length={min_len}",
-                                    extra={
-                                        "upload_id": upload_id,
-                                        "chunks_kept": len(filtered_chunks),
-                                        "min_length": min_len,
-                                    },
-                                )
-                                break
-
-                        # Last resort: if still no chunks, keep any chunk > 5 chars that doesn't match noise patterns
-                        if not filtered_chunks:
-                            logger.warning(
-                                "Even lenient filtering removed all chunks, using last resort filter",
-                                extra={
-                                    "upload_id": upload_id,
-                                    "pre_filter_count": pre_filter_count,
-                                    "text_length": len(text),
-                                },
-                            )
-                            # Keep chunks that are at least 5 chars and don't match strict noise patterns
-                            import re
-
-                            strict_noise = [
-                                r"^\s*(Sign In|Sign Up|Log in)\s*$",
-                                r"^\s*(Add to cart|View Cart|Checkout)\s*$",
-                                r"^\s*(Cookie Policy|Privacy Policy)\s*$",
-                            ]
-                            compiled_strict = [
-                                re.compile(pat, re.IGNORECASE) for pat in strict_noise
-                            ]
-
-                            filtered_chunks = []
-                            for chunk in chunks:
-                                chunk_stripped = chunk.strip()
-                                if len(chunk_stripped) >= 5:
-                                    # Only filter if it matches strict noise patterns
-                                    is_strict_noise = any(
-                                        pat.search(chunk_stripped)
-                                        for pat in compiled_strict
-                                    )
-                                    if not is_strict_noise:
-                                        filtered_chunks.append(chunk)
-
-                            if filtered_chunks:
-                                logger.info(
-                                    f"Last resort filter kept {len(filtered_chunks)} chunks",
-                                    extra={
-                                        "upload_id": upload_id,
-                                        "chunks_kept": len(filtered_chunks),
-                                    },
-                                )
-                            else:
-                                # Absolute last resort: if we have ANY text at all, create a single chunk from it
-                                # This handles cases where collection pages have very minimal but valid content
-                                if text and len(text.strip()) > 10:
-                                    logger.warning(
-                                        "All chunks filtered, creating single chunk from full text as absolute last resort",
-                                        extra={
-                                            "upload_id": upload_id,
-                                            "text_length": len(text),
-                                            "text_preview": text[:200],
-                                        },
-                                    )
-                                    # Create one chunk from the full text (will be truncated by chunker if too long)
-                                    filtered_chunks = [text.strip()]
-
-                    chunks = filtered_chunks
-                else:
-                    chunks = filter_noise_chunks(chunks)
-
-                # CRITICAL: If still no chunks (including case where pre_filter_count == 0),
-                # create a single chunk from the full text as absolute last resort
-                if not chunks and text and len(text.strip()) > 10:
-                    logger.warning(
-                        "No chunks after all processing, creating single chunk from full text as absolute last resort",
-                        extra={
-                            "upload_id": upload_id,
-                            "text_length": len(text),
-                            "pre_filter_count": pre_filter_count,
-                            "text_preview": text[:200],
-                        },
-                    )
-                    chunks = [text.strip()]
-
-                if not chunks:
-                    # Provide detailed error message with diagnostics
-                    error_details = {
-                        "pre_filter_count": pre_filter_count,
-                        "text_length": len(text),
-                        "text_preview": text[:200] if text else "No text",
-                        "is_ecommerce": is_ecommerce,
-                        "source": log_domain_safely(
-                            actual_url if doc_type == "url" else source
-                        ),
-                    }
-                    logger.error(
-                        "No text chunks generated after filtering",
-                        extra={"upload_id": upload_id, **error_details},
-                    )
-                    raise ValueError(
-                        f"No text chunks generated after filtering. "
-                        f"Extracted {len(text)} characters, created {pre_filter_count} chunks before filtering. "
-                        f"This may indicate the content was mostly UI noise or the scraper needs adjustment."
-                    )
-
-                embeddings = get_embeddings_for_chunks(chunks)
-                if not embeddings:
-                    raise ValueError("No embeddings generated")
-
-                logger.info(
-                    "Chunks and embeddings generated",
-                    extra={
-                        "upload_id": upload_id,
-                        "chunk_count": len(chunks),
-                        "chunk_count_before_filter": pre_filter_count,
-                        "embedding_count": len(embeddings),
-                    },
-                )
-
-                # Upload to Pinecone with source URL for enhanced metadata
-                upload_to_pinecone(chunks, embeddings, namespace, upload_id, source)
-
-                # Update status to completed
-                supabase_client.table("uploads").update(
-                    {"status": "completed", "error_message": None}
-                ).eq("id", upload_id).execute()
-
-                logger.info(
-                    "Upload processing completed successfully",
-                    extra={"upload_id": upload_id, "org_id": org_id},
-                )
-
-            except (ValueError, TypeError, requests.RequestException) as e:
-                error_msg = str(e)
-                logger.error(
-                    "Upload processing failed",
-                    extra={
-                        "upload_id": upload.get("id", "unknown"),
-                        "error": error_msg,
-                        "error_type": type(e).__name__,
-                    },
-                    exc_info=True,
-                )
-
-                # Update status to failed
-                try:
-                    supabase_client.table("uploads").update(
-                        {"status": "failed", "error_message": error_msg}
-                    ).eq("id", upload["id"]).execute()
-                except (requests.RequestException, ValueError) as update_error:
-                    logger.error(
-                        "Failed to update upload error status",
-                        extra={
-                            "upload_id": upload.get("id"),
-                            "error": str(update_error),
-                        },
-                    )
+        await asyncio.gather(*(worker(upload) for upload in uploads))
 
     except (
         requests.RequestException,
