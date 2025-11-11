@@ -49,301 +49,336 @@ class DocumentRetrievalService:
         self.enable_reranking = True
         self.enable_metadata_filtering = True
 
-    async def retrieve_documents(self, queries: List[str]) -> List[Dict[str, Any]]:
+    async def retrieve_documents(
+        self,
+        queries: List[str],
+        intent_config: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         """Retrieve relevant documents with intelligent caching (Cache-Aside pattern)"""
-        # Check cache first for the entire query set
-        cache_key = self._generate_retrieval_cache_key(queries)
+        original_retrieval_config = self.retrieval_config.copy()
+        original_rerank_flag = self.enable_reranking
 
-        # Try to get cached results
-        cached_results = await self._get_cached_retrieval_results(cache_key)
-        if cached_results:
-            logger.info("Vector cache HIT for %d queries", len(queries))
-            return cached_results
-
-        # Cache miss - perform retrieval
-        logger.info(
-            "Vector cache MISS - performing retrieval for %d queries", len(queries)
-        )
-        all_docs = {}
-
-        # Get retrieval strategy from context config
-        if self.context_config and hasattr(self.context_config, "retrieval_strategy"):
-            strategy = self.context_config.retrieval_strategy
-            semantic_weight = self.context_config.semantic_weight
-            keyword_weight = self.context_config.keyword_weight
-        elif self.context_config and isinstance(self.context_config, dict):
-            # Handle dict-based config
-            strategy = self.context_config.get("retrieval_strategy", "vector_search")
-            semantic_weight = self.context_config.get("semantic_weight", 0.8)
-            keyword_weight = self.context_config.get("keyword_weight", 0.2)
-        else:
-            # Handle None or invalid config - use defaults
-            strategy = "vector_search"
-            semantic_weight = 0.8
-            keyword_weight = 0.2
-
-        logger.info(
-            "Using retrieval strategy: %s (semantic: %s, keyword: %s)",
-            strategy,
-            semantic_weight,
-            keyword_weight,
-        )
-
-        # Build metadata filters once for all queries (if enabled)
-        combined_query = " ".join(queries)
-        metadata_filters = (
-            self._build_metadata_filters(combined_query)
-            if self.enable_metadata_filtering
-            else {}
-        )
-
-        # OPTIMIZATION: Process all queries in parallel instead of sequentially
-        async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
-            """Retrieve documents for a single query with error handling"""
-            try:
-                # Strategy-based retrieval with metadata filters
-                if strategy == "semantic_only":
-                    return await self._semantic_retrieval(query, metadata_filters)
-                elif strategy == "hybrid":
-                    return await self._hybrid_retrieval(
-                        query, semantic_weight, keyword_weight
-                    )
-                elif strategy == "keyword_boost":
-                    return await self._keyword_boost_retrieval(
-                        query, semantic_weight, keyword_weight
-                    )
-                elif strategy == "domain_specific":
-                    return await self._domain_specific_retrieval(query)
-                else:
-                    # Fallback to semantic only
-                    return await self._semantic_retrieval(query, metadata_filters)
-
-            except Exception as e:
-                logger.warning(
-                    "Retrieval failed for query '%s' with strategy %s: %s",
-                    query,
-                    strategy,
-                    e,
-                )
-                # Fallback to basic semantic search
-                try:
-                    return await self._semantic_retrieval(query)
-                except Exception as fallback_e:
-                    logger.error("Fallback retrieval also failed: %s", fallback_e)
-                    raise DocumentRetrievalError(
-                        f"Document retrieval failed: {e}"
-                    ) from e
-
-        # Execute all query retrievals in parallel with timeout
+        intent_overrides = intent_config or {}
         try:
-            # Add timeout for document retrieval - increased to 20 seconds for better reliability
-            query_results = await asyncio.wait_for(
-                asyncio.gather(
-                    *[retrieve_for_query(query) for query in queries],
-                    return_exceptions=True,
-                ),
-                timeout=20.0,  # 20 second timeout for all vector searches (increased from 10s)
+            if "k_values" in intent_overrides and intent_overrides["k_values"]:
+                self.retrieval_config = intent_overrides["k_values"]
+            if "rerank_enabled" in intent_overrides:
+                self.enable_reranking = bool(intent_overrides["rerank_enabled"])
+
+            # Check cache first for the entire query set
+            cache_key = self._generate_retrieval_cache_key(queries)
+
+            # Try to get cached results
+            cached_results = await self._get_cached_retrieval_results(cache_key)
+            if cached_results:
+                logger.info("Vector cache HIT for %d queries", len(queries))
+                return cached_results
+
+            # Cache miss - perform retrieval
+            logger.info(
+                "Vector cache MISS - performing retrieval for %d queries", len(queries)
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Document retrieval timed out after 20 seconds - returning empty results for fallback"
-            )
-            # Return empty list instead of raising error - allows chatbot to respond without context
-            return []
-        except Exception as e:
-            logger.error("Parallel retrieval failed: %s", e)
-            raise DocumentRetrievalError(f"Document retrieval failed: {e}") from e
+            all_docs = {}
 
-        # Merge results from all queries, keeping highest scores
-        for result in query_results:
-            if isinstance(result, Exception):
-                logger.error("Query retrieval error: %s", result)
-                continue
-
-            if not result:
-                continue
-
-            for doc in result:
-                doc_id = doc["id"]
-                if doc_id not in all_docs or doc["score"] > all_docs[doc_id]["score"]:
-                    all_docs[doc_id] = doc
-
-        # Return top documents sorted by score
-        sorted_docs = sorted(all_docs.values(), key=lambda x: x["score"], reverse=True)
-
-        # Determine query type for adaptive optimization
-        is_contact_query = any(
-            keyword in query.lower()
-            for query in queries
-            for keyword in [
-                "phone",
-                "number",
-                "email",
-                "contact",
-                "call",
-                "reach",
-                "address",
-                "demo",
-                "booking",
-                "book",
-                "schedule",
-            ]
-        )
-
-        is_product_query = any(
-            keyword in query.lower()
-            for query in queries
-            for keyword in [
-                "product",
-                "price",
-                "cost",
-                "buy",
-                "purchase",
-                "perfume",
-                "item",
-                "catalog",
-                "shop",
-                "store",
-                "available",
-                "offer",
-                "list",
-            ]
-        )
-
-        # Calculate optimal k-value based on query type
-        optimal_k = self._calculate_optimal_k(
-            combined_query,
-            is_contact_query=is_contact_query,
-            is_product_query=is_product_query,
-            available_docs=len(sorted_docs),
-        )
-
-        if is_contact_query:
-            # Use adaptive k-value (typically 6 for contact queries)
-            final_count = min(optimal_k, len(sorted_docs))
-
-            # OPTIMIZATION: Only re-score top candidates (not all documents)
-            # Process top 10 candidates to find best 6 - reduces contact extraction overhead
-            # We don't need to process all documents since we only return 6
-            candidates_to_score = min(10, len(sorted_docs))
-            candidates = sorted_docs[:candidates_to_score]
-
-            # Re-score and re-sort documents based on contact information content
-            # This prioritizes chunks that actually contain contact info
-            contact_scored_docs = []
-            for doc in candidates:
-                chunk = doc.get("chunk", "")
-                contact_score = contact_extractor.score_chunk_for_contact_query(chunk)
-
-                # Boost score if chunk contains contact info
-                if contact_score > 0:
-                    # Combine original similarity score with contact score
-                    # Contact score is normalized to 0-1 range and added as a boost
-                    boosted_score = doc["score"] + (contact_score / 100.0)
-                    doc["contact_boosted_score"] = boosted_score
-                    doc["contact_info"] = contact_extractor.extract_contact_info(chunk)
-                else:
-                    doc["contact_boosted_score"] = doc["score"]
-                    doc["contact_info"] = {"has_contact_info": False}
-
-                contact_scored_docs.append(doc)
-
-            # Re-sort by contact-boosted score
-            contact_scored_docs.sort(
-                key=lambda x: x["contact_boosted_score"], reverse=True
-            )
-
-            # Log contact information found
-            contact_found = sum(
-                1
-                for doc in contact_scored_docs
-                if doc["contact_info"].get("has_contact_info")
-            )
-            if contact_found > 0:
-                logger.info(
-                    "🔍 Contact query - found contact info in %d/%d documents",
-                    contact_found,
-                    len(contact_scored_docs[:final_count]),
+            # Get retrieval strategy from context config
+            if self.context_config and hasattr(
+                self.context_config, "retrieval_strategy"
+            ):
+                strategy = self.context_config.retrieval_strategy
+                semantic_weight = self.context_config.semantic_weight
+                keyword_weight = self.context_config.keyword_weight
+            elif self.context_config and isinstance(self.context_config, dict):
+                # Handle dict-based config
+                strategy = self.context_config.get(
+                    "retrieval_strategy", "vector_search"
                 )
-                # Log what contact info was found
-                for doc in contact_scored_docs[:5]:  # Log top 5
-                    info = doc["contact_info"]
-                    if info.get("has_contact_info"):
-                        logger.info(
-                            "📞 Contact info in doc %s: phones=%d, emails=%d, demo_links=%d",
-                            doc["id"][:20],
-                            len(info.get("phones", [])),
-                            len(info.get("emails", [])),
-                            len(info.get("demo_links", [])),
-                        )
+                semantic_weight = self.context_config.get("semantic_weight", 0.8)
+                keyword_weight = self.context_config.get("keyword_weight", 0.2)
             else:
+                # Handle None or invalid config - use defaults
+                strategy = "vector_search"
+                semantic_weight = 0.8
+                keyword_weight = 0.2
+
+            strategy = intent_overrides.get("retrieval_strategy", strategy)
+
+            logger.info(
+                "Using retrieval strategy: %s (semantic: %s, keyword: %s)",
+                strategy,
+                semantic_weight,
+                keyword_weight,
+            )
+
+            # Build metadata filters once for all queries (if enabled)
+            combined_query = " ".join(queries)
+            metadata_filters = (
+                self._build_metadata_filters(combined_query)
+                if self.enable_metadata_filtering
+                else {}
+            )
+            intent_filters = intent_overrides.get("metadata_filters") or {}
+            if intent_filters:
+                metadata_filters = {**metadata_filters, **intent_filters}
+
+            # OPTIMIZATION: Process all queries in parallel instead of sequentially
+            async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
+                """Retrieve documents for a single query with error handling"""
+                try:
+                    # Strategy-based retrieval with metadata filters
+                    if strategy == "semantic_only":
+                        return await self._semantic_retrieval(query, metadata_filters)
+                    elif strategy == "hybrid":
+                        return await self._hybrid_retrieval(
+                            query, semantic_weight, keyword_weight
+                        )
+                    elif strategy == "keyword_boost":
+                        return await self._keyword_boost_retrieval(
+                            query, semantic_weight, keyword_weight
+                        )
+                    elif strategy == "domain_specific":
+                        return await self._domain_specific_retrieval(query)
+                    else:
+                        # Fallback to semantic only
+                        return await self._semantic_retrieval(query, metadata_filters)
+
+                except Exception as e:
+                    logger.warning(
+                        "Retrieval failed for query '%s' with strategy %s: %s",
+                        query,
+                        strategy,
+                        e,
+                    )
+                    # Fallback to basic semantic search
+                    try:
+                        return await self._semantic_retrieval(query)
+                    except Exception as fallback_e:
+                        logger.error("Fallback retrieval also failed: %s", fallback_e)
+                        raise DocumentRetrievalError(
+                            f"Document retrieval failed: {e}"
+                        ) from e
+
+            # Execute all query retrievals in parallel with timeout
+            try:
+                # Add timeout for document retrieval - increased to 20 seconds for better reliability
+                query_results = await asyncio.wait_for(
+                    asyncio.gather(
+                        *[retrieve_for_query(query) for query in queries],
+                        return_exceptions=True,
+                    ),
+                    timeout=20.0,  # 20 second timeout for all vector searches (increased from 10s)
+                )
+            except asyncio.TimeoutError:
                 logger.warning(
-                    "⚠️ Contact query detected but NO contact info found in any retrieved documents!"
+                    "Document retrieval timed out after 20 seconds - returning empty results for fallback"
                 )
-                # Log chunk previews for debugging
-                for i, doc in enumerate(contact_scored_docs[:5]):
-                    chunk_preview = doc.get("chunk", "")[:200]
-                    logger.debug("Doc %d chunk preview: %s", i + 1, chunk_preview)
+                # Return empty list instead of raising error - allows chatbot to respond without context
+                return []
+            except Exception as e:
+                logger.error("Parallel retrieval failed: %s", e)
+                raise DocumentRetrievalError(f"Document retrieval failed: {e}") from e
 
-            final_docs = contact_scored_docs[:final_count]
+            # Merge results from all queries, keeping highest scores
+            for result in query_results:
+                if isinstance(result, Exception):
+                    logger.error("Query retrieval error: %s", result)
+                    continue
 
-            # Re-rank documents for better quality (if enabled)
-            if self.enable_reranking and len(final_docs) > 3:
-                final_docs = self._rerank_documents(
-                    combined_query, final_docs, top_k=final_count
-                )
-                logger.debug(f"Re-ranked {len(final_docs)} contact documents")
+                if not result:
+                    continue
 
-            logger.info(
-                "🔍 Contact query detected - returning %d documents (k=%d, boosted by contact info)",
-                final_count,
-                optimal_k,
+                for doc in result:
+                    doc_id = doc["id"]
+                    if (
+                        doc_id not in all_docs
+                        or doc["score"] > all_docs[doc_id]["score"]
+                    ):
+                        all_docs[doc_id] = doc
+
+            # Return top documents sorted by score
+            sorted_docs = sorted(
+                all_docs.values(), key=lambda x: x["score"], reverse=True
             )
-        elif is_product_query:
-            # Use adaptive k-value (typically 6 for product queries)
-            final_count = min(optimal_k, len(sorted_docs))
-            final_docs = sorted_docs[:final_count]
 
-            # Re-rank documents for better quality (if enabled)
-            if self.enable_reranking and len(final_docs) > 3:
-                final_docs = self._rerank_documents(
-                    combined_query, final_docs, top_k=final_count
-                )
-                logger.debug(f"Re-ranked {len(final_docs)} product documents")
-
-            logger.info(
-                "🛍️ Product query detected - returning %d documents (k=%d, optimized)",
-                final_count,
-                optimal_k,
+            # Determine query type for adaptive optimization
+            is_contact_query = any(
+                keyword in query.lower()
+                for query in queries
+                for keyword in [
+                    "phone",
+                    "number",
+                    "email",
+                    "contact",
+                    "call",
+                    "reach",
+                    "address",
+                    "demo",
+                    "booking",
+                    "book",
+                    "schedule",
+                ]
             )
-        else:
-            # Use adaptive k-value for general queries
-            final_count = min(optimal_k, len(sorted_docs))
-            final_docs = sorted_docs[:final_count]
 
-            # Re-rank for complex queries (if enabled)
-            if self.enable_reranking and len(final_docs) > 4:
-                final_docs = self._rerank_documents(
-                    combined_query, final_docs, top_k=final_count
+            is_product_query = any(
+                keyword in query.lower()
+                for query in queries
+                for keyword in [
+                    "product",
+                    "price",
+                    "cost",
+                    "buy",
+                    "purchase",
+                    "perfume",
+                    "item",
+                    "catalog",
+                    "shop",
+                    "store",
+                    "available",
+                    "offer",
+                    "list",
+                ]
+            )
+
+            # Calculate optimal k-value based on query type
+            optimal_k = self._calculate_optimal_k(
+                combined_query,
+                is_contact_query=is_contact_query,
+                is_product_query=is_product_query,
+                available_docs=len(sorted_docs),
+            )
+
+            if is_contact_query:
+                # Use adaptive k-value (typically 6 for contact queries)
+                final_count = min(optimal_k, len(sorted_docs))
+
+                # OPTIMIZATION: Only re-score top candidates (not all documents)
+                # Process top 10 candidates to find best 6 - reduces contact extraction overhead
+                # We don't need to process all documents since we only return 6
+                candidates_to_score = min(10, len(sorted_docs))
+                candidates = sorted_docs[:candidates_to_score]
+
+                # Re-score and re-sort documents based on contact information content
+                # This prioritizes chunks that actually contain contact info
+                contact_scored_docs = []
+                for doc in candidates:
+                    chunk = doc.get("chunk", "")
+                    contact_score = contact_extractor.score_chunk_for_contact_query(
+                        chunk
+                    )
+
+                    # Boost score if chunk contains contact info
+                    if contact_score > 0:
+                        # Combine original similarity score with contact score
+                        # Contact score is normalized to 0-1 range and added as a boost
+                        boosted_score = doc["score"] + (contact_score / 100.0)
+                        doc["contact_boosted_score"] = boosted_score
+                        doc["contact_info"] = contact_extractor.extract_contact_info(
+                            chunk
+                        )
+                    else:
+                        doc["contact_boosted_score"] = doc["score"]
+                        doc["contact_info"] = {"has_contact_info": False}
+
+                    contact_scored_docs.append(doc)
+
+                # Re-sort by contact-boosted score
+                contact_scored_docs.sort(
+                    key=lambda x: x["contact_boosted_score"], reverse=True
                 )
-                logger.debug(f"Re-ranked {len(final_docs)} general documents")
 
-            logger.debug(f"Returning {final_count} documents (k={optimal_k})")
+                # Log contact information found
+                contact_found = sum(
+                    1
+                    for doc in contact_scored_docs
+                    if doc["contact_info"].get("has_contact_info")
+                )
+                if contact_found > 0:
+                    logger.info(
+                        "🔍 Contact query - found contact info in %d/%d documents",
+                        contact_found,
+                        len(contact_scored_docs[:final_count]),
+                    )
+                    # Log what contact info was found
+                    for doc in contact_scored_docs[:5]:  # Log top 5
+                        info = doc["contact_info"]
+                        if info.get("has_contact_info"):
+                            logger.info(
+                                "📞 Contact info in doc %s: phones=%d, emails=%d, demo_links=%d",
+                                doc["id"][:20],
+                                len(info.get("phones", [])),
+                                len(info.get("emails", [])),
+                                len(info.get("demo_links", [])),
+                            )
+                else:
+                    logger.warning(
+                        "⚠️ Contact query detected but NO contact info found in any retrieved documents!"
+                    )
+                    # Log chunk previews for debugging
+                    for i, doc in enumerate(contact_scored_docs[:5]):
+                        chunk_preview = doc.get("chunk", "")[:200]
+                        logger.debug("Doc %d chunk preview: %s", i + 1, chunk_preview)
 
-        # DEBUG: Log what we're returning
-        logger.info(
-            "📤 Returning %d documents (scores: %s)",
-            len(final_docs),
-            [f"{doc['score']:.3f}" for doc in final_docs[:5]],
-        )
+                final_docs = contact_scored_docs[:final_count]
 
-        # Cache results asynchronously to avoid blocking
-        # Save task to prevent premature garbage collection
-        cache_task = asyncio.create_task(
-            self._cache_retrieval_results(cache_key, final_docs)
-        )
+                # Re-rank documents for better quality (if enabled)
+                if self.enable_reranking and len(final_docs) > 3:
+                    final_docs = self._rerank_documents(
+                        combined_query, final_docs, top_k=final_count
+                    )
+                    logger.debug(f"Re-ranked {len(final_docs)} contact documents")
 
-        return final_docs
+                logger.info(
+                    "🔍 Contact query detected - returning %d documents (k=%d, boosted by contact info)",
+                    final_count,
+                    optimal_k,
+                )
+            elif is_product_query:
+                # Use adaptive k-value (typically 6 for product queries)
+                final_count = min(optimal_k, len(sorted_docs))
+                final_docs = sorted_docs[:final_count]
+
+                # Re-rank documents for better quality (if enabled)
+                if self.enable_reranking and len(final_docs) > 3:
+                    final_docs = self._rerank_documents(
+                        combined_query, final_docs, top_k=final_count
+                    )
+                    logger.debug(f"Re-ranked {len(final_docs)} product documents")
+
+                logger.info(
+                    "🛍️ Product query detected - returning %d documents (k=%d, optimized)",
+                    final_count,
+                    optimal_k,
+                )
+            else:
+                # Use adaptive k-value for general queries
+                final_count = min(optimal_k, len(sorted_docs))
+                final_docs = sorted_docs[:final_count]
+
+                # Re-rank for complex queries (if enabled)
+                if self.enable_reranking and len(final_docs) > 4:
+                    final_docs = self._rerank_documents(
+                        combined_query, final_docs, top_k=final_count
+                    )
+                    logger.debug(f"Re-ranked {len(final_docs)} general documents")
+
+                logger.debug(f"Returning {final_count} documents (k={optimal_k})")
+
+            # DEBUG: Log what we're returning
+            logger.info(
+                "📤 Returning %d documents (scores: %s)",
+                len(final_docs),
+                [f"{doc['score']:.3f}" for doc in final_docs[:5]],
+            )
+
+            # Cache results asynchronously to avoid blocking
+            # Save task to prevent premature garbage collection
+            cache_task = asyncio.create_task(
+                self._cache_retrieval_results(cache_key, final_docs)
+            )
+
+            return final_docs
+        finally:
+            self.retrieval_config = original_retrieval_config
+            self.enable_reranking = original_rerank_flag
 
     async def _semantic_retrieval(
         self, query: str, metadata_filters: Optional[Dict[str, Any]] = None

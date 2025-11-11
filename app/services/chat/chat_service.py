@@ -21,6 +21,7 @@ from .chat_utilities import ChatUtilities
 from .conversation_manager import ConversationManager
 from .document_retrieval_service import DocumentRetrievalService
 from .error_handling_service import ErrorHandlingService
+from .intent_detection_service import IntentDetectionService
 from .response_generation_service import ResponseGenerationService
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,11 @@ class ChatService:
                 chatbot_config=self.chatbot_config,
             )
 
+            # Intent detection service
+            self.intent_detector = IntentDetectionService(
+                openai_client=self.openai_client, org_id=self.org_id
+            )
+
             # Analytics service
             self.analytics = AnalyticsService(
                 org_id=self.org_id,
@@ -223,12 +229,25 @@ class ChatService:
             await add_message_task
             history = await history_task
 
+            # Detect user intent for downstream customization
+            intent_result = await self.intent_detector.detect_intent(
+                message=message,
+                conversation_history=history,
+                context={"org_id": self.org_id},
+            )
+            intent_retrieval_config = self.intent_detector.get_intent_retrieval_config(
+                intent_result
+            )
+            intent_response_config = self.intent_detector.get_intent_response_config(
+                intent_result
+            )
+
             # Step 4: Enhanced query processing and document retrieval (with performance tracking)
             async with performance_monitor.track_operation(
                 "query_enhancement", {"org_id": self.org_id}
             ):
                 enhanced_queries = await self.response_generator.enhance_query(
-                    message, history
+                    message, history, intent_result=intent_result
                 )
 
             async with performance_monitor.track_operation(
@@ -236,9 +255,21 @@ class ChatService:
                 {"org_id": self.org_id, "query_count": len(enhanced_queries)},
             ):
                 try:
-                    documents = await self.document_retrieval.retrieve_documents(
-                        queries=enhanced_queries
+                    retrieval_disabled = (
+                        intent_retrieval_config.get("k_values", {}).get("initial", 1)
+                        <= 0
                     )
+                    if retrieval_disabled:
+                        documents = []
+                        logger.info(
+                            "Skipping document retrieval for intent %s (k=0)",
+                            intent_result.primary_intent.value,
+                        )
+                    else:
+                        documents = await self.document_retrieval.retrieve_documents(
+                            queries=enhanced_queries,
+                            intent_config=intent_retrieval_config,
+                        )
                 except Exception as retrieval_error:
                     # If retrieval fails, continue with empty documents (fallback mode)
                     logger.warning(
@@ -256,8 +287,17 @@ class ChatService:
                         message=message,
                         conversation_history=history,
                         retrieved_documents=documents,
+                        intent_result=intent_result,
+                        intent_response_config=intent_response_config,
                     )
                 )
+                response_data.setdefault("intent", intent_result.to_dict())
+                response_data["intent_response_config"] = intent_response_config
+                response_data["retrieval_stats"] = {
+                    "documents_retrieved": len(documents),
+                    "intent_config": intent_retrieval_config,
+                }
+                response_data["enhanced_queries"] = enhanced_queries
 
             # Step 5.5: Consume tokens if entity information is available
             if self.entity_id and self.entity_type and "tokens_used" in response_data:
@@ -341,6 +381,7 @@ class ChatService:
                 "config_used": self.context_config.config_name
                 if self.context_config
                 else "default",
+                "intent": response_data.get("intent"),
             }
 
         except openai.OpenAIError as e:

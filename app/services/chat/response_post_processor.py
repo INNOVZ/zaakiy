@@ -399,7 +399,7 @@ class ResponsePostProcessor:
                     f"Our main operations are currently based in {base_location}. "
                 )
             else:
-                response = "Right now I only have confirmed details about our location, and nothing about additional offices yet. "
+                response = "Right now I only have confirmed details about our current locations, and nothing about additional offices yet. "
             response += (
                 "However, all interactions and consultations can be managed online, and our team can assist you virtually regardless "
                 "of your location.\n\n"

@@ -16,6 +16,7 @@ from .chat_utilities import ChatUtilities
 from .contact_extractor import contact_extractor
 from .context_builder import ContextBuilder
 from .context_leakage_detector import get_context_leakage_detector
+from .intent_detection_service import IntentResult, IntentType
 from .prompt_sanitizer import PromptInjectionDetector
 from .response_post_processor import ResponsePostProcessor
 
@@ -79,11 +80,172 @@ class ResponseGenerationService:
         self.max_context_length = self._determine_max_context_length(value)
         logger.debug("Using max_context_length: %d", self.max_context_length)
 
+    def _has_pricing_context(
+        self, documents: List[Dict[str, Any]], context_text: str
+    ) -> bool:
+        """Check if current context contains pricing details."""
+        try:
+            for doc in documents:
+                metadata = doc.get("metadata", {})
+                if metadata.get("has_pricing") or metadata.get("pricing_info"):
+                    return True
+
+            lowered = (context_text or "").lower()
+            pricing_terms = [
+                "$",
+                "€",
+                "£",
+                "usd",
+                "eur",
+                "price",
+                "pricing",
+                "per month",
+                "per year",
+                "plan",
+                "package",
+                "tier",
+                "/month",
+                "/year",
+            ]
+            return any(term in lowered for term in pricing_terms)
+        except Exception as e:
+            logger.debug("Pricing context detection failed: %s", e)
+            return False
+
+    def _build_pricing_fallback_response(
+        self, context_data: Dict[str, Any], intent_result: Optional[IntentResult]
+    ) -> Dict[str, Any]:
+        """Return a constructive fallback response when pricing data isn't in context."""
+        contact_info = context_data.get("contact_info", {}) or {}
+        demo_links = contact_info.get("demo_links") or context_data.get(
+            "demo_links", []
+        )
+        demo_link = demo_links[0] if demo_links else None
+
+        response_lines = [
+            "Great question about pricing! 💰",
+            "I don’t see ready-made plan details in this knowledge base right now, but here’s how we can help:",
+            "- **Get a Custom Quote** – We’ll tailor pricing based on your goals.",
+            "- **Schedule a Consultation** – Talk through your requirements and get accurate numbers.",
+            "- **Compare Options** – We can explain different tiers and what’s included.",
+        ]
+
+        if demo_link:
+            response_lines.append(
+                f"\nWould you like me to help you **[connect with our team]({demo_link})** so they can share the latest plans?"
+            )
+        else:
+            response_lines.append(
+                "\nWould you like me to connect you with our team so they can share the latest plans?"
+            )
+
+        response_text = "\n".join(response_lines)
+        return {
+            "response": response_text,
+            "sources": context_data.get("sources", []),
+            "context_used": context_data.get("context_text", ""),
+            "contact_info": contact_info,
+            "demo_links": demo_links,
+            "context_quality": context_data.get("context_quality", {}),
+            "intent": intent_result.to_dict() if intent_result else None,
+        }
+
+    async def enhance_query(
+        self,
+        message: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        intent_result: Optional[IntentResult] = None,
+    ) -> List[str]:
+        """
+        Generate enhanced query variants for better document retrieval.
+
+        Uses light-weight heuristics keyed off detected intent and message keywords.
+        """
+        try:
+            if not message:
+                return [message]
+
+            normalized_message = message.strip()
+            if not normalized_message:
+                return [message]
+
+            primary_intent = intent_result.primary_intent if intent_result else None
+
+            # Greetings or chit-chat don't benefit from query expansion
+            if primary_intent == IntentType.GREETING:
+                return [normalized_message]
+
+            max_variants = 3
+            if self.context_config and hasattr(
+                self.context_config, "max_query_variants"
+            ):
+                max_variants = self.context_config.max_query_variants or max_variants
+            elif isinstance(self.context_config, dict):
+                max_variants = self.context_config.get(
+                    "max_query_variants", max_variants
+                )
+
+            variants: List[str] = []
+            seen: set[str] = set()
+
+            def add_variant(text: Optional[str]):
+                if not text:
+                    return
+                cleaned = text.strip()
+                if not cleaned:
+                    return
+                lowered = cleaned.lower()
+                if lowered not in seen:
+                    seen.add(lowered)
+                    variants.append(cleaned)
+
+            add_variant(normalized_message)
+
+            # Add intent-specific variants
+            def extend_with(items: List[str]):
+                for item in items:
+                    add_variant(item)
+
+            if primary_intent in {IntentType.CONTACT, IntentType.BOOKING} or (
+                not primary_intent
+                and self._is_contact_information_query(normalized_message)
+            ):
+                extend_with(self._get_contact_query_variants(normalized_message))
+
+            if primary_intent in {
+                IntentType.PRODUCT,
+                IntentType.PRICING,
+                IntentType.COMPARISON,
+                IntentType.RECOMMENDATION,
+            }:
+                extend_with(self._get_product_query_variants(normalized_message))
+            else:
+                product_variants = self._get_product_query_variants(normalized_message)
+                extend_with(product_variants)
+
+            # Incorporate recent conversation context for follow-up questions
+            if conversation_history:
+                history_summary = self._summarize_recent_context(conversation_history)
+                if history_summary:
+                    add_variant(f"{history_summary} {normalized_message}")
+
+            # Ensure we always return at least the original query
+            if not variants:
+                variants = [normalized_message]
+
+            return variants[: max(1, max_variants)]
+
+        except Exception as e:
+            logger.warning("Query enhancement failed: %s", e)
+            return [message]
+
     async def generate_enhanced_response(
         self,
         message: str,
         conversation_history: List[Dict[str, Any]],
         retrieved_documents: List[Dict[str, Any]],
+        intent_result: Optional[IntentResult] = None,
+        intent_response_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Generate response with enhanced context engineering"""
         try:
@@ -203,7 +365,19 @@ class ResponseGenerationService:
             logger.info("📝 Context length: %d characters", len(context_text))
 
             # Detect if this is a contact information query - if so, use ZERO temperature
+            intent_primary = intent_result.primary_intent if intent_result else None
             is_contact_query = self._is_contact_information_query(message)
+            if intent_primary in {IntentType.CONTACT, IntentType.BOOKING}:
+                is_contact_query = True
+            intent_prompt_instruction = ""
+            override_temperature = None
+            override_max_tokens = None
+            if intent_response_config:
+                intent_prompt_instruction = intent_response_config.get(
+                    "intent_specific_prompt", ""
+                )
+                override_temperature = intent_response_config.get("temperature")
+                override_max_tokens = intent_response_config.get("max_tokens")
 
             # DEBUG: Check contact information in context
             contact_info = context_data.get("contact_info", {})
@@ -229,6 +403,39 @@ class ResponseGenerationService:
                     len(demo_links_in_context),
                     demo_links_in_context,
                 )
+
+            if intent_primary == IntentType.PRICING:
+                has_pricing_context = self._has_pricing_context(
+                    retrieved_documents, context_text
+                )
+                logger.info(
+                    "Pricing intent detected (has_pricing_context=%s) - returning consultation fallback",
+                    has_pricing_context,
+                )
+                fallback_response = self._build_pricing_fallback_response(
+                    context_data, intent_result
+                )
+                fallback_response.update(
+                    {
+                        "tokens_used": 0,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "document_count": len(retrieved_documents),
+                        "retrieval_method": "enhanced_rag",
+                        "model_used": self.chatbot_config.model,
+                        "generation_metadata": {
+                            "temperature": intent_response_config.get("temperature")
+                            if intent_response_config
+                            else self.chatbot_config.temperature,
+                            "max_tokens": intent_response_config.get("max_tokens")
+                            if intent_response_config
+                            else self.chatbot_config.max_tokens,
+                            "context_length": len(context_text),
+                            "message_count": 1,
+                        },
+                    }
+                )
+                return fallback_response
 
             if is_contact_query:
                 # Check if we have any contact info
@@ -264,7 +471,9 @@ class ResponseGenerationService:
                     )
 
             # Create system prompt with context
-            system_prompt = self._create_system_prompt(context_data)
+            system_prompt = self._create_system_prompt(
+                context_data, intent_prompt_instruction
+            )
 
             # Build conversation messages
             messages = self._build_conversation_messages(
@@ -273,7 +482,10 @@ class ResponseGenerationService:
 
             # Generate response using OpenAI with dynamic temperature
             openai_response = await self._call_openai(
-                messages, force_factual=is_contact_query
+                messages,
+                force_factual=is_contact_query,
+                override_temperature=override_temperature,
+                override_max_tokens=override_max_tokens,
             )
 
             # Process and format the response
@@ -284,6 +496,11 @@ class ResponseGenerationService:
                 is_contact_query,
                 message,
             )
+            formatted_response["intent"] = (
+                intent_result.to_dict() if intent_result else None
+            )
+            if intent_response_config:
+                formatted_response["intent_response_config"] = intent_response_config
 
             # Add token usage information to the response
             formatted_response["tokens_used"] = openai_response["tokens_used"]
@@ -312,7 +529,9 @@ class ResponseGenerationService:
         )
         return asdict(context_result)
 
-    def _create_system_prompt(self, context_data: Dict[str, Any]) -> str:
+    def _create_system_prompt(
+        self, context_data: Dict[str, Any], intent_instruction: str = ""
+    ) -> str:
         """Create system prompt with context"""
         # CRITICAL RULES - These must ALWAYS come first, before any other instructions
         # IMPORTANT: This is a MULTITENANT SaaS platform - responses must be GENERAL and work for ANY business
@@ -368,6 +587,10 @@ CRITICAL RULES instead. Always be constructive and helpful, never robotic.
         business_context_text = ""
         specialized_instructions_text = ""
 
+        intent_instruction_text = (
+            f"\n\nINTENT GUIDANCE:\n{intent_instruction}" if intent_instruction else ""
+        )
+
         if self.context_config:
             if (
                 hasattr(self.context_config, "business_context")
@@ -395,7 +618,10 @@ CRITICAL RULES instead. Always be constructive and helpful, never robotic.
 
         # Combine base prompt with context engineering settings
         enhanced_base_prompt = (
-            raw_base_prompt + business_context_text + specialized_instructions_text
+            raw_base_prompt
+            + business_context_text
+            + specialized_instructions_text
+            + intent_instruction_text
         )
 
         # CRITICAL: Sanitize base_prompt to remove any instructions that conflict with our rules
@@ -432,7 +658,8 @@ When you cannot provide the exact information requested, you MUST:
 2. Acknowledge the request naturally (without using forbidden phrases)
 3. Offer GENERAL alternatives that work for any business type (don't assume specific processes)
 4. Include actionable next steps with links when available in context
-5. Make the user feel helped and supported
+5. Make the user feel helped and supported]
+
 6. NEVER make specific claims about what the business offers (demos, trials, locations, etc.)
 7. Use general language: "our team", "contact us", "get more information" rather than specific processes
 
@@ -774,7 +1001,11 @@ REMEMBER:
             raise ResponseGenerationError(f"OpenAI streaming failed: {e}") from e
 
     async def _call_openai(
-        self, messages: List[Dict[str, str]], force_factual: bool = False
+        self,
+        messages: List[Dict[str, str]],
+        force_factual: bool = False,
+        override_temperature: Optional[float] = None,
+        override_max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Call OpenAI API with error handling and dynamic temperature control"""
         try:
@@ -799,6 +1030,11 @@ REMEMBER:
                 logger.info(
                     f"⚠️ max_tokens increased from {config_max_tokens} to {max_tokens} for human-like responses"
                 )
+            if override_max_tokens:
+                max_tokens = override_max_tokens
+                logger.debug(
+                    "Using override max_tokens=%d from intent config", max_tokens
+                )
 
             # HUMAN-LIKE RESPONSES: Slightly higher temperature for more natural, conversational responses
             # Balance between accuracy (low temp) and human-like quality (higher temp)
@@ -820,6 +1056,12 @@ REMEMBER:
                         f"⚠️ temperature increased from {config_temp} to {temperature} for more human-like responses"
                     )
                 logger.debug("Using temperature=%.1f for general query", temperature)
+                if override_temperature is not None:
+                    temperature = override_temperature
+                    logger.debug(
+                        "Using override temperature=%.1f from intent config",
+                        temperature,
+                    )
 
             # Add timeout to prevent hanging
             # OpenAI client is sync, so we run it in executor with timeout

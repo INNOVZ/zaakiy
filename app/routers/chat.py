@@ -22,6 +22,7 @@ from ..models import (
 from ..services.analytics.context_analytics import context_analytics
 from ..services.analytics.context_config import context_config_manager
 from ..services.auth import get_user_with_org, verify_jwt_token_from_header
+from ..services.chat.analytics_service import AnalyticsService
 from ..services.chat.chat_service import ChatService
 from ..services.chat.prompt_sanitizer import get_prompt_sanitizer
 from ..services.shared import cache_service
@@ -1266,6 +1267,186 @@ async def analyze_query_optimization(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ==========================================
+# INTENT ANALYTICS ENDPOINTS
+# ==========================================
+
+
+@router.get("/analytics/intent")
+@handle_errors(context="intent_analytics", service="chat_router")
+async def get_intent_analytics(
+    days: int = 7, user=Depends(verify_jwt_token_from_header)
+):
+    """
+    Get comprehensive intent analytics for the organization.
+
+    Args:
+        days: Number of days to look back (default: 7)
+        user: Authenticated user
+
+    Returns:
+        Comprehensive intent analytics including:
+        - Summary: Overview metrics
+        - Intent distribution: Count of each intent type
+        - Intent performance: Performance metrics by intent
+        - Intent confidence: Confidence distribution
+        - Detection methods: Detection method breakdown
+        - Intent trends: Trends over time
+        - Intent fulfillment: Fulfillment rates by intent
+    """
+    try:
+        user_data = await get_user_with_org(user["user_id"])
+        org_id = user_data["org_id"]
+
+        # Validate days parameter
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400, detail="Days must be between 1 and 365"
+            )
+
+        # Initialize analytics service directly (avoids unnecessary ChatService dependencies)
+        analytics_service = AnalyticsService(
+            org_id=org_id,
+            supabase_client=supabase,
+            context_config=None,
+        )
+
+        # Get intent analytics
+        intent_analytics = await analytics_service.get_intent_analytics(days=days)
+
+        # Check for errors
+        if "error" in intent_analytics:
+            logger.error(
+                "Error getting intent analytics",
+                extra={"error": intent_analytics["error"], "org_id": org_id},
+            )
+            raise HTTPException(status_code=500, detail=intent_analytics["error"])
+
+        logger.info(
+            "Intent analytics retrieved successfully",
+            extra={
+                "org_id": org_id,
+                "days": days,
+                "total_queries": intent_analytics.get("summary", {}).get(
+                    "total_queries", 0
+                ),
+                "unique_intents": intent_analytics.get("summary", {}).get(
+                    "unique_intents", 0
+                ),
+            },
+        )
+
+        return {
+            "success": True,
+            "analytics": intent_analytics,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get intent analytics",
+            extra={"error": str(e), "org_id": org_id, "days": days},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get intent analytics: {str(e)}"
+        ) from e
+
+
+@router.get("/analytics/intent/{intent_type}")
+@handle_errors(context="intent_details", service="chat_router")
+async def get_intent_details(
+    intent_type: str, days: int = 7, user=Depends(verify_jwt_token_from_header)
+):
+    """
+    Get detailed analytics for a specific intent type.
+
+    Args:
+        intent_type: The intent type to analyze (e.g., "contact", "product", "booking")
+        days: Number of days to look back (default: 7)
+        user: Authenticated user
+
+    Returns:
+        Detailed intent analytics including:
+        - Intent type: The analyzed intent type
+        - Total queries: Number of queries with this intent
+        - Confidence: Confidence metrics and distribution
+        - Performance: Performance metrics (retrieval time, quality, sources)
+        - Detection methods: Detection method breakdown
+    """
+    try:
+        user_data = await get_user_with_org(user["user_id"])
+        org_id = user_data["org_id"]
+
+        # Validate parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400, detail="Days must be between 1 and 365"
+            )
+
+        if not intent_type or not intent_type.strip():
+            raise HTTPException(status_code=400, detail="Intent type is required")
+
+        # Initialize analytics service directly (avoids unnecessary ChatService dependencies)
+        analytics_service = AnalyticsService(
+            org_id=org_id,
+            supabase_client=supabase,
+            context_config=None,
+        )
+
+        # Get intent details
+        intent_details = await analytics_service.get_intent_details(
+            intent_type=intent_type, days=days
+        )
+
+        # Check for errors
+        if "error" in intent_details:
+            logger.error(
+                "Error getting intent details",
+                extra={
+                    "error": intent_details["error"],
+                    "org_id": org_id,
+                    "intent_type": intent_type,
+                },
+            )
+            raise HTTPException(
+                status_code=404, detail=intent_details.get("error", "Intent not found")
+            )
+
+        logger.info(
+            "Intent details retrieved successfully",
+            extra={
+                "org_id": org_id,
+                "intent_type": intent_type,
+                "days": days,
+                "total_queries": intent_details.get("total_queries", 0),
+            },
+        )
+
+        return {
+            "success": True,
+            "details": intent_details,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get intent details",
+            extra={
+                "error": str(e),
+                "org_id": org_id,
+                "intent_type": intent_type,
+                "days": days,
+            },
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get intent details: {str(e)}"
+        ) from e
 
 
 # ==========================================
