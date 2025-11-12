@@ -417,26 +417,40 @@ class ResponsePostProcessor:
                 )
             return response
 
+        pricing_keywords = [
+            "price",
+            "pricing",
+            "cost",
+            "plan",
+            "plans",
+            "tier",
+            "subscription",
+        ]
+        if any(keyword in user_message_lower for keyword in pricing_keywords):
+            pricing_lines = self._extract_pricing_highlights(
+                context_data.get("context_text", "")
+            )
+            if pricing_lines:
+                return self._build_pricing_response_from_context(
+                    pricing_lines, demo_links
+                )
+
         if any(
             keyword in user_message_lower
             for keyword in ["demo", "trial", "free demo", "test", "free trial"]
         ):
             chatbot_name = self.chatbot_config.name
             response = (
-                f"At the moment, we do not offer a free demo or trial version of {chatbot_name}. "
-                "However, you can schedule a free consultation call with our team to see how it works, discuss your specific needs, "
-                "and get a personalized demonstration based on your requirements. "
+                f"The best way to experience {chatbot_name} is through a live consultation with our team. "
+                "They'll tailor the walkthrough to your goals, show the exact features you care about, and share pricing options that fit. "
             )
             if demo_links:
                 response += (
-                    "This allows us to tailor the demonstration to your use case and answer any questions you might have.\n\n"
-                    f"If you'd like, you can **[Connect with our team here]({demo_links[0]})** to walk through the details together."
+                    "You can pick a convenient time here to get started:\n\n"
+                    f"**[Connect with our team]({demo_links[0]})**"
                 )
             else:
-                response += (
-                    "This allows us to tailor the demonstration to your use case and answer any questions you might have.\n\n"
-                    "Would you like me to help you connect with our team to schedule a consultation?"
-                )
+                response += "Let me know and I can connect you with the right person to schedule that consultation."
             return response
 
         if demo_links:
@@ -451,6 +465,54 @@ class ResponsePostProcessor:
             "Our team can provide detailed information and answer any questions you might have. "
             "What specific information are you looking for? 😊"
         )
+
+    @staticmethod
+    def _extract_pricing_highlights(context_text: str, limit: int = 3) -> List[str]:
+        if not context_text:
+            return []
+
+        highlights: List[str] = []
+        seen: set[str] = set()
+        price_pattern = re.compile(
+            r"(price|pricing|cost|usd|aed|dhs|\$|₹|€|£|per\s+month)", re.IGNORECASE
+        )
+
+        for raw_line in context_text.splitlines():
+            line = raw_line.strip().lstrip("-• ")
+            if not line or len(line) < 4:
+                continue
+            if not re.search(r"\d", line):
+                continue
+            if not price_pattern.search(line):
+                continue
+            normalized = line.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            highlights.append(line)
+            if len(highlights) >= limit:
+                break
+
+        return highlights
+
+    def _build_pricing_response_from_context(
+        self, pricing_lines: List[str], demo_links: List[str]
+    ) -> str:
+        response = [
+            "Here are the plan details that are documented in this workspace:",
+        ]
+        response.extend(f"- {line}" for line in pricing_lines)
+
+        if demo_links:
+            response.append(
+                f"\nNeed tailored numbers? You can **[connect with our team]({demo_links[0]})** for an in-depth walkthrough."
+            )
+        else:
+            response.append(
+                "\nNeed tailored numbers? Let me know and I can connect you with the right person for a detailed quote."
+            )
+
+        return "\n".join(response)
 
     @staticmethod
     def _normalize_forbidden_phrase_text(text: str) -> str:

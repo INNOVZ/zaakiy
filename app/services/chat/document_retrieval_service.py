@@ -65,19 +65,6 @@ class DocumentRetrievalService:
             if "rerank_enabled" in intent_overrides:
                 self.enable_reranking = bool(intent_overrides["rerank_enabled"])
 
-            # Check cache first for the entire query set
-            cache_key = self._generate_retrieval_cache_key(queries)
-
-            # Try to get cached results
-            cached_results = await self._get_cached_retrieval_results(cache_key)
-            if cached_results:
-                logger.info("Vector cache HIT for %d queries", len(queries))
-                return cached_results
-
-            # Cache miss - perform retrieval
-            logger.info(
-                "Vector cache MISS - performing retrieval for %d queries", len(queries)
-            )
             all_docs = {}
 
             # Get retrieval strategy from context config
@@ -117,8 +104,25 @@ class DocumentRetrievalService:
                 else {}
             )
             intent_filters = intent_overrides.get("metadata_filters") or {}
-            if intent_filters:
-                metadata_filters = {**metadata_filters, **intent_filters}
+            metadata_filters = self._combine_metadata_filters(
+                metadata_filters, intent_filters
+            )
+
+            # Check cache now that filters/strategy are known
+            cache_key = self._generate_retrieval_cache_key(
+                queries,
+                metadata_filters=metadata_filters,
+                retrieval_strategy=strategy,
+            )
+
+            cached_results = await self._get_cached_retrieval_results(cache_key)
+            if cached_results:
+                logger.info("Vector cache HIT for %d queries", len(queries))
+                return cached_results
+
+            logger.info(
+                "Vector cache MISS - performing retrieval for %d queries", len(queries)
+            )
 
             # OPTIMIZATION: Process all queries in parallel instead of sequentially
             async def retrieve_for_query(query: str) -> List[Dict[str, Any]]:
@@ -129,7 +133,7 @@ class DocumentRetrievalService:
                         return await self._semantic_retrieval(query, metadata_filters)
                     elif strategy == "hybrid":
                         return await self._hybrid_retrieval(
-                            query, semantic_weight, keyword_weight
+                            query, semantic_weight, keyword_weight, metadata_filters
                         )
                     elif strategy == "keyword_boost":
                         return await self._keyword_boost_retrieval(
@@ -381,7 +385,10 @@ class DocumentRetrievalService:
             self.enable_reranking = original_rerank_flag
 
     async def _semantic_retrieval(
-        self, query: str, metadata_filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        metadata_filters: Optional[Dict[str, Any]] = None,
+        allow_filter_fallback: bool = True,
     ) -> List[Dict[str, Any]]:
         """Optimized semantic similarity search with intelligent caching and metadata filtering"""
         try:
@@ -469,6 +476,15 @@ class DocumentRetrievalService:
                         perf.get("total_time_ms", 0),
                     )
 
+                if metadata_filters and not docs and allow_filter_fallback:
+                    logger.warning(
+                        "Metadata filters yielded no documents for query '%s'. Retrying without filters.",
+                        query[:80],
+                    )
+                    return await self._semantic_retrieval(
+                        query, None, allow_filter_fallback=False
+                    )
+
                 return docs
             else:
                 # Fallback to original implementation
@@ -524,12 +540,18 @@ class DocumentRetrievalService:
             ) from e
 
     async def _hybrid_retrieval(
-        self, query: str, semantic_weight: float, keyword_weight: float
+        self,
+        query: str,
+        semantic_weight: float,
+        keyword_weight: float,
+        metadata_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Hybrid retrieval combining semantic and keyword search"""
         try:
             # Get semantic results
-            semantic_docs = await self._semantic_retrieval(query)
+            semantic_docs = await self._semantic_retrieval(
+                query, metadata_filters=metadata_filters
+            )
 
             # Get keyword results
             keyword_docs = await self._keyword_matching(query)
@@ -567,7 +589,9 @@ class DocumentRetrievalService:
         except Exception as e:
             logger.error("Hybrid retrieval failed: %s", e)
             # Fallback to semantic only
-            return await self._semantic_retrieval(query)
+            return await self._semantic_retrieval(
+                query, metadata_filters=metadata_filters
+            )
 
     async def _keyword_boost_retrieval(
         self, query: str, semantic_weight: float, keyword_weight: float
@@ -665,13 +689,20 @@ class DocumentRetrievalService:
             logger.error("Embedding generation failed: %s", e)
             raise DocumentRetrievalError(f"Embedding generation failed: {e}") from e
 
-    def _generate_retrieval_cache_key(self, queries: List[str]) -> str:
+    def _generate_retrieval_cache_key(
+        self,
+        queries: List[str],
+        metadata_filters: Optional[Dict[str, Any]] = None,
+        retrieval_strategy: Optional[str] = None,
+    ) -> str:
         """Generate cache key for retrieval results"""
         import hashlib
         import json
 
         # Create composite string for hashing using json for compatibility
         queries_str = json.dumps(sorted(queries), sort_keys=True)
+        filters_str = json.dumps(metadata_filters or {}, sort_keys=True)
+        strategy_str = retrieval_strategy or "default"
 
         # Handle both dict and object with dict() method - exclude datetime fields
         if hasattr(self.context_config, "dict"):
@@ -693,7 +724,7 @@ class DocumentRetrievalService:
             config_str = json.dumps(json_safe_config, sort_keys=True)
         params_str = json.dumps(self.retrieval_config, sort_keys=True)
 
-        composite = f"{self.org_id}:{queries_str}:{config_str}:{params_str}"
+        composite = f"{self.org_id}:{queries_str}:{config_str}:{params_str}:{filters_str}:{strategy_str}"
         # SECURITY NOTE: MD5 is used here for cache key generation only (non-cryptographic purpose)
         # This is acceptable as it's not used for security, passwords, or authentication
         # For cache keys, MD5 provides fast hashing with good distribution
@@ -813,20 +844,46 @@ class DocumentRetrievalService:
         based on metadata (e.g., has_products, document type).
         """
         filters: Dict[str, Any] = {}
+        or_conditions: List[Dict[str, Any]] = []
+        lowered_query = query.lower()
+
+        product_keywords = ["product", "buy", "purchase", "catalog", "catalogue"]
+        pricing_keywords = ["price", "pricing", "cost", "quote", "$", "plan"]
 
         # Product query filters
-        if any(
-            keyword in query.lower()
-            for keyword in ["product", "buy", "purchase", "price", "catalog"]
-        ):
-            # Filter for documents that have products
-            filters["has_products"] = {"$eq": True}
+        if any(keyword in lowered_query for keyword in product_keywords):
+            or_conditions.append({"has_products": {"$eq": True}})
+
+        # Pricing-specific filters
+        if any(keyword in lowered_query for keyword in pricing_keywords):
+            or_conditions.append({"has_pricing": {"$eq": True}})
+
+        if or_conditions:
+            if len(or_conditions) == 1:
+                filters = or_conditions[0]
+            else:
+                filters["$or"] = or_conditions
 
         # Contact query filters - don't filter to ensure we get results
         # Document type filters could be added here
         # filters["type"] = {"$in": ["page", "article"]}
 
         return filters
+
+    def _combine_metadata_filters(
+        self,
+        base_filters: Optional[Dict[str, Any]],
+        intent_filters: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Combine heuristic and intent-driven filters without losing OR clauses.
+        """
+        base_filters = base_filters or {}
+        intent_filters = intent_filters or {}
+
+        if base_filters and intent_filters:
+            return {"$and": [base_filters, intent_filters]}
+        return intent_filters or base_filters
 
     def _rerank_documents(
         self, query: str, documents: List[Dict[str, Any]], top_k: int

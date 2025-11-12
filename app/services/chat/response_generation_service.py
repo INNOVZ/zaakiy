@@ -20,6 +20,15 @@ from .intent_detection_service import IntentResult, IntentType
 from .prompt_sanitizer import PromptInjectionDetector
 from .response_post_processor import ResponsePostProcessor
 
+
+class ResponseConfig:
+    """Central location for response generation configuration defaults."""
+
+    MIN_MAX_TOKENS = 500  # Minimum for constructive, high-quality responses
+    CONVERSATION_HISTORY_LIMIT = 10  # Balance history depth with token usage
+    CACHE_TTL_SECONDS = 3600  # Cache responses for 1 hour to reuse common queries
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +39,9 @@ class ResponseGenerationError(Exception):
 class ResponseGenerationService:
     """Handles AI response generation with context engineering"""
 
-    CACHE_TTL_SECONDS = 3600
+    CACHE_TTL_SECONDS = ResponseConfig.CACHE_TTL_SECONDS
+    PRICING_CONF_LOWER = 0.3
+    PRICING_CONF_MEDIUM = 0.7
 
     def __init__(
         self,
@@ -85,12 +96,6 @@ class ResponseGenerationService:
     ) -> bool:
         """Check if current context contains pricing details."""
         try:
-            for doc in documents:
-                metadata = doc.get("metadata", {})
-                if metadata.get("has_pricing") or metadata.get("pricing_info"):
-                    return True
-
-            lowered = (context_text or "").lower()
             pricing_terms = [
                 "$",
                 "€",
@@ -99,6 +104,8 @@ class ResponseGenerationService:
                 "eur",
                 "price",
                 "pricing",
+                "cost",
+                "quote",
                 "per month",
                 "per year",
                 "plan",
@@ -107,7 +114,33 @@ class ResponseGenerationService:
                 "/month",
                 "/year",
             ]
-            return any(term in lowered for term in pricing_terms)
+
+            price_regex = re.compile(r"(\$|€|£|usd|eur|aed|dhs)\s*\d", re.IGNORECASE)
+
+            for doc in documents:
+                metadata = doc.get("metadata", {})
+                has_metadata_pricing = metadata.get("has_pricing")
+                if isinstance(has_metadata_pricing, str):
+                    has_metadata_pricing = has_metadata_pricing.lower() in {
+                        "true",
+                        "1",
+                        "yes",
+                    }
+
+                if has_metadata_pricing or metadata.get("pricing_info"):
+                    return True
+
+                chunk_text = doc.get("chunk", "") or ""
+                lowered_chunk = chunk_text.lower()
+                if any(term in lowered_chunk for term in pricing_terms):
+                    return True
+                if price_regex.search(chunk_text):
+                    return True
+
+            lowered = (context_text or "").lower()
+            return any(term in lowered for term in pricing_terms) or bool(
+                price_regex.search(context_text or "")
+            )
         except Exception as e:
             logger.debug("Pricing context detection failed: %s", e)
             return False
@@ -124,15 +157,15 @@ class ResponseGenerationService:
 
         response_lines = [
             "Great question about pricing! 💰",
-            "I don’t see ready-made plan details in this knowledge base right now, but here’s how we can help:",
-            "- **Get a Custom Quote** – We’ll tailor pricing based on your goals.",
-            "- **Schedule a Consultation** – Talk through your requirements and get accurate numbers.",
+            "Pricing on this workspace is tailored to each team, so the fastest path to exact numbers is to talk through your goals with us:",
+            "- **Get a Custom Quote** – We’ll tailor pricing based on what you’re trying to achieve.",
+            "- **Schedule a Consultation** – Walk through your requirements and get accurate numbers.",
             "- **Compare Options** – We can explain different tiers and what’s included.",
         ]
 
         if demo_link:
             response_lines.append(
-                f"\nWould you like me to help you **[connect with our team]({demo_link})** so they can share the latest plans?"
+                f"\nWould you like me to help you **[connect with our team]({demo_link})** so they can share exact plans?"
             )
         else:
             response_lines.append(
@@ -633,8 +666,12 @@ CRITICAL RULES instead. Always be constructive and helpful, never robotic.
         context_text = context_data.get("context_text", "")
 
         if context_text:
+            context_snapshot = self._build_context_snapshot(context_data)
+            snapshot_block = (
+                f"\nCONTEXT SNAPSHOT:\n{context_snapshot}\n" if context_snapshot else ""
+            )
             context_section = f"""
-CONTEXT INFORMATION:
+{snapshot_block}CONTEXT INFORMATION:
 {context_text}
 
 🚨 CRITICAL RESPONSE RULES - MUST FOLLOW 🚨
@@ -651,135 +688,48 @@ ABSOLUTELY FORBIDDEN PHRASES - NEVER USE THESE:
 IF YOU START TO WRITE ANY OF THESE PHRASES, STOP IMMEDIATELY AND REWRITE YOUR RESPONSE.
 
 YOUR ROLE:
-You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. Your goal is to be helpful, constructive, and conversational while providing accurate information from the context above.
+You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. Lead with the most relevant facts from the context above, keep the tone encouraging, and guide the user toward a clear next step.
 
-MANDATORY RESPONSE PATTERN FOR "NO" OR MISSING INFORMATION (MULTITENANT - MUST BE GENERAL):
+CONTEXT-FIRST EXECUTION:
+1. Start with the strongest fact that answers the question (prices, plan names, contact info, locations).
+2. When information is limited, explain what IS documented (e.g., "The plans listed above include…") and immediately pivot to a helpful action.
+3. Provide actionable next steps with links (demo/contact) whenever they exist in context.
+4. Keep language multitenant-friendly: refer to "the team" or "our services" instead of assuming a specific business model.
 
-When you cannot provide the exact information requested, you MUST:
-1. Start with a positive, constructive statement about what IS possible
-2. Acknowledge the request naturally (without using forbidden phrases)
-3. Offer GENERAL alternatives that work for any business type (don't assume specific processes)
-4. Include actionable next steps with links when available in context
-5. Make the user feel helped and supported]
+SMART FALLBACK PATTERN (when a detail is missing from context):
+- Highlight what the knowledge base DOES include.
+- Offer a constructive path (connect with team, share form, schedule consultation).
+- Describe the benefit of that next step so the user understands the value.
+- Include **[Connect with our team](link)** when demo or booking links exist.
 
-6. NEVER make specific claims about what the business offers (demos, trials, locations, etc.)
-7. Use general language: "our team", "contact us", "get more information" rather than specific processes
-
-EXAMPLE RESPONSES (MULTITENANT - GENERAL PATTERNS THAT WORK FOR ANY BUSINESS):
+EXAMPLE RESPONSES:
 
 Query: "Do you have an office in Spain?"
-❌ WRONG: "I don't have information about an office in Spain. If you have any other questions, feel free to ask!"
-✅ CORRECT: "Curently {self.chatbot_config.name} is based in [location from context if available]. Based on the information available to me, I don't see details about other office locations right now.
+✅ CORRECT: "The verified locations in this knowledge base show [location from context]. For regions beyond what’s listed, the fastest path is to connect with our team so they can confirm availability and walk through remote options. Would you like me to share the booking link?"
 
-However, I can help you get in touch with our team who can provide you with accurate information about locations and how we can assist you. They can also discuss our services and answer any questions you might have.
+Query: "Is a free demo available?"
+✅ CORRECT: "Demos here are delivered as live consultations so we can tailor the walkthrough to your goals. I can introduce you to the team and share the booking link so you can see how everything works."
 
-Would you like me to help you **[connect with our team](demo-link-from-context-if-available)** or do you have other questions I can help with?"
+FORMATTING & CONTENT RULES:
+- Use only the facts that appear in CONTEXT INFORMATION.
+- Copy phone numbers, emails, addresses, and prices exactly as written.
+- Present lists as bullet points, use **bold** for labels/prices, and markdown links for URLs.
+- Add emojis for contact details when it improves readability (📞, 📧, 📍).
+- Keep responses to 2-4 short paragraphs (roughly 100-200 words) so the answer feels complete but focused.
 
-Query: "Is free demo available?"
-❌ WRONG: "I don't have that information available. Feel free to explore more about {self.chatbot_config.name} on our website."
-✅ CORRECT (GENERAL): "I'd be happy to help you learn more about {self.chatbot_config.name} and what's available!
-
-Based on the information in my knowledge base, I don't see specific details about demo availability right now. However, I can help you get in touch with our team who can provide you with accurate information about demos, trials, consultations, or other ways to experience our services.
-
-Would you like me to help you **[connect with our team](demo-link-from-context-if-available)** to learn more about available options?"
-
-CORE PRINCIPLES:
-
-1. **Be Constructive, Not Just Informative**
-   - When you can't provide exactly what the user asks for, offer helpful alternatives
-   - Always provide clear next steps or ways the user can get what they need
-   - Turn "no" answers into opportunities to help in other ways
-
-2. **Accuracy First**
-   - ONLY use information that exists in the CONTEXT INFORMATION above
-   - Use exact facts, numbers, prices, and contact details from context
-   - If information isn't in context, acknowledge it honestly but offer alternatives
-   - NEVER make up product names, prices, descriptions, or facts
-
-3. **Conversational and Natural**
-   - Write in a natural, flowing style - like a helpful colleague
-   - Use multi-paragraph responses when helpful for clarity
-   - Be warm and professional, not robotic or overly formal
-   - Respond in the same language as the user's question
-
-RESPONSE STRUCTURE FOR DIFFERENT QUERY TYPES:
-
-**When Answering "Yes" or Providing Information:**
-- Start with a direct, clear answer
-- Provide relevant details from context
-- Include any helpful links, prices, or next steps
-- Format information clearly with proper markdown
-
-**When Answering "No" or Information Not Available (MULTITENANT - BE CONSTRUCTIVE LIKE KEPLERO AI):**
-- Be direct and honest about what you don't offer or know (e.g., "At the moment, we do not offer a free demo")
-- IMMEDIATELY pivot to constructive alternatives with clear benefits
-- Explain WHAT the user gets from the alternative (e.g., "to see how it works, discuss your needs, get personalized demonstration")
-- Provide clear, actionable next steps with links when available
-- Use natural, conversational flow - structure: [Direct answer] → [However/But] → [Constructive alternative with benefits] → [Clear call-to-action]
-- When location info is available in context, mention it constructively (e.g., "We are currently based in [location]")
-- When demo/consultation links are available, ALWAYS include them in the response
-- Make the user feel helped and supported, not blocked
-
-**When Context Doesn't Have Specific Information:**
-- Even if the exact answer isn't in context, you can still be helpful
-- Mention what the context DOES contain (if anything relevant)
-- Always pivot to offering GENERAL ways to get the information (connect with team, etc.)
-- Use the example patterns above - they show exactly how to respond constructively
-- Remember: This is multitenant - your response must work for ANY business using this platform
-
-CONTACT INFORMATION HANDLING:
-- ONLY provide contact information (phone, email, address) when the user EXPLICITLY asks for it
-- If user asks about products, prices, or other topics, DO NOT include contact information unless asked
-- Phone numbers, emails, addresses MUST be copied EXACTLY from context
-- Format contact info clearly with emojis and markdown:
-  - 📞 **Phone**: [number](tel:number)
-  - 📧 **Email**: [email](mailto:email)
-  - 📍 **Location**: *address*
-- If contact info is NOT in context AND user asks for it, acknowledge and offer to connect them with the team
-
-    CONTACT/BOOKING LINKS:
-    - If context has consultation or contact links, include them when offering next steps
-    - Use the EXACT URL from the "Demo/Booking Links" (or equivalent) section in context
-    - Format as: **[Connect with our team](exact-url-from-context)** or another neutral label that works for any tenant
-    - Include these links when offering alternatives to direct requests
+CONTACT & BOOKING DETAILS:
+- Share contact information only when the user asks for it.
+- If they ask for something else (pricing, product info, etc.), only include contact details when it meaningfully advances the task.
+- When demo or consultation links exist, mention them in the CTA (“You can **[connect with our team](link)** to…”) and explain the benefit.
 
 PRODUCT INFORMATION:
-- If context includes a PRODUCT CATALOG section, use those exact product links, names, and prices
-- Format: **[Product Name](URL)** - *Description* - **Price**: Amount (if available)
-- If price is missing from context, list product without price - DO NOT insert placeholders
-- When listing products, focus on product names, descriptions, prices, and links
+- If a PRODUCT CATALOG section appears, list products exactly as shown: **[Name](URL)** – *description* – **Price: amount**.
+- Never invent prices or product names.
 
-FORMATTING GUIDELINES:
-   - Use **bold** for: labels (Phone, Email, Location), product names, prices, key terms
-   - Use *italics* for: descriptions, locations, emphasis
-- Use bullet points with "- " for lists
-- Each contact detail on a new line with blank line before contact section
-- Always use markdown links, never raw URLs
-- Use emojis appropriately: 📞 (phone), 📧 (email), 📍 (location), and others sparingly for readability
-
-RESPONSE LENGTH:
-- Aim for 2-4 paragraphs for comprehensive answers
-- Keep responses informative but concise (typically 100-200 words)
-- Don't be artificially brief - provide complete, helpful answers
-
-TONE AND LANGUAGE:
-- Maintain a {self.chatbot_config.tone} tone
-- Be warm, helpful, and professional
-- Avoid being robotic or overly technical
-- Make users feel understood and supported
-
-REMEMBER (CONSTRUCTIVE FALLBACKS):
-- Accuracy is important, but being helpful and constructive is equally important
-- When you can't give a direct answer, be direct about it, then IMMEDIATELY offer a constructive alternative
-- Structure responses like Keplero AI: [Honest answer] → [However/But] → [Alternative with benefits] → [Clear call-to-action]
-- Always explain WHAT the user gets from the alternative (benefits, value proposition)
-- Provide clear calls to action with links when relevant - make it easy for users to take next steps
-- Make every response feel like it adds value, even when the answer is "no"
-- NEVER use phrases like "I don't have that information" - be direct but constructive
-- If context has demo/booking links, ALWAYS include them when offering consultations or demos
-- Every response should make the user feel helped and supported, never blocked or dismissed
-- Turn every "no" into an opportunity to help in another way - show value in alternatives
-- Extract and use available context information (locations, services) to make responses more specific and helpful
+TONE & LENGTH:
+- Maintain a warm, confident {self.chatbot_config.tone} tone.
+- Use natural sentences (no bullet dumping unless presenting a list of features or steps).
+- Every response should make the user feel supported and empowered to continue the conversation.
 """
             # CRITICAL: Put our rules FIRST and make them VERY prominent
             # Use explicit override language to ensure LLM follows our rules
@@ -813,12 +763,12 @@ ABSOLUTELY FORBIDDEN PHRASES - NEVER USE THESE:
 IF YOU START TO WRITE ANY OF THESE PHRASES, STOP IMMEDIATELY AND REWRITE YOUR RESPONSE.
 
 YOUR ROLE:
-You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. While you don't have specific information in your knowledge base right now, your goal is to be helpful, constructive, and guide users toward getting the information they need.
+You are {self.chatbot_config.name}, a {self.chatbot_config.tone} AI assistant. The knowledge base did not return matching snippets for this request, so focus on being constructive and guiding the user toward the right resource.
 
 CORE APPROACH:
 
 1. **Be Honest and Constructive**
-   - Acknowledge that you don't have specific details in your knowledge base
+   - Briefly explain that the workspace needs input from the team or website
    - Immediately offer helpful alternatives and next steps
    - Never make up information, but always provide value through guidance
 
@@ -838,7 +788,7 @@ RESPONSE PATTERNS:
 **For Product Questions:**
 "I'd love to help you with information about our products! 🎯
 
-While I don't have specific product details in my knowledge base right now, I can help you in a few ways:
+This workspace stores high-level guidance, so here’s how I can help right away:
 
 1. **Connect you with our team** - They can provide detailed product information and pricing
 2. **Schedule a demo** - See our products in action
@@ -849,7 +799,7 @@ What specific information are you looking for? I'll make sure you get the right 
 **For Pricing Questions:**
 "Great question about pricing! 💰
 
-While I don't have specific pricing details in my current knowledge base, here's how I can help:
+Pricing is customized, so let's get you answers fast:
 
 • **Get a Custom Quote** - Our pricing varies based on your needs
 • **Schedule a Consultation** - Discuss your requirements and get accurate pricing
@@ -860,7 +810,7 @@ Would you like me to help you get in touch with our sales team for detailed pric
 **For Service/Plan Questions:**
 "I'd be happy to help you understand our services and plans!
 
-While I don't have the specific details in my knowledge base at the moment, here are some ways I can assist:
+Here are a few helpful ways to explore what we offer:
 
 • **Schedule a Consultation** - Our team can explain all available options and help you find the best fit
 • **Get More Information** - I can connect you with someone who can provide detailed information about features and plans
@@ -869,16 +819,10 @@ While I don't have the specific details in my knowledge base at the moment, here
 What specific services or features are you most interested in?"
 
 **For Office/Location Questions (e.g., "Do you have an office in Spain?") - MULTITENANT GENERAL:**
-"{self.chatbot_config.name} is currently based in [location from context if available]. We do not have an office in [requested location] at this time.
-
-However, all interactions and consultations can be managed online, and our team can assist you regardless of your location. If you're interested in our solutions or want to collaborate, you can schedule a call with our team to discuss your needs and see how we can help. **[Connect with our team here](demo-link-if-available)**"
+"{self.chatbot_config.name} is currently based in [location from context if available]. For other regions we typically coordinate remotely, and the team can confirm availability for your area. If you're interested, you can schedule a call so they can walk through local options. **[Connect with our team here](demo-link-if-available)**"
 
 **For Demo Questions (e.g., "Is free demo available?") - MULTITENANT GENERAL:**
-"At the moment, we do not offer a free demo or trial version of {self.chatbot_config.name}.
-
-However, you can schedule a free consultation call with our team to see how {self.chatbot_config.name} works, discuss your specific needs, and get a personalized demonstration based on your requirements. This allows us to tailor the demo to your use case and answer any questions you might have.
-
-If you're interested, you can **[connect with our team here](demo-link-if-available)**"
+"Demos are delivered as live consultations for {self.chatbot_config.name}. That way the team can tailor the walkthrough to your use case, show the exact features you care about, and share pricing options. If you're interested, you can **[connect with our team here](demo-link-if-available)**"
 
 **For Contact Questions:**
 "I'd be happy to help you get in touch with us! 📞
@@ -892,21 +836,14 @@ Our team can provide contact details and answer your questions. Here's how you c
 Is there something specific you'd like to discuss? I can help connect you with the right person!"
 
 GENERAL GUIDELINES:
-- Always acknowledge what you don't know, but immediately offer alternatives
+- Always explain what the knowledge base covers and immediately offer alternatives when something isn't listed
 - Provide 2-3 clear next steps in every response
 - Use natural, conversational language
 - Keep responses to 2-4 paragraphs (100-200 words)
 - Make every response feel helpful and valuable
-- Never say "I don't know" without offering what you CAN do
+- Never say "information isn’t available" without offering what you CAN do
 - Use emojis sparingly but effectively to enhance readability
 - Maintain a {self.chatbot_config.tone} tone throughout
-
-**CRITICAL: Forbidden Phrases - NEVER Use These:**
-- ❌ "I don't have that information available"
-- ❌ "I don't have that information"
-- ❌ "I don't know"
-- ❌ "That information is not available"
-- ❌ "I can't help with that"
 
 **Instead, Always:**
 - ✅ Start with what you CAN do or offer
@@ -924,6 +861,108 @@ REMEMBER:
             # CRITICAL: Put our rules FIRST so they override any conflicting instructions in base_prompt
             return critical_rules + base_prompt + "\n\n" + no_context_section
 
+    def _build_context_snapshot(self, context_data: Dict[str, Any]) -> str:
+        """Surface high-signal facts (pricing, contact, products) ahead of raw context."""
+        context_text = context_data.get("context_text", "") or ""
+        snapshot_parts: List[str] = []
+
+        pricing_lines = self._extract_pricing_highlights(context_text)
+        if pricing_lines:
+            pricing_section = ["PRICING HIGHLIGHTS:"]
+            pricing_section.extend(f"- {line}" for line in pricing_lines)
+            snapshot_parts.append("\n".join(pricing_section))
+
+        contact_info = context_data.get("contact_info") or {}
+        contact_lines: List[str] = []
+        phones = contact_info.get("phones") or []
+        emails = contact_info.get("emails") or []
+        addresses = contact_info.get("addresses") or []
+        demo_links = contact_info.get("demo_links") or context_data.get(
+            "demo_links", []
+        )
+
+        if phones:
+            contact_lines.append(f"- 📞 {phones[0]}")
+        if emails:
+            contact_lines.append(f"- 📧 {emails[0]}")
+        if addresses:
+            contact_lines.append(f"- 📍 {addresses[0]}")
+        if demo_links:
+            contact_lines.append(f"- 🔗 Demo/Consultation: {demo_links[0]}")
+
+        if contact_lines:
+            snapshot_parts.append("CONTACT DETAILS:\n" + "\n".join(contact_lines))
+
+        product_links = context_data.get("product_links") or []
+        if product_links:
+            product_section = ["PRODUCT NOTES:"]
+            for product in product_links[:3]:
+                name = product.get("name") or "Product"
+                url = product.get("url")
+                chunk_preview = product.get("chunk_preview", "")
+                price = product.get("price") or self._extract_price_from_text(
+                    chunk_preview
+                )
+                label = f"- {name}"
+                if url:
+                    label = f"- [{name}]({url})"
+                if price:
+                    label += f" — {price}"
+                product_section.append(label)
+            snapshot_parts.append("\n".join(product_section))
+
+        return "\n\n".join(snapshot_parts)
+
+    @staticmethod
+    def _extract_pricing_highlights(context_text: str, limit: int = 3) -> List[str]:
+        if not context_text:
+            return []
+
+        highlights: List[str] = []
+        seen: set[str] = set()
+        price_pattern = re.compile(
+            r"(price|pricing|cost|usd|aed|dhs|\$|₹|€|£|per\s+month)", re.IGNORECASE
+        )
+
+        for raw_line in context_text.splitlines():
+            line = raw_line.strip().lstrip("-• ")
+            if not line or len(line) < 4:
+                continue
+            if not re.search(r"\d", line):
+                continue
+            if not price_pattern.search(line):
+                continue
+            normalized = line.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            highlights.append(line)
+            if len(highlights) >= limit:
+                break
+
+        return highlights
+
+    @staticmethod
+    def _extract_price_from_text(text: str) -> str:
+        if not text:
+            return ""
+
+        price_patterns = [
+            r"(\$\s*[\d,]+(?:\.\d{2})?)",
+            r"(usd\s*[\d,]+(?:\.\d{2})?)",
+            r"(aed\s*[\d,]+(?:\.\d{2})?)",
+            r"(dhs\.?\s*[\d,]+(?:\.\d{2})?)",
+            r"(₹\s*[\d,]+(?:\.\d{2})?)",
+            r"(€\s*[\d,]+(?:\.\d{2})?)",
+            r"(£\s*[\d,]+(?:\.\d{2})?)",
+        ]
+
+        for pattern in price_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return ""
+
     def _build_conversation_messages(
         self, system_prompt: str, history: List[Dict[str, Any]], current_message: str
     ) -> List[Dict[str, str]]:
@@ -931,7 +970,7 @@ REMEMBER:
         messages = [{"role": "system", "content": system_prompt}]
 
         # Add conversation history (last few messages)
-        history_limit = 10  # Limit to last 10 messages
+        history_limit = ResponseConfig.CONVERSATION_HISTORY_LIMIT
         recent_history = (
             history[-history_limit:] if len(history) > history_limit else history
         )
@@ -1026,8 +1065,8 @@ REMEMBER:
             # Minimum 500 tokens for constructive responses, but use config value if higher
             config_max_tokens = self.chatbot_config.max_tokens
             max_tokens = max(
-                config_max_tokens, 500
-            )  # Ensure minimum 500 tokens for quality responses
+                config_max_tokens, ResponseConfig.MIN_MAX_TOKENS
+            )  # Ensure minimum tokens for quality responses
             if config_max_tokens < 500:
                 logger.info(
                     f"⚠️ max_tokens increased from {config_max_tokens} to {max_tokens} for human-like responses"
@@ -1157,31 +1196,6 @@ REMEMBER:
             sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE)
 
         return sanitized.strip()
-
-    @staticmethod
-    def _normalize_forbidden_phrase_text(text: str) -> str:
-        """Delegate to ResponsePostProcessor for normalization."""
-        return ResponsePostProcessor.normalize_forbidden_phrase_text(text)
-
-    def _remove_forbidden_phrases(
-        self, response: str, context_data: Dict[str, Any], user_message: str
-    ) -> str:
-        """Delegate to ResponsePostProcessor sanitizer."""
-        return self.response_post_processor.remove_forbidden_phrases(
-            response, context_data, user_message
-        )
-
-    def _ensure_markdown_formatting(self, response: str) -> str:
-        """Delegate to ResponsePostProcessor markdown formatter."""
-        return self.response_post_processor.ensure_markdown_formatting(response)
-
-    def _validate_contact_info(
-        self, response: str, context: str, is_contact_query: bool = False
-    ) -> str:
-        """Delegate to ResponsePostProcessor contact validator."""
-        return self.response_post_processor.validate_contact_info(
-            response, context, is_contact_query
-        )
 
     def _is_contact_information_query(self, query: str) -> bool:
         """Detect if the query is asking for contact, booking, or demo information"""
