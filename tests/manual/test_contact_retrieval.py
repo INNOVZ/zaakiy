@@ -7,8 +7,13 @@ import sys
 
 from dotenv import load_dotenv
 
-# Add app to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure backend root is on the import path
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+if BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, BACKEND_ROOT)
+
+load_dotenv()
 
 from app.services.chat.contact_extractor import contact_extractor
 
@@ -28,7 +33,7 @@ TEST_CHUNK = """
 """
 
 
-def test_contact_extraction():
+def run_contact_extraction():
     """Test contact information extraction"""
     print("=" * 60)
     print("Testing Contact Information Extraction")
@@ -61,7 +66,7 @@ def test_contact_extraction():
     return result
 
 
-def test_phone_patterns():
+def check_phone_patterns():
     """Test various phone number formats"""
     print("\n" + "=" * 60)
     print("Testing Phone Number Patterns")
@@ -84,7 +89,7 @@ def test_phone_patterns():
         assert len(phones_found) > 0, f"❌ Phone {phone} not extracted!"
 
 
-def test_demo_link_extraction():
+def check_demo_link_extraction():
     """Test demo/booking link extraction"""
     print("\n" + "=" * 60)
     print("Testing Demo Link Extraction")
@@ -117,13 +122,13 @@ if __name__ == "__main__":
 
     try:
         # Test 1: Basic extraction
-        result = test_contact_extraction()
+        result = run_contact_extraction()
 
         # Test 2: Phone patterns
-        test_phone_patterns()
+        check_phone_patterns()
 
         # Test 3: Demo links
-        test_demo_link_extraction()
+        check_demo_link_extraction()
 
         print("\n" + "=" * 60)
         print("✅ All tests passed!")

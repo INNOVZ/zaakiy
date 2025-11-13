@@ -7,7 +7,7 @@ import sys
 import requests
 
 
-def test_endpoint(base_url: str = "http://localhost:8000"):
+def run_endpoint_check(base_url: str = "http://localhost:8001"):
     """Test if the intent analytics endpoint exists"""
     endpoint = f"{base_url}/api/chat/analytics/intent?days=7"
 
@@ -47,5 +47,5 @@ def test_endpoint(base_url: str = "http://localhost:8000"):
 if __name__ == "__main__":
     # Allow custom base URL
     base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
-    success = test_endpoint(base_url)
+    success = run_endpoint_check(base_url)
     sys.exit(0 if success else 1)

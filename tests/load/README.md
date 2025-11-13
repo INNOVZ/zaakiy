@@ -86,12 +86,12 @@ Find breaking point of your system
 ```bash
 locust -f tests/load/locustfile.py \
     --host=http://localhost:8001 \
-    --user-classes StressTestUser \
     --users 500 \
     --spawn-rate 50 \
     --run-time 10m \
     --headless \
-    --html reports/stress_test.html
+    --html reports/stress_test.html \
+    StressTestUser
 ```
 
 **Watch for:**

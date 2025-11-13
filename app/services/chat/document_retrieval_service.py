@@ -42,8 +42,8 @@ class DocumentRetrievalService:
         self.keyword_extractor = get_keyword_extractor()
 
         # Optimized retrieval config for better response quality
-        # Adaptive k-values: contact=6, product=6, default=5
-        self.retrieval_config = {"initial": 10, "rerank": 8, "final": 5}
+        # Adaptive k-values: contact=6, product=6, default=4 (boost only when needed)
+        self.retrieval_config = {"initial": 8, "rerank": 6, "final": 4}
 
         # Optimization flags
         self.enable_reranking = True
@@ -98,6 +98,16 @@ class DocumentRetrievalService:
 
             # Build metadata filters once for all queries (if enabled)
             combined_query = " ".join(queries)
+
+            if not intent_overrides.get("k_values"):
+                adaptive_initial_k = self._determine_initial_fetch_size(combined_query)
+                self.retrieval_config["initial"] = adaptive_initial_k
+                logger.debug(
+                    "Adaptive initial top_k set to %d for query '%s'",
+                    adaptive_initial_k,
+                    combined_query[:80],
+                )
+
             metadata_filters = (
                 self._build_metadata_filters(combined_query)
                 if self.enable_metadata_filtering
@@ -835,6 +845,51 @@ class DocumentRetrievalService:
             f"Calculated optimal k={k} for query (contact={is_contact_query}, product={is_product_query})"
         )
         return k
+
+    def _determine_initial_fetch_size(self, query: str) -> int:
+        """Set a smaller default top_k and only boost when keywords/intent warrant it."""
+        if not query:
+            return max(self.retrieval_config.get("final", 4), 6)
+
+        lowered = query.lower()
+        tokens = lowered.split()
+        baseline_k = 6
+        boosted_k = 10
+
+        contact_terms = [
+            "phone",
+            "email",
+            "contact",
+            "address",
+            "office",
+            "booking",
+            "demo",
+            "schedule",
+        ]
+        pricing_terms = ["price", "pricing", "cost", "quote", "plan", "tier"]
+        product_terms = [
+            "product",
+            "catalog",
+            "collections",
+            "catalogue",
+            "items",
+            "shop",
+        ]
+
+        complexity_triggers = ["compare", "difference", "versus", "steps", "process"]
+
+        needs_boost = any(
+            term in lowered for term in contact_terms + pricing_terms + product_terms
+        )
+        needs_boost = (
+            needs_boost
+            or len(tokens) > 12
+            or any(trigger in lowered for trigger in complexity_triggers)
+        )
+
+        selected_k = boosted_k if needs_boost else baseline_k
+        min_allowed = max(3, self.retrieval_config.get("final", 4))
+        return max(selected_k, min_allowed)
 
     def _build_metadata_filters(self, query: str) -> Dict[str, Any]:
         """

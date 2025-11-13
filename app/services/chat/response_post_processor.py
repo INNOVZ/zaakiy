@@ -168,18 +168,10 @@ class ResponsePostProcessor:
     def _sanitize_response(
         self, response_text: str, context_data: Dict[str, Any], user_message: str
     ) -> str:
-        cleaned_response = self._remove_forbidden_phrases(
-            response_text, context_data, user_message
-        )
-
         sanitized_response = self.leakage_detector.sanitize_response_for_leakage(
-            cleaned_response,
+            response_text,
             context_data.get("context_text", ""),
             threshold=0.8,
-        )
-
-        sanitized_response = self._remove_forbidden_phrases(
-            sanitized_response, context_data, user_message
         )
 
         formatted_response = self._ensure_markdown_formatting(sanitized_response)
@@ -190,7 +182,7 @@ class ResponsePostProcessor:
 
         if final_response != formatted_response:
             logger.error(
-                "🚨 FINAL CHECK: Found forbidden phrase after all processing! "
+                "🚨 FINAL CHECK: Forbidden phrase removed during post-processing. "
                 "Original: %s... Rewritten to: %s...",
                 formatted_response[:200],
                 final_response[:200],

@@ -8,13 +8,16 @@ import asyncio
 import os
 import sys
 
-# Add backend to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure backend root is on the import path
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+if BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, BACKEND_ROOT)
 
 TEST_URL = "https://ambassadorscentworks.com/collections/new-arrivals"
 
 
-async def test():
+async def run_collection_scrape():
     print("=" * 80)
     print("🧪 TESTING COLLECTION PAGE SCRAPING")
     print("=" * 80)
@@ -166,4 +169,4 @@ async def test():
 
 
 if __name__ == "__main__":
-    asyncio.run(test())
+    asyncio.run(run_collection_scrape())

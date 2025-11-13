@@ -116,26 +116,26 @@ case $SCENARIO in
         sleep 2
         locust -f "$LOCUST_FILE" \
             --host="$HOST" \
-            --user-classes StressTestUser \
             --users 500 \
             --spawn-rate 50 \
             --run-time 10m \
             --headless \
             --html "$REPORTS_DIR/stress_test_${TIMESTAMP}.html" \
-            --csv "$REPORTS_DIR/stress_test_${TIMESTAMP}"
+            --csv "$REPORTS_DIR/stress_test_${TIMESTAMP}" \
+            StressTestUser
         ;;
 
     spike)
         echo -e "${YELLOW}🚀 Running Spike Test (0→500 users quickly)${NC}"
         locust -f "$LOCUST_FILE" \
             --host="$HOST" \
-            --user-classes SpikeTester \
             --users 500 \
             --spawn-rate 100 \
             --run-time 3m \
             --headless \
             --html "$REPORTS_DIR/spike_test_${TIMESTAMP}.html" \
-            --csv "$REPORTS_DIR/spike_test_${TIMESTAMP}"
+            --csv "$REPORTS_DIR/spike_test_${TIMESTAMP}" \
+            SpikeTester
         ;;
 
     endurance|soak)
