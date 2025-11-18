@@ -3,6 +3,8 @@ Document Retrieval Service
 Handles all vector search and document retrieval operations
 """
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -706,8 +708,6 @@ class DocumentRetrievalService:
         retrieval_strategy: Optional[str] = None,
     ) -> str:
         """Generate cache key for retrieval results"""
-        import hashlib
-        import json
 
         # Create composite string for hashing using json for compatibility
         queries_str = json.dumps(sorted(queries), sort_keys=True)

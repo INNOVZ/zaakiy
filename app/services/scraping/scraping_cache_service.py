@@ -626,7 +626,8 @@ class ScrapingCacheService:
 
                     if url not in warm_list:
                         warm_list.append(url)
-                        await cache_service.set(warm_key, warm_list, 3600)  # 1 hour
+                        # 1 hour
+                        await cache_service.set(warm_key, warm_list, 3600)
                         warmed_count += 1
 
             except Exception as e:

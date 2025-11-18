@@ -57,6 +57,9 @@ pydantic>=2.0.0
 typing-extensions>=4.0.0
 orjson>=3.10.0,<4.0.0
 
+# WhatsApp/Twilio integration
+twilio>=9.0.0
+
 # Testing dependencies
 pytest>=7.0.0
 pytest-asyncio>=0.20.0

@@ -16,6 +16,7 @@ from .routers import (
     public_chat,
     uploads,
     users,
+    whatsapp,
 )
 from .services.shared import get_client_manager
 from .services.shared.worker_scheduler import (
@@ -320,6 +321,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(public_chat.router, prefix="/api/public", tags=["public"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
+app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
 logger.info("All API routes registered successfully")
 
 

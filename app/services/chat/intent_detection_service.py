@@ -2,13 +2,12 @@
 Intent Detection Service
 Detects user intent from messages using rule-based patterns and LLM classification
 """
-import asyncio
 import hashlib
 import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.services.shared import cache_service
 

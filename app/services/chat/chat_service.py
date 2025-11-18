@@ -10,10 +10,14 @@ from typing import Any, Dict, List, Optional
 
 import openai
 
+from app.models.subscription import Channel
 from app.services.analytics.context_config import context_config_manager
 from app.utils.error_monitoring import error_monitor
 from app.utils.performance_monitor import performance_monitor
 
+from ..auth.billing_middleware import TokenValidationMiddleware
+from ..storage.pinecone_client import get_pinecone_index
+from ..storage.supabase_client import get_supabase_client
 from .analytics_service import AnalyticsService
 from .chat_utilities import ChatUtilities
 
@@ -21,7 +25,7 @@ from .chat_utilities import ChatUtilities
 from .conversation_manager import ConversationManager
 from .document_retrieval_service import DocumentRetrievalService
 from .error_handling_service import ErrorHandlingService
-from .intent_detection_service import IntentDetectionService
+from .fast_chat_service import FastChatMode
 from .response_generation_service import ResponseGenerationService
 
 logger = logging.getLogger(__name__)
@@ -66,9 +70,6 @@ class ChatService:
 
         # Initialize clients with lazy loading (avoid blocking initialization)
         try:
-            from ..storage.pinecone_client import get_pinecone_index
-            from ..storage.supabase_client import get_supabase_client
-
             # Initialize clients on demand
             self.supabase = get_supabase_client()
             self.index = get_pinecone_index()
@@ -82,7 +83,6 @@ class ChatService:
                 logger.warning("OpenAI API key not found")
 
             # Initialize billing middleware for token consumption
-            from ..auth.billing_middleware import TokenValidationMiddleware
 
             self.token_middleware = TokenValidationMiddleware(self.supabase)
 
@@ -145,11 +145,6 @@ class ChatService:
                 chatbot_config=self.chatbot_config,
             )
 
-            # Intent detection service
-            self.intent_detector = IntentDetectionService(
-                openai_client=self.openai_client, org_id=self.org_id
-            )
-
             # Analytics service
             self.analytics = AnalyticsService(
                 org_id=self.org_id,
@@ -175,6 +170,9 @@ class ChatService:
         self,
         message: str,
         session_id: str,
+        channel: Optional[Channel] = None,
+        end_user_identifier: Optional[str] = None,
+        requesting_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Main entry point for processing chat messages.
@@ -192,7 +190,6 @@ class ChatService:
 
         try:
             # EMERGENCY FAST MODE: Skip vector search for simple queries
-            from .fast_chat_service import FastChatMode
 
             fast_response = await FastChatMode.get_fast_response(
                 message, self.chatbot_config
@@ -229,25 +226,12 @@ class ChatService:
             await add_message_task
             history = await history_task
 
-            # Detect user intent for downstream customization
-            intent_result = await self.intent_detector.detect_intent(
-                message=message,
-                conversation_history=history,
-                context={"org_id": self.org_id},
-            )
-            intent_retrieval_config = self.intent_detector.get_intent_retrieval_config(
-                intent_result
-            )
-            intent_response_config = self.intent_detector.get_intent_response_config(
-                intent_result
-            )
-
             # Step 4: Enhanced query processing and document retrieval (with performance tracking)
             async with performance_monitor.track_operation(
                 "query_enhancement", {"org_id": self.org_id}
             ):
                 enhanced_queries = await self.response_generator.enhance_query(
-                    message, history, intent_result=intent_result
+                    message, history
                 )
 
             async with performance_monitor.track_operation(
@@ -255,21 +239,9 @@ class ChatService:
                 {"org_id": self.org_id, "query_count": len(enhanced_queries)},
             ):
                 try:
-                    retrieval_disabled = (
-                        intent_retrieval_config.get("k_values", {}).get("initial", 1)
-                        <= 0
+                    documents = await self.document_retrieval.retrieve_documents(
+                        queries=enhanced_queries
                     )
-                    if retrieval_disabled:
-                        documents = []
-                        logger.info(
-                            "Skipping document retrieval for intent %s (k=0)",
-                            intent_result.primary_intent.value,
-                        )
-                    else:
-                        documents = await self.document_retrieval.retrieve_documents(
-                            queries=enhanced_queries,
-                            intent_config=intent_retrieval_config,
-                        )
                 except Exception as retrieval_error:
                     # If retrieval fails, continue with empty documents (fallback mode)
                     logger.warning(
@@ -287,57 +259,35 @@ class ChatService:
                         message=message,
                         conversation_history=history,
                         retrieved_documents=documents,
-                        intent_result=intent_result,
-                        intent_response_config=intent_response_config,
                     )
                 )
-                response_data.setdefault("intent", intent_result.to_dict())
-                response_data["intent_response_config"] = intent_response_config
-                response_data["retrieval_stats"] = {
-                    "documents_retrieved": len(documents),
-                    "intent_config": intent_retrieval_config,
-                }
-                response_data["enhanced_queries"] = enhanced_queries
 
             # Step 5.5: Consume tokens if entity information is available
             if self.entity_id and self.entity_type and "tokens_used" in response_data:
                 try:
-                    from app.models.subscription import Channel, TokenUsageRequest
-
-                    # Determine channel based on context (default to website for now)
-                    channel = (
-                        Channel.WEBSITE
-                    )  # Could be enhanced to detect actual channel
-
-                    token_request = TokenUsageRequest(
-                        entity_id=self.entity_id,
-                        entity_type=self.entity_type,
-                        tokens_consumed=response_data["tokens_used"],
-                        operation_type="chat",
-                        channel=channel,
-                        chatbot_id=self.chatbot_config.get("id"),
-                        session_id=session_id,
-                        user_identifier=self.entity_id,  # Use entity_id as user identifier
-                    )
+                    channel_for_usage = channel or Channel.WEBSITE
+                    user_identifier = end_user_identifier or self.entity_id
+                    requester = requesting_user_id or self.entity_id
 
                     # Consume tokens using the middleware
                     await self.token_middleware.validate_and_consume_tokens(
                         entity_id=self.entity_id,
                         entity_type=self.entity_type,
                         estimated_tokens=response_data["tokens_used"],
-                        requesting_user_id=self.entity_id,  # Entity ID is the requesting user
+                        requesting_user_id=requester,
                         operation_type="chat",
-                        channel=channel,
+                        channel=channel_for_usage,
                         chatbot_id=self.chatbot_config.get("id"),
                         session_id=session_id,
-                        user_identifier=self.entity_id,
+                        user_identifier=user_identifier,
                     )
 
                     logger.info(
-                        "Consumed %s tokens for %s %s",
+                        "Consumed %s tokens for %s %s via %s",
                         response_data["tokens_used"],
                         self.entity_type,
                         self.entity_id,
+                        channel_for_usage.value,
                     )
 
                 except Exception as e:
@@ -381,7 +331,6 @@ class ChatService:
                 "config_used": self.context_config.config_name
                 if self.context_config
                 else "default",
-                "intent": response_data.get("intent"),
             }
 
         except openai.OpenAIError as e:

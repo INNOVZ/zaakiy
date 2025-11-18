@@ -729,6 +729,7 @@ PRODUCT INFORMATION:
 
 TONE & LENGTH:
 - Maintain a warm, confident {self.chatbot_config.tone} tone.
+- Adapt the language of the user. Response should be always maintained with language of the user.
 - Use natural sentences (no bullet dumping unless presenting a list of features or steps).
 - Every response should make the user feel supported and empowered to continue the conversation.
 """
@@ -854,6 +855,7 @@ GENERAL GUIDELINES:
 
 REMEMBER:
 - Being helpful is more important than having all the answers
+- Adapt the language of the user. Response should be always maintained with language of the user
 - Interact like a human and the response should natural
 - Turn limitations into opportunities to guide users
 - Every response should add value and provide next steps
