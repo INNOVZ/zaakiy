@@ -74,22 +74,46 @@ class ChatService:
             self.supabase = get_supabase_client()
             self.index = get_pinecone_index()
 
-            # Initialize OpenAI client
+            # Initialize OpenAI client - SECURITY FIX: Fail fast if key is missing
             openai_key = os.getenv("OPENAI_API_KEY")
-            if openai_key:
-                self.openai_client = openai.OpenAI(api_key=openai_key)
-            else:
-                self.openai_client = None
-                logger.warning("OpenAI API key not found")
+            if not openai_key:
+                # Determine environment for appropriate error message
+                is_production = os.getenv("ENVIRONMENT", "development").lower() in [
+                    "production",
+                    "prod",
+                ]
+
+                if is_production:
+                    # Production: Don't reveal system internals
+                    error_monitor.record_error(
+                        error_type="MissingAPIKeyError",
+                        severity="critical",
+                        service="chat_service",
+                        category="configuration",
+                    )
+                    raise ChatServiceError(
+                        "Service configuration error. Please contact support."
+                    )
+                else:
+                    # Development: Provide helpful error message
+                    raise ChatServiceError(
+                        "OPENAI_API_KEY environment variable is not set. "
+                        "Please configure it in your .env file."
+                    )
+
+            # Initialize OpenAI client with validated key
+            self.openai_client = openai.OpenAI(api_key=openai_key)
 
             # Initialize billing middleware for token consumption
-
             self.token_middleware = TokenValidationMiddleware(self.supabase)
 
             logger.info(
                 "✅ ChatService initialized with direct clients for org %s", org_id
             )
 
+        except ChatServiceError:
+            # Re-raise ChatServiceError as-is (already formatted)
+            raise
         except Exception as e:
             error_monitor.record_error(
                 error_type="ChatServiceInitializationError",
@@ -113,11 +137,8 @@ class ChatService:
     def _initialize_services(self):
         """Initialize all modular services"""
         try:
-            # Validate critical dependencies
-            if self.openai_client is None:
-                raise ChatServiceError(
-                    "OpenAI client not initialized. Please check OPENAI_API_KEY environment variable."
-                )
+            # Note: OpenAI client is guaranteed to be initialized in __init__
+            # (fails fast if OPENAI_API_KEY is missing)
 
             if self.index is None:
                 logger.warning(
@@ -262,6 +283,15 @@ class ChatService:
                     )
                 )
 
+                # DEBUG: Log response data completeness
+                logger.info(
+                    "📊 Response data generated: response=%d chars, context_used=%d chars, sources=%d, documents=%d",
+                    len(response_data.get("response", "")),
+                    len(response_data.get("context_used", "")),
+                    len(response_data.get("sources", [])),
+                    response_data.get("document_count", 0),
+                )
+
             # Step 5.5: Consume tokens if entity information is available
             if self.entity_id and self.entity_type and "tokens_used" in response_data:
                 try:
@@ -324,10 +354,15 @@ class ChatService:
             return {
                 "response": response_data["response"],
                 "sources": response_data.get("sources", []),
+                "context_used": response_data.get("context_used", ""),
+                "contact_info": response_data.get("contact_info", {}),
+                "demo_links": response_data.get("demo_links", []),
                 "conversation_id": conversation["id"],
                 "message_id": assistant_message["id"],
                 "processing_time_ms": processing_time,
                 "context_quality": response_data.get("context_quality", {}),
+                "document_count": response_data.get("document_count", 0),
+                "retrieval_method": response_data.get("retrieval_method", "unknown"),
                 "config_used": self.context_config.config_name
                 if self.context_config
                 else "default",

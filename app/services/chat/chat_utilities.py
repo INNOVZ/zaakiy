@@ -309,3 +309,82 @@ class ChatUtilities:
         cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
 
         return cleaned
+
+    @staticmethod
+    def is_contact_query(query: str) -> bool:
+        """
+        Detect if the query is asking for contact, booking, or demo information.
+
+        This is a shared utility to avoid duplicate detection logic across services.
+        Used by both document_retrieval_service and response_generation_service.
+
+        Args:
+            query: User query string
+
+        Returns:
+            True if query is about contact information, False otherwise
+        """
+        if not query:
+            return False
+
+        query_lower = query.lower().strip()
+
+        # Direct contact keywords (phones, emails, addresses, etc.)
+        contact_keywords = [
+            "phone",
+            "number",
+            "call",
+            "telephone",
+            "mobile",
+            "contact",
+            "email",
+            "mail",
+            "address",
+            "location",
+            "reach",
+            "get in touch",
+            "whatsapp",
+            "how to contact",
+            "contact details",
+            "contact info",
+            "talk to someone",
+            "speak to someone",
+            "how can i contact",
+            "how can i reach",
+            "how to reach",
+            "what's your phone",
+            "what is your email",
+            "contact you",
+            "reach you",
+        ]
+
+        # Check for contact keywords
+        if any(keyword in query_lower for keyword in contact_keywords):
+            return True
+
+        # Demo / consultation booking intent
+        booking_patterns = [
+            r"book(?:ing)? (?:a )?(?:demo|consultation|call|meeting|appointment)",
+            r"schedule(?: a)? (?:demo|consultation|call|meeting)",
+            r"(?:request|arrange|set up|organize) (?:a )?(?:demo|consultation|call)",
+            r"(?:demo|consultation) (?:request|booking|schedule)",
+            r"(?:talk|speak|connect) (?:with|to) (?:sales|support|an expert|the team)",
+            r"how (?:can|do) i (?:book|schedule|arrange) (?:a )?demo",
+            r"(?:book|schedule) (?:a )?time with (?:the )?team",
+        ]
+
+        for pattern in booking_patterns:
+            if re.search(pattern, query_lower):
+                return True
+
+        # Combined keyword detection for short queries like "Book demo"
+        demo_terms = ["demo", "trial", "consultation", "meeting", "appointment"]
+        action_terms = ["book", "schedule", "arrange", "request", "set up", "organize"]
+
+        has_demo_term = any(term in query_lower for term in demo_terms)
+        has_action_term = any(term in query_lower for term in action_terms)
+
+        if has_demo_term and has_action_term:
+            return True
+
+        return False

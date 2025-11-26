@@ -56,8 +56,9 @@ class ContextBuilder:
         all_demo_links: set[str] = set()
         all_links: set[str] = set()
 
-        context_chunks: List[str] = []
-        contact_chunks: List[str] = []
+        # IMPORTANT: Keep chunks in original order (they're already sorted by relevance)
+        # Don't separate contact/non-contact chunks as that breaks relevance ordering
+        all_chunks: List[str] = []
         sources: List[str] = []
         total_score = 0.0
 
@@ -69,8 +70,15 @@ class ContextBuilder:
             if not chunk_text or len(chunk_text.strip()) <= 10:
                 continue
 
-            contact_info = contact_extractor.extract_contact_info(chunk_text)
+            # OPTIMIZATION: Use already-extracted contact info if available (from retrieval service)
+            # This avoids duplicate extraction and improves performance
+            if "contact_info" in doc and doc["contact_info"].get("has_contact_info"):
+                contact_info = doc["contact_info"]
+            else:
+                # Only extract if not already done
+                contact_info = contact_extractor.extract_contact_info(chunk_text)
 
+            # Extract contact info for the contact info section
             if contact_info.get("phones"):
                 all_phones.update(contact_info["phones"])
             if contact_info.get("emails"):
@@ -82,22 +90,8 @@ class ContextBuilder:
             if contact_info.get("links"):
                 all_links.update(contact_info["links"])
 
-            if contact_info.get("has_contact_info"):
-                contact_chunks.append(chunk_text)
-                logger.debug(
-                    "📞 Contact chunk %d (score: %.3f): phones=%d, emails=%d, demo_links=%d",
-                    idx + 1,
-                    score,
-                    len(contact_info.get("phones", [])),
-                    len(contact_info.get("emails", [])),
-                    len(contact_info.get("demo_links", [])),
-                )
-            else:
-                context_chunks.append(chunk_text)
-
-            if source and source not in sources:
-                sources.append(source)
-            total_score += score
+            # Keep ALL chunks in original order (preserves relevance ranking)
+            all_chunks.append(chunk_text)
 
             logger.debug(
                 "📄 Chunk %d (score: %.3f, length: %d, has_contact: %s): %s...",
@@ -108,9 +102,13 @@ class ContextBuilder:
                 chunk_text[:100],
             )
 
-        prioritized_chunks = self._apply_chunk_prioritization(
-            contact_chunks,
-            context_chunks,
+            if source and source not in sources:
+                sources.append(source)
+            total_score += score
+
+        # Apply context chunk limit while preserving order
+        prioritized_chunks = self._apply_chunk_limit(
+            all_chunks,
             context_config=context_config,
             max_context_chunks=max_context_length,
         )
@@ -174,18 +172,18 @@ class ContextBuilder:
                 "coverage_score": coverage_score,
                 "relevance_score": avg_score,
                 "document_count": len(documents),
-                "contact_chunks_count": len(contact_chunks),
+                "chunks_used": len(prioritized_chunks),
                 "product_links_count": len(product_links),
             },
         )
 
-    def _apply_chunk_prioritization(
+    def _apply_chunk_limit(
         self,
-        contact_chunks: List[str],
-        context_chunks: List[str],
+        chunks: List[str],
         context_config: Optional[Any],
         max_context_chunks: int,
     ) -> List[str]:
+        """Apply chunk limit while preserving relevance order"""
         final_context_chunks = None
         if context_config and hasattr(context_config, "final_context_chunks"):
             final_context_chunks = context_config.final_context_chunks
@@ -193,31 +191,21 @@ class ContextBuilder:
             final_context_chunks = context_config.get("final_context_chunks")
 
         if final_context_chunks and final_context_chunks > 0:
-            contact_count = len(contact_chunks)
-            remaining_slots = max(0, final_context_chunks - contact_count)
-
-            if remaining_slots > 0:
-                prioritized = contact_chunks + context_chunks[:remaining_slots]
-                logger.info(
-                    "📊 Applied final_context_chunks limit: %d (contact: %d, regular: %d)",
-                    final_context_chunks,
-                    contact_count,
-                    remaining_slots,
-                )
-            else:
-                prioritized = contact_chunks[:final_context_chunks]
-                logger.info(
-                    "📊 Applied final_context_chunks limit: %d (all contact chunks)",
-                    final_context_chunks,
-                )
+            # Truncate to limit while preserving order
+            limited_chunks = chunks[:final_context_chunks]
+            logger.info(
+                "📊 Applied final_context_chunks limit: %d (from %d chunks)",
+                final_context_chunks,
+                len(chunks),
+            )
         else:
-            prioritized = contact_chunks + context_chunks
+            limited_chunks = chunks
             logger.debug(
                 "No final_context_chunks limit applied, using all %d chunks",
-                len(prioritized),
+                len(chunks),
             )
 
-        return [self._compress_chunk(chunk) for chunk in prioritized]
+        return [self._compress_chunk(chunk) for chunk in limited_chunks]
 
     @staticmethod
     def _compress_chunk(chunk: str) -> str:

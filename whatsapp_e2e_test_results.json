@@ -1,0 +1,93 @@
+{
+  "summary": {
+    "total": 10,
+    "passed": 3,
+    "failed": 7,
+    "pass_rate": 30.0
+  },
+  "results": [
+    {
+      "test": "Server Health Check",
+      "passed": true,
+      "message": "Server responded with status 200",
+      "details": {
+        "status": "healthy",
+        "timestamp": "2025-11-19T09:34:49.467778+00:00",
+        "version": "2.1.0",
+        "environment": "development"
+      },
+      "timestamp": "2025-11-19T10:34:49.478350"
+    },
+    {
+      "test": "Webhook GET Endpoint",
+      "passed": true,
+      "message": "Webhook verification endpoint is accessible",
+      "details": {
+        "status": "ok",
+        "message": "WhatsApp webhook endpoint is active",
+        "service": "twilio_whatsapp",
+        "methods": [
+          "GET",
+          "POST"
+        ]
+      },
+      "timestamp": "2025-11-19T10:34:49.990309"
+    },
+    {
+      "test": "Get Configuration",
+      "passed": false,
+      "message": "No auth token provided - skipping",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:50.495550"
+    },
+    {
+      "test": "Validate Configuration",
+      "passed": false,
+      "message": "No auth token - skipping",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:50.998865"
+    },
+    {
+      "test": "Webhook Security (Signature Validation)",
+      "passed": false,
+      "message": "WARNING: Webhook accepted unsigned request - security issue!",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:51.775895"
+    },
+    {
+      "test": "Send Test Message",
+      "passed": false,
+      "message": "No test phone provided - skipping",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:52.281094"
+    },
+    {
+      "test": "Phone Number Validation",
+      "passed": false,
+      "message": "No auth token - skipping",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:52.784452"
+    },
+    {
+      "test": "Message Length Limit",
+      "passed": false,
+      "message": "No auth token - skipping",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:53.288520"
+    },
+    {
+      "test": "Rate Limiting",
+      "passed": false,
+      "message": "No auth token - skipping",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:53.792915"
+    },
+    {
+      "test": "Error Handling",
+      "passed": true,
+      "message": "Error handling working correctly",
+      "details": null,
+      "timestamp": "2025-11-19T10:34:54.310162"
+    }
+  ]
+}

@@ -174,18 +174,18 @@ class ContactExtractor:
         return filtered
 
     def _extract_addresses(self, text: str) -> List[str]:
-        """Extract addresses from text"""
+        """Extract addresses from text with strict validation to avoid false positives"""
         addresses = []
 
-        # Look for address-like patterns
-        # Common patterns: "Building", "Street", "Road", "Avenue", "Dubai", "UAE", etc.
+        # IMPROVED: Much more specific patterns to avoid false positives like "building brand loyalty"
+        # Only match if we have actual address components (numbers, city names, etc.)
         address_indicators = [
-            r"Building[^.!?]{10,100}",
-            r"Street[^.!?]{10,100}",
-            r"Road[^.!?]{10,100}",
-            r"Avenue[^.!?]{10,100}",
-            r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Building|Street|Road|Avenue)[^.!?]{10,100}",
-            r"[^.!?]{20,150}(?:Dubai|Abu Dhabi|Sharjah|UAE|United Arab Emirates)[^.!?]{0,50}",
+            # Must have building/office NUMBER (e.g., "Building 5", "Office 123")
+            r"(?:Building|Office|Suite|Floor)\s+(?:Number\s+)?[0-9]+[^.!?]{10,150}(?:Street|Road|Avenue|Dubai|UAE)",
+            # Must have street number + street name + city (e.g., "123 Main Street, Dubai")
+            r"\b[0-9]+\s+[A-Z][a-z]+\s+(?:Street|Road|Avenue|Boulevard)[^.!?]{0,80}(?:Dubai|Abu Dhabi|Sharjah)",
+            # Specific city + country pattern with context (must be sentence with address keywords)
+            r"(?:located|address|office)\s+(?:at|in|is)\s+[^.!?]{10,150}(?:Dubai|Abu Dhabi|Sharjah),\s*(?:UAE|United Arab Emirates)",
         ]
 
         for pattern in address_indicators:
@@ -193,8 +193,43 @@ class ContactExtractor:
             for match in matches:
                 # Clean up the address
                 cleaned = re.sub(r"\s+", " ", match.strip())
-                if len(cleaned) > 15 and cleaned not in addresses:
-                    addresses.append(cleaned)
+
+                # Additional validation: Must contain at least one city/country name
+                # This prevents false positives like "building relationships"
+                has_location = any(
+                    loc in cleaned.lower()
+                    for loc in [
+                        "dubai",
+                        "abu dhabi",
+                        "sharjah",
+                        "uae",
+                        "united arab emirates",
+                        "india",
+                        "usa",
+                        "uk",
+                        "canada",
+                        "singapore",
+                    ]
+                )
+
+                # Must be reasonable length and actually location-related
+                if (
+                    20 <= len(cleaned) <= 200
+                    and has_location
+                    and cleaned not in addresses
+                ):
+                    # Final check: shouldn't contain common false positive words
+                    false_positive_words = [
+                        "loyalty",
+                        "relationships",
+                        "engagement",
+                        "services",
+                        "solutions",
+                    ]
+                    if not any(
+                        word in cleaned.lower() for word in false_positive_words
+                    ):
+                        addresses.append(cleaned)
 
         return addresses
 

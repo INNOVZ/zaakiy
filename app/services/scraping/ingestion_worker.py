@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Dict, Tuple
 from urllib.parse import urljoin, urlparse
 
 import openai
@@ -14,17 +14,35 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     orjson = None  # type: ignore
 import requests
-from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from PyPDF2 import PdfReader
 
 from ...utils.env_loader import is_test_environment
-from ..chat.contact_extractor import contact_extractor
-from ..storage.pinecone_client import get_pinecone_index
 from ..storage.supabase_client import get_supabase_client
-from .text_cleaner import TextCleaner
+from .metadata_extraction import (
+    extract_metadata_flags,
+    extract_product_links_from_chunk,
+)
+from .pinecone_upload import upload_to_pinecone, upload_to_pinecone_with_url_mapping
+from .text_processing import (
+    filter_noise_chunks,
+    get_embeddings_for_chunks,
+    split_into_chunks,
+)
+from .topic_extraction import extract_topics_from_url
 from .url_utils import create_safe_fetch_message, is_ecommerce_url, log_domain_safely
 from .web_scraper import SecureWebScraper
+
+# Re-export for backward compatibility with existing code
+__all__ = [
+    "split_into_chunks",
+    "filter_noise_chunks",
+    "get_embeddings_for_chunks",
+    "extract_topics_from_url",
+    "extract_metadata_flags",
+    "extract_product_links_from_chunk",
+    "upload_to_pinecone",
+    "upload_to_pinecone_with_url_mapping",
+]
 
 # Initialize logger FIRST (needed for imports below)
 logger = logging.getLogger(__name__)
@@ -32,15 +50,7 @@ logger = logging.getLogger(__name__)
 MAX_CONCURRENT_UPLOADS = int(os.getenv("SCRAPER_MAX_CONCURRENCY", "3"))
 MAX_UPLOAD_BATCH = int(os.getenv("SCRAPER_MAX_UPLOAD_BATCH", "25"))
 
-# Metadata detection patterns
-PRICING_PATTERN = re.compile(
-    r"(\$|€|£|aed|usd|price|pricing|cost|plans|tier|package|per\s+(?:month|year)|monthly|yearly)",
-    re.IGNORECASE,
-)
-BOOKING_PATTERN = re.compile(
-    r"(book|booking|schedule|consultation|demo|trial|appointment|talk to sales|contact sales)",
-    re.IGNORECASE,
-)
+# Metadata patterns moved to metadata_extraction.py
 
 # Import both scrapers for JavaScript and non-JavaScript sites
 try:
@@ -74,12 +84,15 @@ def _get_supabase_client_cached():
     return supabase
 
 
+# Pinecone index caching moved to pinecone_upload.py
+# This function is kept for backward compatibility but is no longer used
 def _get_pinecone_index_cached():
-    global index
+    """Deprecated: Use pinecone_upload module instead"""
+    from ..storage.pinecone_client import get_pinecone_index
 
+    global index
     if index is None:
         index = get_pinecone_index()
-
     return index
 
 
@@ -586,202 +599,10 @@ async def extract_text_from_json_url(url: str) -> str:
     return await asyncio.to_thread(_download_and_process_json)
 
 
-def split_into_chunks(text: str) -> list:
-    """Split text into chunks using RecursiveCharacterTextSplitter"""
-    if not text.strip():
-        return []
-
-    # Clean the text first using shared TextCleaner utility
-    cleaned_text = TextCleaner.clean_text(text, remove_noise=False)
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800, chunk_overlap=200, separators=["\n\n", "\n", " ", ""]
-    )
-    chunks = splitter.split_text(cleaned_text)
-    return [chunk for chunk in chunks if chunk.strip()]
-
-
-def filter_noise_chunks(chunks: list) -> list:
-    """Filter out chunks that are clearly UI noise (login/cart/country lists, etc.).
-
-    The goal is to avoid embedding/upserting low-signal text that hurts search quality.
-
-    This function now uses the shared TextCleaner utility for consistency.
-    """
-    return TextCleaner.filter_noise_chunks(chunks, min_length=60)
-
-
-def get_embeddings_for_chunks(chunks: list) -> list:
-    if not chunks:
-        return []
-
-    embedder = OpenAIEmbeddings()
-    vectors = embedder.embed_documents(chunks)
-    return vectors
-
-
-def extract_product_links_from_chunk(chunk: str, source_url: str = None) -> list:
-    """Extract potential product links from text chunk"""
-
-    product_links = []
-
-    # Common patterns for product URLs
-    product_patterns = [
-        r"https?://[^\s]+/product[s]?/[^\s]+",
-        r"https?://[^\s]+/item[s]?/[^\s]+",
-        r"https?://[^\s]+/catalog/[^\s]+",
-        r"https?://[^\s]+/shop/[^\s]+",
-        r"https?://[^\s]+/buy/[^\s]+",
-        r"https?://[^\s]+/p/[^\s]+",
-        r"https?://[^\s]+/[a-zA-Z0-9\-]+\.html",
-        r"https?://[^\s]+/[a-zA-Z0-9\-]+\.php",
-    ]
-
-    # Extract URLs from text
-    # SECURITY NOTE: Limited regex to prevent ReDoS (Regular Expression Denial of Service)
-    # Using {1,2000} to bound the match length and prevent catastrophic backtracking
-    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]{1,2000}'
-    urls = re.findall(url_pattern, chunk)
-
-    for url in urls:
-        # Clean URL (remove trailing punctuation)
-        # SECURITY NOTE: Simple regex with bounded quantifier (+$) is safe - only matches end of string
-        url = re.sub(r"[.,;!?]+$", "", url)
-
-        # Check if URL matches product patterns
-        for pattern in product_patterns:
-            if re.search(pattern, url, re.IGNORECASE):
-                product_links.append(url)
-                break
-
-        # If source_url is provided, check for relative links that might be products
-        if source_url and not url.startswith("http"):
-            try:
-                absolute_url = urljoin(source_url, url)
-                for pattern in product_patterns:
-                    if re.search(pattern, absolute_url, re.IGNORECASE):
-                        product_links.append(absolute_url)
-                        break
-            except:
-                continue
-
-    # Also look for product mentions with potential links
-    product_mentions = re.findall(
-        r"([A-Z][a-zA-Z\s]+(?:Cake|Product|Item|Goods|Merchandise)[a-zA-Z\s]*)", chunk
-    )
-
-    # If we found product mentions but no explicit links, and we have a source URL,
-    # we can construct potential product page URLs
-    if product_mentions and source_url and not product_links:
-        domain = urlparse(source_url).netloc
-        for mention in product_mentions[:3]:  # Limit to first 3 mentions
-            # Create a potential product URL based on the mention
-            product_slug = re.sub(r"[^a-zA-Z0-9\s]", "", mention.lower())
-            product_slug = re.sub(r"\s+", "-", product_slug.strip())
-            if product_slug:
-                potential_url = f"https://{domain}/product/{product_slug}"
-                product_links.append(potential_url)
-
-    return list(set(product_links))  # Remove duplicates
-
-
-def extract_metadata_flags(chunk: str) -> dict:
-    """Detect key metadata flags (pricing, booking, contact info) for a chunk."""
-    flags = {
-        "has_pricing": False,
-        "has_booking": False,
-        "has_contact_info": False,
-        "contact_has_phone": False,
-        "contact_has_email": False,
-        "contact_has_address": False,
-    }
-
-    if not chunk or len(chunk) < 5:
-        return flags
-
-    if PRICING_PATTERN.search(chunk):
-        flags["has_pricing"] = True
-
-    if BOOKING_PATTERN.search(chunk):
-        flags["has_booking"] = True
-
-    try:
-        contact_info = contact_extractor.extract_contact_info(chunk)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.debug("Contact extraction failed for metadata flags: %s", exc)
-        return flags
-
-    has_phone = bool(contact_info.get("phones"))
-    has_email = bool(contact_info.get("emails"))
-    has_address = bool(contact_info.get("addresses"))
-
-    if has_phone or has_email or has_address:
-        flags["has_contact_info"] = True
-        flags["contact_has_phone"] = has_phone
-        flags["contact_has_email"] = has_email
-        flags["contact_has_address"] = has_address
-
-    return flags
-
-
-def upload_to_pinecone(
-    chunks: list, vectors: list, namespace: str, upload_id: str, source_url: str = None
-):
-    if not chunks or not vectors:
-        logger.warning("No chunks or vectors to upload", extra={"upload_id": upload_id})
-        return
-
-    # Enhanced metadata with source URL and extracted product links
-    to_upsert = []
-    for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
-        metadata = {
-            "chunk": chunk,
-            "upload_id": upload_id,
-            "source": source_url or "",
-            "chunk_index": i,
-        }
-
-        # Extract potential product links from chunk content
-        product_links = extract_product_links_from_chunk(chunk, source_url)
-        if product_links:
-            metadata["product_links"] = product_links
-            metadata["has_products"] = True
-        else:
-            metadata["has_products"] = False
-
-        metadata.update(extract_metadata_flags(chunk))
-
-        to_upsert.append((f"{upload_id}-{i}", vec, metadata))
-
-    logger.info(
-        "Uploading vectors to Pinecone",
-        extra={
-            "vector_count": len(to_upsert),
-            "namespace": namespace,
-            "upload_id": upload_id,
-        },
-    )
-    try:
-        pinecone_index = _get_pinecone_index_cached()
-    except RuntimeError as exc:
-        logger.warning(
-            "Pinecone index unavailable. Skipping vector upload: %s", str(exc)
-        )
-        return
-
-    try:
-        result = pinecone_index.upsert(vectors=to_upsert, namespace=namespace)
-        logger.info(
-            "Pinecone upsert successful",
-            extra={"result": str(result), "upload_id": upload_id},
-        )
-    except Exception as e:
-        logger.error(
-            "Pinecone upload failed",
-            extra={"upload_id": upload_id, "error": str(e)},
-            exc_info=True,
-        )
-        raise
+# Text processing functions moved to text_processing.py
+# Metadata extraction functions moved to metadata_extraction.py
+# Topic extraction functions moved to topic_extraction.py
+# Pinecone upload functions moved to pinecone_upload.py
 
 
 # is_ecommerce_url is now imported from url_utils to avoid duplication
@@ -838,8 +659,11 @@ async def smart_scrape_url(url: str) -> str:
 
 
 async def recursive_scrape_website(
-    start_url: str, max_pages: int = None, max_depth: int = None
-) -> str:
+    start_url: str,
+    max_pages: int = None,
+    max_depth: int = None,
+    return_individual_urls: bool = False,
+) -> Any:  # Returns str or Dict[str, str] based on return_individual_urls
     """
     Recursively scrape a website using SecureWebScraper.
 
@@ -847,9 +671,11 @@ async def recursive_scrape_website(
         start_url: The starting URL to scrape
         max_pages: Maximum number of pages to scrape (default: from config)
         max_depth: Maximum crawl depth (default: from config)
+        return_individual_urls: If True, returns dict of {url: text}. If False, returns combined text.
 
     Returns:
-        Combined text content from all scraped pages
+        If return_individual_urls=True: Dict[str, str] mapping URLs to their text content
+        If return_individual_urls=False: Combined text content from all scraped pages (backward compatible)
     """
     try:
         logger.info(
@@ -869,14 +695,22 @@ async def recursive_scrape_website(
 
         if not scraped_pages:
             logger.warning("No pages were scraped recursively")
-            return ""
+            return {} if return_individual_urls else ""
 
-        # Combine all scraped content
+        # If individual URLs requested, return the dict directly
+        if return_individual_urls:
+            logger.info(
+                f"Recursive scrape completed: {len(scraped_pages)} pages scraped (returning individual URLs)"
+            )
+            return scraped_pages
+
+        # Otherwise, combine all scraped content (backward compatible)
         combined_content = []
         for url, text in scraped_pages.items():
-            combined_content.append(f"\n=== {url} ===\n\n{text}\n")
+            # Add content with a simple separator to make it flow naturally
+            combined_content.append(text.strip())
 
-        final_text = "\n".join(combined_content)
+        final_text = "\n\n".join(combined_content)
         logger.info(
             f"Recursive scrape completed: {len(scraped_pages)} pages scraped, "
             f"{len(final_text)} total characters"
@@ -888,6 +722,9 @@ async def recursive_scrape_website(
         logger.error(f"Recursive scrape failed: {e}")
         # Fallback to single page scraping
         logger.info("Falling back to single page scrape")
+        if return_individual_urls:
+            fallback_text = await smart_scrape_url(start_url)
+            return {start_url: fallback_text} if fallback_text else {}
         return await smart_scrape_url(start_url)
 
 
@@ -941,12 +778,115 @@ async def _process_upload_record(upload: dict, supabase_client):
                         "max_depth": recursive_config.get("max_depth"),
                     },
                 )
-                # Use recursive scraper
-                text = await recursive_scrape_website(
+                # Use recursive scraper with individual URLs preserved
+                scraped_pages = await recursive_scrape_website(
                     start_url=url,
                     max_pages=recursive_config.get("max_pages"),
                     max_depth=recursive_config.get("max_depth"),
+                    return_individual_urls=True,  # Get individual URLs for topic extraction
                 )
+
+                # Process each URL separately to preserve individual topics
+                if scraped_pages and isinstance(scraped_pages, dict):
+                    # Process each URL with its own topics
+                    all_chunks = []
+                    all_vectors = []
+                    url_to_chunks_map = {}  # Track which chunks belong to which URL
+
+                    for page_url, page_text in scraped_pages.items():
+                        if not page_text or len(page_text.strip()) < 10:
+                            continue
+
+                        # Process this page's text into chunks
+                        page_chunks = split_into_chunks(page_text)
+
+                        # Filter chunks for this page
+                        if is_ecommerce_url(page_url):
+                            filtered_page_chunks = filter_noise_chunks(page_chunks)
+                            if not filtered_page_chunks and page_chunks:
+                                from .text_cleaner import TextCleaner
+
+                                for min_len in [30, 20, 10]:
+                                    filtered_page_chunks = (
+                                        TextCleaner.filter_noise_chunks(
+                                            page_chunks, min_length=min_len
+                                        )
+                                    )
+                                    if filtered_page_chunks:
+                                        break
+                            page_chunks = (
+                                filtered_page_chunks
+                                if filtered_page_chunks
+                                else page_chunks
+                            )
+                        else:
+                            page_chunks = filter_noise_chunks(page_chunks)
+
+                        if page_chunks:
+                            # Generate embeddings for this page's chunks
+                            page_embeddings = get_embeddings_for_chunks(page_chunks)
+                            if page_embeddings:
+                                # Track which chunks belong to this URL
+                                start_idx = len(all_chunks)
+                                end_idx = start_idx + len(page_chunks)
+                                url_to_chunks_map[page_url] = (start_idx, end_idx)
+
+                                all_chunks.extend(page_chunks)
+                                all_vectors.extend(page_embeddings)
+
+                                logger.info(
+                                    f"Processed page {page_url}: {len(page_chunks)} chunks",
+                                    extra={"upload_id": upload_id},
+                                )
+
+                    # Upload all chunks with URL-specific topics
+                    if (
+                        all_chunks
+                        and all_vectors
+                        and len(all_chunks) == len(all_vectors)
+                    ):
+                        if not all_chunks:
+                            raise ValueError(
+                                "No chunks generated from recursive scraping"
+                            )
+
+                        upload_to_pinecone_with_url_mapping(
+                            chunks=all_chunks,
+                            vectors=all_vectors,
+                            namespace=namespace,
+                            upload_id=upload_id,
+                            url_to_chunks_map=url_to_chunks_map,
+                            start_url=url,  # Parent URL for reference
+                        )
+
+                        # Update status
+                        supabase_client.table("uploads").update(
+                            {"status": "completed", "error_message": None}
+                        ).eq("id", upload_id).execute()
+
+                        logger.info(
+                            f"Recursive upload completed: {len(scraped_pages)} pages, {len(all_chunks)} total chunks",
+                            extra={"upload_id": upload_id},
+                        )
+                        return  # Early return, already processed
+
+                    # Fallback: if processing failed, combine text and process normally
+                    logger.warning(
+                        f"Recursive processing failed, falling back to combined text processing",
+                        extra={
+                            "upload_id": upload_id,
+                            "chunks_count": len(all_chunks) if all_chunks else 0,
+                        },
+                    )
+                    text = "\n\n".join([t for t in scraped_pages.values() if t])
+                else:
+                    # Fallback to combined text
+                    text = await recursive_scrape_website(
+                        start_url=url,
+                        max_pages=recursive_config.get("max_pages"),
+                        max_depth=recursive_config.get("max_depth"),
+                        return_individual_urls=False,
+                    )
             else:
                 # Invalid JSON, fall back to regular scraping
                 text = await smart_scrape_url(source)

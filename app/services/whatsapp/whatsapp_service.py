@@ -2,6 +2,7 @@
 WhatsApp Business API Service using Twilio
 Handles sending and receiving WhatsApp messages via Twilio
 """
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -11,6 +12,8 @@ from twilio.rest import Client as TwilioClient
 from ...models.subscription import Channel
 from ..auth.billing_middleware import TokenValidationMiddleware
 from ..storage.supabase_client import get_supabase_client
+from .whatsapp_config_cache import get_config_cache
+from .whatsapp_rate_limiter import RateLimitExceeded, WhatsAppRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +29,13 @@ class WhatsAppConfigurationError(WhatsAppServiceError):
 class WhatsAppService:
     """Service for handling WhatsApp Business API via Twilio"""
 
-    def __init__(self, org_id: str):
+    def __init__(self, org_id: str, redis_client=None):
         """
         Initialize WhatsApp service for an organization
 
         Args:
             org_id: Organization ID
+            redis_client: Optional Redis client for rate limiting and caching
         """
         self.org_id = org_id
         self.supabase = get_supabase_client()
@@ -39,12 +43,42 @@ class WhatsAppService:
         self._twilio_client: Optional[TwilioClient] = None
         self._config: Optional[Dict[str, Any]] = None
 
-    def _get_whatsapp_config(self) -> Dict[str, Any]:
-        """Get WhatsApp configuration from database"""
+        # Initialize rate limiter
+        self.rate_limiter = WhatsAppRateLimiter(redis_client=redis_client)
+
+        # Initialize configuration cache
+        self.config_cache = get_config_cache(redis_client=redis_client)
+
+    async def _get_whatsapp_config(self) -> Dict[str, Any]:
+        """
+        Get WhatsApp configuration from cache or database
+
+        Uses multi-layer caching strategy:
+        1. Instance cache (self._config)
+        2. Memory/Redis cache (shared across instances via shared cache service)
+        3. Database (fallback)
+        """
+        # Layer 1: Check instance cache (fastest)
         if self._config:
             return self._config
 
+        # Layer 2: Check shared cache (memory + Redis via shared cache service)
+        cached_config = await self.config_cache.get(self.org_id)
+        if cached_config:
+            self._config = cached_config
+            logger.debug(
+                f"✅ WhatsApp config loaded from cache for org {self.org_id}",
+                extra={"org_id": self.org_id, "source": "cache"},
+            )
+            return self._config
+
+        # Layer 3: Fetch from database (cache miss)
         try:
+            logger.debug(
+                f"🔍 Fetching WhatsApp config from database for org {self.org_id}",
+                extra={"org_id": self.org_id, "source": "database"},
+            )
+
             response = (
                 self.supabase.table("whatsapp_configurations")
                 .select("*")
@@ -59,6 +93,15 @@ class WhatsAppService:
                 )
 
             self._config = response.data[0]
+
+            # Store in cache for future requests (async)
+            await self.config_cache.set(self.org_id, self._config)
+
+            logger.info(
+                f"💾 WhatsApp config fetched from DB and cached for org {self.org_id}",
+                extra={"org_id": self.org_id, "source": "database"},
+            )
+
             return self._config
 
         except Exception as e:
@@ -71,12 +114,12 @@ class WhatsAppService:
                 f"Failed to load WhatsApp config: {e}"
             ) from e
 
-    def _get_twilio_client(self) -> TwilioClient:
+    async def _get_twilio_client(self) -> TwilioClient:
         """Get or create Twilio client"""
         if self._twilio_client:
             return self._twilio_client
 
-        config = self._get_whatsapp_config()
+        config = await self._get_whatsapp_config()
 
         account_sid = config.get("twilio_account_sid")
         auth_token = config.get("twilio_auth_token")
@@ -124,7 +167,8 @@ class WhatsAppService:
             Dict with message details and status
         """
         try:
-            config = self._get_whatsapp_config()
+            # Ensure we actually resolve the async config fetch
+            config = await self._get_whatsapp_config()
             from_number = config.get("twilio_phone_number")
 
             if not from_number:
@@ -141,7 +185,7 @@ class WhatsAppService:
                 )
 
             # Get Twilio client
-            client = self._get_twilio_client()
+            client = await self._get_twilio_client()
 
             # Send message via Twilio WhatsApp API
             twilio_message = client.messages.create(
@@ -300,7 +344,7 @@ class WhatsAppService:
             Dict with response details
         """
         try:
-            config = self._get_whatsapp_config()
+            config = await self._get_whatsapp_config()
             twilio_number = config.get("twilio_phone_number")
             # Get active chatbot for this org
             if not chatbot_id:
@@ -346,6 +390,45 @@ class WhatsAppService:
             # Generate session ID from phone number
             session_id = f"whatsapp_{from_number.replace('+', '').replace('-', '').replace(' ', '')}"
 
+            # RATE LIMITING: Check if user is within rate limits
+            # Strip 'whatsapp:' prefix for rate limiting
+            clean_phone = from_number.replace("whatsapp:", "").strip()
+
+            allowed, error_msg, retry_after = self.rate_limiter.check_rate_limit(
+                phone_number=clean_phone, org_id=self.org_id
+            )
+
+            if not allowed:
+                # Rate limit exceeded - send friendly message to user
+                logger.warning(f"⚠️ Rate limit exceeded for {clean_phone}: {error_msg}")
+
+                # Send rate limit message to user
+                friendly_message = (
+                    f"Hey! You're sending messages a bit too quickly 😅\n\n"
+                    f"Please wait {retry_after} seconds before sending another message.\n\n"
+                    f"This helps us provide the best service to everyone! 🙏"
+                )
+
+                try:
+                    await self.send_message(
+                        to=clean_phone,
+                        message=friendly_message,
+                        chatbot_id=chatbot_id,
+                        session_id=session_id,
+                        entity_id=self.org_id,
+                        entity_type="organization",
+                        requesting_user_id=self.org_id,
+                    )
+                except Exception as send_error:
+                    logger.error(f"Failed to send rate limit message: {send_error}")
+
+                return {
+                    "success": False,
+                    "error": "rate_limit_exceeded",
+                    "message": error_msg,
+                    "retry_after": retry_after,
+                }
+
             # Log incoming message after determining session
             await self._log_message(
                 customer_number=from_number,
@@ -358,7 +441,57 @@ class WhatsAppService:
                 tokens_consumed=0,
             )
 
-            # Process message
+            # IMMEDIATE ACKNOWLEDGMENT: Send quick response for better UX
+            # This makes the bot feel responsive (< 2 seconds) while processing the full answer
+
+            # Determine appropriate acknowledgment message based on query
+            ack_messages = [
+                "Let me check that for you... ",
+                "Looking that up for you... ",
+                "One moment please... ",
+                "Checking our knowledge base... ",
+            ]
+
+            # Use different message based on message length/complexity
+            if len(message_body) > 100:
+                ack_message = "Let me look into that for you... "
+            elif any(
+                word in message_body.lower()
+                for word in ["price", "pricing", "cost", "plan"]
+            ):
+                ack_message = "Checking pricing for you... "
+            elif any(
+                word in message_body.lower()
+                for word in ["contact", "phone", "email", "reach"]
+            ):
+                ack_message = "Getting contact details..."
+            elif any(
+                word in message_body.lower()
+                for word in ["demo", "book", "schedule", "appointment"]
+            ):
+                ack_message = "Finding booking options for you... 📅"
+            else:
+                ack_message = "Let me check that for you... "
+
+            # Send immediate acknowledgment (don't wait for it to complete)
+            # This runs in the background while we process the full response
+            asyncio.create_task(
+                self.send_message(
+                    to=clean_phone,
+                    message=ack_message,
+                    chatbot_id=chatbot_id,
+                    session_id=session_id,
+                    entity_id=self.org_id,
+                    entity_type="organization",
+                    requesting_user_id=self.org_id,
+                )
+            )
+
+            logger.info(
+                f"⚡ Sent immediate acknowledgment to {clean_phone}: '{ack_message}'"
+            )
+
+            # Process message (this takes time - 5-20 seconds)
             chat_response = await chat_service.process_message(
                 message=message_body,
                 session_id=session_id,
@@ -371,10 +504,42 @@ class WhatsAppService:
                 "response", "I'm sorry, I couldn't process that message."
             )
 
-            # Send response back via WhatsApp
+            # WHATSAPP FORMATTING: Structure response for better readability
+            # Import formatter
+            from .whatsapp_response_formatter import format_whatsapp_response
+
+            # Get intent and context for better formatting
+            intent_result = chat_response.get("intent")
+            intent_type = None
+            if intent_result and isinstance(intent_result, dict):
+                intent_type = intent_result.get("primary_intent")
+
+            # Get context data for rich formatting (contact info, products, etc.)
+            context_data = {
+                "contact_info": chat_response.get("contact_info", {}),
+                "product_links": chat_response.get("product_links", []),
+                "sources": chat_response.get("sources", []),
+            }
+
+            # Format response for WhatsApp
+            formatted_response = format_whatsapp_response(
+                response_text, context_data=context_data, intent_type=intent_type
+            )
+
+            logger.info(
+                f"📱 Formatted WhatsApp response (intent: {intent_type}, "
+                f"original_length: {len(response_text)}, "
+                f"formatted_length: {len(formatted_response)})"
+            )
+
+            # Strip 'whatsapp:' prefix from phone number if present
+            # Twilio sends numbers as 'whatsapp:+1234567890', we need just '+1234567890'
+            clean_phone_number = from_number.replace("whatsapp:", "").strip()
+
+            # Send formatted response back via WhatsApp
             send_result = await self.send_message(
-                to=from_number,
-                message=response_text,
+                to=clean_phone_number,
+                message=formatted_response,  # Use formatted response
                 chatbot_id=chatbot_id,
                 session_id=session_id,
                 entity_id=self.org_id,
@@ -402,7 +567,7 @@ class WhatsAppService:
             )
             raise WhatsAppServiceError(f"Failed to process message: {e}") from e
 
-    def validate_configuration(self) -> Dict[str, Any]:
+    async def validate_configuration(self) -> Dict[str, Any]:
         """
         Validate WhatsApp configuration
 
@@ -410,8 +575,8 @@ class WhatsAppService:
             Dict with validation status and details
         """
         try:
-            config = self._get_whatsapp_config()
-            client = self._get_twilio_client()
+            config = await self._get_whatsapp_config()
+            client = await self._get_twilio_client()
 
             # Test Twilio connection by fetching account info
             account = client.api.accounts(config.get("twilio_account_sid")).fetch()
@@ -432,3 +597,33 @@ class WhatsAppService:
                 "valid": False,
                 "error": str(e),
             }
+
+    async def invalidate_config_cache(self) -> None:
+        """
+        Invalidate cached configuration for this organization
+
+        Should be called when:
+        - WhatsApp configuration is updated
+        - Twilio credentials are changed
+        - Configuration is deactivated
+        """
+        # Clear instance cache
+        self._config = None
+        self._twilio_client = None
+
+        # Clear shared cache (async)
+        await self.config_cache.invalidate(self.org_id)
+
+        logger.info(
+            f"♻️ WhatsApp config cache invalidated for org {self.org_id}",
+            extra={"org_id": self.org_id},
+        )
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache performance statistics
+
+        Returns:
+            Dictionary with cache hit/miss rates and performance metrics
+        """
+        return self.config_cache.get_stats()

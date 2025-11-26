@@ -26,7 +26,12 @@ class ConversationManager:
     async def get_or_create_conversation(
         self, session_id: str, chatbot_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Get existing conversation or create new one with write-through caching"""
+        """
+        Get existing conversation or create new one with race condition protection.
+
+        FIXED: Uses UPSERT pattern to prevent duplicate conversations when
+        multiple concurrent requests use the same session_id.
+        """
         # Cache key for this conversation
         cache_key = f"conversation:session:{self.org_id}:{session_id}"
 
@@ -47,32 +52,9 @@ class ConversationManager:
                     "Cache retrieval failed, continuing without cache: %s", cache_error
                 )
 
-            # Check database for existing conversation
-            query = (
-                self.supabase.table("conversations")
-                .select("*")
-                .eq("session_id", session_id)
-                .eq("org_id", self.org_id)
-            )
+            # RACE CONDITION FIX: Use UPSERT instead of separate check + insert
+            # This ensures only one conversation is created even with concurrent requests
 
-            # If chatbot_id is provided, ensure we lookup by it as well
-            if chatbot_id:
-                query = query.eq("chatbot_id", chatbot_id)
-
-            response = query.execute()
-
-            if response.data:
-                conversation = response.data[0]
-                # Cache the found conversation
-                try:
-                    if cache_service:
-                        await cache_service.set(cache_key, conversation)
-                except Exception as cache_error:
-                    logger.warning("Cache set failed: %s", cache_error)
-                logger.debug("Found existing conversation for session %s", session_id)
-                return conversation
-
-            # Create new conversation
             conversation_data = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_id,
@@ -84,24 +66,127 @@ class ConversationManager:
                 "status": "active",
             }
 
-            # Insert into database (Write-Through caching)
-            response = (
-                self.supabase.table("conversations").insert(conversation_data).execute()
-            )
+            # Try UPSERT first (requires unique constraint on session_id, org_id, chatbot_id)
+            try:
+                # UPSERT: Insert or update if conflict on unique constraint
+                response = (
+                    self.supabase.table("conversations")
+                    .upsert(
+                        conversation_data,
+                        on_conflict="session_id,org_id,chatbot_id",
+                        returning="representation",
+                    )
+                    .execute()
+                )
 
-            if response.data:
-                new_conversation = response.data[0]
-                # Cache the new conversation
-                try:
-                    if cache_service:
-                        await cache_service.set(cache_key, new_conversation)
-                except Exception as cache_error:
-                    logger.warning("Cache set failed: %s", cache_error)
-                logger.info("Created new conversation for session %s", session_id)
-                return new_conversation
-            else:
+                if response.data:
+                    conversation = response.data[0]
+
+                    # Cache the conversation
+                    try:
+                        if cache_service:
+                            await cache_service.set(cache_key, conversation)
+                    except Exception as cache_error:
+                        logger.warning("Cache set failed: %s", cache_error)
+
+                    # Log whether it was created or retrieved
+                    if conversation["id"] == conversation_data["id"]:
+                        logger.info(
+                            "Created new conversation for session %s", session_id
+                        )
+                    else:
+                        logger.debug(
+                            "Retrieved existing conversation for session %s", session_id
+                        )
+
+                    return conversation
+
+            except Exception as upsert_error:
+                # FALLBACK: If UPSERT fails (e.g., unique constraint doesn't exist yet),
+                # fall back to traditional check-then-insert with retry
+                logger.warning(
+                    "UPSERT failed (constraint may not exist), using fallback: %s",
+                    upsert_error,
+                )
+
+                # Retry logic for race condition handling
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        # Check database for existing conversation
+                        query = (
+                            self.supabase.table("conversations")
+                            .select("*")
+                            .eq("session_id", session_id)
+                            .eq("org_id", self.org_id)
+                        )
+
+                        if chatbot_id:
+                            query = query.eq("chatbot_id", chatbot_id)
+
+                        response = query.execute()
+
+                        if response.data:
+                            conversation = response.data[0]
+                            # Cache the found conversation
+                            try:
+                                if cache_service:
+                                    await cache_service.set(cache_key, conversation)
+                            except Exception as cache_error:
+                                logger.warning("Cache set failed: %s", cache_error)
+                            logger.debug(
+                                "Found existing conversation for session %s", session_id
+                            )
+                            return conversation
+
+                        # Try to insert
+                        response = (
+                            self.supabase.table("conversations")
+                            .insert(conversation_data)
+                            .execute()
+                        )
+
+                        if response.data:
+                            new_conversation = response.data[0]
+                            # Cache the new conversation
+                            try:
+                                if cache_service:
+                                    await cache_service.set(cache_key, new_conversation)
+                            except Exception as cache_error:
+                                logger.warning("Cache set failed: %s", cache_error)
+                            logger.info(
+                                "Created new conversation for session %s (attempt %d)",
+                                session_id,
+                                attempt + 1,
+                            )
+                            return new_conversation
+
+                    except Exception as insert_error:
+                        # If insert fails due to duplicate (race condition), retry
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                "Insert failed (likely race condition), retrying (attempt %d/%d): %s",
+                                attempt + 1,
+                                max_retries,
+                                insert_error,
+                            )
+                            # Small delay before retry
+                            import asyncio
+
+                            await asyncio.sleep(0.1 * (attempt + 1))
+                            continue
+                        else:
+                            # Final attempt failed
+                            raise ConversationManagerError(
+                                f"Failed to create conversation after {max_retries} attempts: {insert_error}"
+                            ) from insert_error
+
+                # If we get here, all retries failed
                 raise ConversationManagerError("Failed to create conversation")
 
+        except ConversationManagerError:
+            # Re-raise our custom errors
+            raise
         except Exception as e:
             logger.error("Error in get_or_create_conversation: %s", e)
             raise ConversationManagerError(
